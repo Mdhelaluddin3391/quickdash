@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .utils import normalize_phone
+from .models import EmployeeProfile
 
 
 class RequestOTPSerializer(serializers.Serializer):
@@ -16,10 +17,15 @@ class VerifyOTPSerializer(serializers.Serializer):
     def validate_phone(self, value):
         return normalize_phone(value)
 
+
+# ========== ADMIN SERIALIZERS ==========
+
 class AdminCreateRiderSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=15)
     full_name = serializers.CharField(max_length=255)
-    vehicle_type = serializers.CharField(max_length=32, required=False, allow_blank=True)
+    vehicle_type = serializers.CharField(
+        max_length=32, required=False, allow_blank=True
+    )
 
     def validate_phone(self, value):
         return normalize_phone(value)
@@ -36,6 +42,11 @@ class AdminCreateEmployeeSerializer(serializers.Serializer):
         return normalize_phone(value)
 
 
-class AdminChangeStatusSerializer(serializers.Serializer):
+class AdminChangeRiderStatusSerializer(serializers.Serializer):
     id = serializers.IntegerField()
-    status = serializers.CharField(max_length=16)
+    status = serializers.CharField(max_length=16)  # ACTIVE / PENDING / SUSPENDED
+
+
+class AdminChangeEmployeeStatusSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    status = serializers.CharField(max_length=16)  # ACTIVE / INACTIVE

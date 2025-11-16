@@ -45,6 +45,7 @@ class IsEmployee(RolePermission):
     required_role = "EMPLOYEE"
     required_client = "employee_app"
 
+
 class IsAdmin(RolePermission):
     required_role = "ADMIN"
     required_client = "admin_panel"

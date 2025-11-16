@@ -4,19 +4,9 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
-from rest_framework.permissions import IsAdminUser
-from .serializers import (
-    RequestOTPSerializer,
-    VerifyOTPSerializer,
-    AdminCreateRiderSerializer,
-    AdminCreateEmployeeSerializer,
-    AdminChangeStatusSerializer,
-)
-
-
 
 from .models import (
     User,
@@ -26,18 +16,16 @@ from .models import (
     PhoneOTP,
     UserSession,
 )
-from .utils import (
-    create_and_send_otp,
-    normalize_phone,
-    create_tokens_with_session,
-    check_otp_rate_limit,
-    get_client_ip,
+from .serializers import (
+    RequestOTPSerializer,
+    VerifyOTPSerializer,
+    AdminCreateRiderSerializer,
+    AdminCreateEmployeeSerializer,
+    AdminChangeRiderStatusSerializer,
+    AdminChangeEmployeeStatusSerializer,
 )
-from django.core.exceptions import ValidationError
-
-from .serializers import RequestOTPSerializer, VerifyOTPSerializer
 from .utils import create_and_send_otp, normalize_phone, create_tokens_with_session
-from .permissions import IsCustomer, IsRider, IsEmployee
+from .permissions import IsCustomer, IsRider, IsEmployee, IsAdmin
 
 
 # ========== Base OTP Views ==========
@@ -51,17 +39,7 @@ class BaseRequestOTPView(APIView):
         phone = serializer.validated_data["phone"]
 
         try:
-            #  Rate limiting
-            check_otp_rate_limit(
-                phone=phone,
-                login_type=self.login_type,
-                ip=get_client_ip(request),
-            )
             return self.handle_request(phone)
-        except ValidationError as e:
-            return Response(
-                {"detail": str(e)}, status=status.HTTP_429_TOO_MANY_REQUESTS
-            )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -146,18 +124,11 @@ class CustomerVerifyOTPView(BaseVerifyOTPView):
         if not customer:
             customer = CustomerProfile.objects.create(user=user)
 
-        device_info = {
-            "device_id": request.data.get("device_id", ""),
-            "device_model": request.data.get("device_model", ""),
-            "os_version": request.data.get("os_version", ""),
-        }
-
         tokens = create_tokens_with_session(
             user=user,
             role=self.role_claim,
             client=self.client_claim,
             extra_claims={"customer_id": customer.id},
-            device_info=device_info,
             request=request,
         )
         return Response(tokens, status=status.HTTP_200_OK)
@@ -381,6 +352,70 @@ class EmployeeMeView(APIView):
         )
 
 
+# ========== ADMIN LOGIN (email/phone + password) ==========
+
+class AdminLoginView(APIView):
+    """
+    Admin / internal tools ke liye:
+    - identifier = email ya phone
+    - password
+    - user.is_staff True hona chahiye
+    """
+
+    def post(self, request, *args, **kwargs):
+        identifier = request.data.get("identifier")
+        password = request.data.get("password")
+
+        if not identifier or not password:
+            return Response(
+                {"detail": "identifier and password are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Try email first, then phone
+        user = (
+            User.objects.filter(email__iexact=identifier).first()
+            or User.objects.filter(phone=identifier).first()
+        )
+
+        if not user or not user.is_staff:
+            return Response(
+                {"detail": "Admin not found or not allowed."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if not user.check_password(password):
+            return Response(
+                {"detail": "Invalid credentials."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        tokens = create_tokens_with_session(
+            user=user,
+            role="ADMIN",
+            client="admin_panel",
+            extra_claims={"admin_id": user.id},
+            request=request,
+        )
+        return Response(tokens, status=status.HTTP_200_OK)
+
+
+class AdminMeView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        user = request.user
+        return Response(
+            {
+                "id": user.id,
+                "phone": user.phone,
+                "email": user.email,
+                "full_name": user.full_name,
+                "is_staff": user.is_staff,
+                "is_superuser": user.is_superuser,
+            }
+        )
+
 
 # ========== ADMIN RIDER / EMPLOYEE MANAGEMENT ==========
 
@@ -390,7 +425,7 @@ class AdminCreateRiderView(APIView):
     - Rider create + ACTIVE status
     """
 
-    permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdmin]
 
     @transaction.atomic
     def post(self, request):
@@ -400,7 +435,9 @@ class AdminCreateRiderView(APIView):
         full_name = serializer.validated_data["full_name"]
         vehicle_type = serializer.validated_data.get("vehicle_type", "")
 
-        user, created = User.objects.get_or_create(phone=phone, defaults={"full_name": full_name})
+        user, created = User.objects.get_or_create(
+            phone=phone, defaults={"full_name": full_name}
+        )
         if not created and user.full_name != full_name:
             user.full_name = full_name
         user.is_rider = True
@@ -409,8 +446,12 @@ class AdminCreateRiderView(APIView):
         # simple rider_code generator
         if hasattr(user, "rider_profile"):
             rider = user.rider_profile
+            rider.vehicle_type = vehicle_type
+            rider.status = "ACTIVE"
+            rider.save(update_fields=["vehicle_type", "status"])
         else:
-            next_id = (RiderProfile.objects.order_by("-id").first().id + 1) if RiderProfile.objects.exists() else 1
+            last = RiderProfile.objects.order_by("-id").first()
+            next_id = (last.id + 1) if last else 1
             rider_code = f"RD-{next_id:05d}"
             rider = RiderProfile.objects.create(
                 user=user,
@@ -432,15 +473,16 @@ class AdminCreateRiderView(APIView):
 
 
 class AdminChangeRiderStatusView(APIView):
-    permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdmin]
 
     def post(self, request):
-        serializer = AdminChangeStatusSerializer(data=request.data)
+        serializer = AdminChangeRiderStatusSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         rider_id = serializer.validated_data["id"]
         status_value = serializer.validated_data["status"]
 
-        if status_value not in dict(RiderProfile.STATUS_CHOICES):
+        valid_statuses = dict(RiderProfile.STATUS_CHOICES).keys()
+        if status_value not in valid_statuses:
             return Response(
                 {"detail": "Invalid status."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -465,7 +507,7 @@ class AdminCreateEmployeeView(APIView):
     - Employee create with role + warehouse
     """
 
-    permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdmin]
 
     @transaction.atomic
     def post(self, request):
@@ -477,7 +519,9 @@ class AdminCreateEmployeeView(APIView):
         role = serializer.validated_data["role"]
         warehouse_code = serializer.validated_data["warehouse_code"]
 
-        user, created = User.objects.get_or_create(phone=phone, defaults={"full_name": full_name})
+        user, created = User.objects.get_or_create(
+            phone=phone, defaults={"full_name": full_name}
+        )
         if not created and user.full_name != full_name:
             user.full_name = full_name
         user.is_employee = True
@@ -520,10 +564,10 @@ class AdminCreateEmployeeView(APIView):
 
 
 class AdminChangeEmployeeStatusView(APIView):
-    permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdmin]
 
     def post(self, request):
-        serializer = AdminChangeStatusSerializer(data=request.data)
+        serializer = AdminChangeEmployeeStatusSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         emp_id = serializer.validated_data["id"]
         status_value = serializer.validated_data["status"]
@@ -545,75 +589,3 @@ class AdminChangeEmployeeStatusView(APIView):
         emp.is_active_employee = status_value == "ACTIVE"
         emp.save(update_fields=["is_active_employee"])
         return Response({"detail": "Employee status updated."})
-
-
-# ========== ADMIN LOGIN (email/phone + password) ==========
-
-class AdminLoginView(APIView):
-    """
-    Admin / internal tools ke liye:
-    - identifier = email ya phone
-    - password
-    - user.is_staff True hona chahiye
-    """
-
-    def post(self, request, *args, **kwargs):
-        identifier = request.data.get("identifier")
-        password = request.data.get("password")
-
-        if not identifier or not password:
-            return Response(
-                {"detail": "identifier and password are required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Try email first, then phone
-        user = (
-            User.objects.filter(email__iexact=identifier).first()
-            or User.objects.filter(phone=identifier).first()
-        )
-
-        if not user or not user.is_staff:
-            return Response(
-                {"detail": "Admin not found or not allowed."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        if not user.check_password(password):
-            return Response(
-                {"detail": "Invalid credentials."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        device_info = {
-            "device_id": request.data.get("device_id", ""),
-            "device_model": request.data.get("device_model", ""),
-            "os_version": request.data.get("os_version", ""),
-        }
-
-        tokens = create_tokens_with_session(
-            user=user,
-            role="ADMIN",
-            client="admin_panel",
-            extra_claims={"admin_id": user.id},
-            device_info=device_info,
-            request=request,
-        )
-        return Response(tokens, status=status.HTTP_200_OK)
-
-
-class AdminMeView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
-
-    def get(self, request):
-        user = request.user
-        return Response(
-            {
-                "id": user.id,
-                "phone": user.phone,
-                "email": user.email,
-                "full_name": user.full_name,
-                "is_staff": user.is_staff,
-                "is_superuser": user.is_superuser,
-            }
-        )
