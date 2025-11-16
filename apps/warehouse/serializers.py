@@ -1,10 +1,5 @@
-# apps/warehouse/serializers.py
-
+from apps.warehouse.models import (GRN, PutawayTask, PutawayItem, CycleCountTask, CycleCountItem, PickSkip, ShortPickIncident, FulfillmentCancel, PackingItem, PackingTask, IdempotencyKey)
 from rest_framework import serializers
-
-# -----------------------------------------------------------
-# IMPORT MODELS
-# -----------------------------------------------------------
 from apps.warehouse.models import (
     Warehouse, Zone, Aisle, Shelf, Bin,
     PickingTask, PickItem, PackingTask, PackingItem,
@@ -12,7 +7,6 @@ from apps.warehouse.models import (
     GRN, PutawayTask, PutawayItem,
     CycleCountTask, CycleCountItem
 )
-
 from apps.inventory.models import SKU, BinInventory, InventoryStock
 
 
