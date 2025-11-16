@@ -12,6 +12,12 @@ from .views import (
     CustomerMeView,
     RiderMeView,
     EmployeeMeView,
+    AdminLoginView,  
+    AdminMeView,  
+    AdminCreateRiderView,
+    AdminChangeRiderStatusView,
+    AdminCreateEmployeeView,
+    AdminChangeEmployeeStatusView,
 )
 
 urlpatterns = [
@@ -29,6 +35,18 @@ urlpatterns = [
     path("employee/request-otp/", EmployeeRequestOTPView.as_view()),
     path("employee/verify-otp/", EmployeeVerifyOTPView.as_view()),
     path("employee/me/", EmployeeMeView.as_view()),
+
+    # Admin auth
+    path("admin/login/", AdminLoginView.as_view()),
+    path("admin/me/", AdminMeView.as_view()),
+
+
+    # Admin rider/employee management
+    path("admin/riders/create/", AdminCreateRiderView.as_view()),
+    path("admin/riders/change-status/", AdminChangeRiderStatusView.as_view()),
+    path("admin/employees/create/", AdminCreateEmployeeView.as_view()),
+    path("admin/employees/change-status/", AdminChangeEmployeeStatusView.as_view()),
+
 
     # token refresh
     path("token/refresh/", TokenRefreshView.as_view()),

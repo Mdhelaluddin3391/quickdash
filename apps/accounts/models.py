@@ -140,10 +140,12 @@ class UserSession(models.Model):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sessions")
     role = models.CharField(max_length=16, choices=ROLE_CHOICES)
-    client = models.CharField(max_length=32)  # customer_app / rider_app / employee_app
+    client = models.CharField(max_length=32)  # customer_app / rider_app / employee_app / admin_panel
 
     jti = models.CharField(max_length=255, db_index=True)  # refresh token ID
     device_id = models.CharField(max_length=255, blank=True)
+    device_model = models.CharField(max_length=255, blank=True)   # 👈 NEW
+    os_version = models.CharField(max_length=100, blank=True)     # 👈 NEW
     user_agent = models.TextField(blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
 

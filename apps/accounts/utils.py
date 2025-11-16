@@ -1,5 +1,7 @@
 import random
+from datetime import timedelta
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import PhoneOTP, UserSession
@@ -23,6 +25,35 @@ def send_otp_sms(phone: str, otp_code: str, login_type: str):
     print(f"[SMS STUB] Sending OTP {otp_code} to {phone} for {login_type}")
 
 
+def check_otp_rate_limit(phone: str, login_type: str, ip: str | None = None):
+    """
+    Simple enterprise-style rate limit:
+    - same phone + login_type ke liye 60 seconds ke andar dusra OTP nahi
+    - per day max 10 OTP per phone+login_type
+    """
+    now = timezone.now()
+    one_min_ago = now - timedelta(seconds=60)
+    one_day_ago = now - timedelta(days=1)
+
+    # 1 min limit
+    recent = PhoneOTP.objects.filter(
+        phone=phone,
+        login_type=login_type,
+        created_at__gte=one_min_ago,
+    ).exists()
+    if recent:
+        raise ValidationError("OTP already sent recently. Please wait 60 seconds.")
+
+    # daily limit
+    daily_count = PhoneOTP.objects.filter(
+        phone=phone,
+        login_type=login_type,
+        created_at__gte=one_day_ago,
+    ).count()
+    if daily_count >= 10:
+        raise ValidationError("Too many OTP requests for today. Try again tomorrow.")
+
+
 def create_and_send_otp(phone: str, login_type: str) -> PhoneOTP:
     phone = normalize_phone(phone)
     otp_code = generate_otp_code()
@@ -42,9 +73,15 @@ def get_client_ip(request):
     return ip
 
 
-def create_tokens_with_session(*, user, role: str, client: str,
-                               extra_claims: dict | None = None,
-                               request=None):
+def create_tokens_with_session(
+    *,
+    user,
+    role: str,
+    client: str,
+    extra_claims: dict | None = None,
+    device_info: dict | None = None,
+    request=None,
+):
     """
     Enterprise style:
     - JWT (Refresh + Access) generate
@@ -63,6 +100,14 @@ def create_tokens_with_session(*, user, role: str, client: str,
     ip = get_client_ip(request)
     ua = request.META.get("HTTP_USER_AGENT", "") if request else ""
 
+    device_id = ""
+    device_model = ""
+    os_version = ""
+    if device_info:
+        device_id = device_info.get("device_id", "") or ""
+        device_model = device_info.get("device_model", "") or ""
+        os_version = device_info.get("os_version", "") or ""
+
     UserSession.objects.create(
         user=user,
         role=role,
@@ -70,6 +115,9 @@ def create_tokens_with_session(*, user, role: str, client: str,
         jti=jti,
         user_agent=ua,
         ip_address=ip,
+        device_id=device_id,
+        device_model=device_model,
+        os_version=os_version,
     )
 
     access = refresh.access_token
