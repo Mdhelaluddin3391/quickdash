@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
-
+from django.core.exceptions import ValidationError
 from .models import (
     User,
     CustomerProfile,
@@ -24,7 +24,7 @@ from .serializers import (
     AdminChangeRiderStatusSerializer,
     AdminChangeEmployeeStatusSerializer,
 )
-from .utils import create_and_send_otp, normalize_phone, create_tokens_with_session
+from .utils import create_and_send_otp, normalize_phone, create_tokens_with_session,check_otp_rate_limit,get_client_ip
 from .permissions import IsCustomer, IsRider, IsEmployee, IsAdmin
 
 
@@ -39,8 +39,22 @@ class BaseRequestOTPView(APIView):
         phone = serializer.validated_data["phone"]
 
         try:
+            # Rate limiting ko waapas add kiya gaya hai
+            check_otp_rate_limit(
+                phone=phone,
+                login_type=self.login_type,
+                ip=get_client_ip(request),
+            )
+            # Request ko handle karna
             return self.handle_request(phone)
+        
+        except ValidationError as e:
+            # Rate limit error ko handle karna
+            return Response(
+                {"detail": str(e)}, status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
         except ValueError as e:
+            # Baaki errors (jaise user not found)
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def handle_request(self, phone: str):
@@ -124,11 +138,18 @@ class CustomerVerifyOTPView(BaseVerifyOTPView):
         if not customer:
             customer = CustomerProfile.objects.create(user=user)
 
+        device_info = {
+            "device_id": request.data.get("device_id", ""),
+            "device_model": request.data.get("device_model", ""),
+            "os_version": request.data.get("os_version", ""),
+        }
+
         tokens = create_tokens_with_session(
             user=user,
             role=self.role_claim,
             client=self.client_claim,
             extra_claims={"customer_id": customer.id},
+            device_info=device_info,
             request=request,
         )
         return Response(tokens, status=status.HTTP_200_OK)
@@ -184,6 +205,12 @@ class RiderVerifyOTPView(BaseVerifyOTPView):
         if rider.status != "ACTIVE":
             raise ValueError("Rider is not active.")
 
+        device_info = {
+            "device_id": request.data.get("device_id", ""),
+            "device_model": request.data.get("device_model", ""),
+            "os_version": request.data.get("os_version", ""),
+        }
+
         tokens = create_tokens_with_session(
             user=user,
             role=self.role_claim,
@@ -192,6 +219,7 @@ class RiderVerifyOTPView(BaseVerifyOTPView):
                 "rider_id": rider.id,
                 "rider_code": rider.rider_code,
             },
+            device_info=device_info,
             request=request,
         )
         return Response(tokens, status=status.HTTP_200_OK)
@@ -247,6 +275,12 @@ class EmployeeVerifyOTPView(BaseVerifyOTPView):
         if not emp.is_active_employee:
             raise ValueError("Employee is not active.")
 
+        device_info = {
+            "device_id": request.data.get("device_id", ""),
+            "device_model": request.data.get("device_model", ""),
+            "os_version": request.data.get("os_version", ""),
+        }
+
         tokens = create_tokens_with_session(
             user=user,
             role=self.role_claim,
@@ -257,6 +291,7 @@ class EmployeeVerifyOTPView(BaseVerifyOTPView):
                 "warehouse_code": emp.warehouse_code,
                 "employee_role": emp.role,
             },
+            device_info=device_info,
             request=request,
         )
         return Response(tokens, status=status.HTTP_200_OK)
@@ -390,11 +425,20 @@ class AdminLoginView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
+        device_info = {
+            "device_id": request.data.get("device_id", ""),
+            "device_model": request.data.get("device_model", ""),
+            "os_version": request.data.get("os_version", ""),
+        }
+
+
         tokens = create_tokens_with_session(
             user=user,
             role="ADMIN",
             client="admin_panel",
             extra_claims={"admin_id": user.id},
+            request=request,
+            device_info=device_info,
             request=request,
         )
         return Response(tokens, status=status.HTTP_200_OK)

@@ -107,6 +107,16 @@ def create_tokens_with_session(
         device_id = device_info.get("device_id", "") or ""
         device_model = device_info.get("device_model", "") or ""
         os_version = device_info.get("os_version", "") or ""
+    
+    MAX_ACTIVE_SESSIONS_PER_CLIENT = 5
+    active_sessions = UserSession.objects.filter(
+        user=user, client=client, is_active=True
+    ).order_by("-created_at")
+    if active_sessions.count() >= MAX_ACTIVE_SESSIONS_PER_CLIENT:
+        # Purane sessions ko revoke karo (latest N ko rehne do)
+        for sess in active_sessions[MAX_ACTIVE_SESSIONS_PER_CLIENT - 1 :]:
+            sess.revoke()
+
 
     UserSession.objects.create(
         user=user,
