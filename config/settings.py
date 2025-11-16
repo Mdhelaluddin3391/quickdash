@@ -91,6 +91,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'apps.warehouse.middleware.IdempotencyMiddleware'
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -164,3 +165,8 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# My Custom Settings
+
+IDEMPOTENCY_KEY_TTL = datetime.timedelta(minutes=30)  # import datetime
+WMS_REFUND_WEBHOOK_URL = 'https://payments.example.com/api/refund/'  # your payments endpoint

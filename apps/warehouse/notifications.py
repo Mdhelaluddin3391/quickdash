@@ -1,0 +1,39 @@
+# apps/warehouse/notifications.py
+"""
+Placeholder notifications module.
+Replace implementations with your actual push / kafka / redis / sms integrations.
+"""
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+def notify_picker_new_task(picking_task):
+    # picking_task is a PickingTask instance
+    # Example: publish to Redis stream / push notification / websocket channel
+    payload = {
+        "type": "new_pick_task",
+        "task_id": str(picking_task.id),
+        "order_id": picking_task.order_id,
+        "warehouse_id": str(picking_task.warehouse_id)
+    }
+    logger.info("Notify picker: %s", payload)
+    # TODO: push to real system
+
+def notify_packer_new_task(packing_task):
+    payload = {
+        "type": "new_pack_task",
+        "packing_task_id": str(packing_task.id),
+        "order_id": packing_task.picking_task.order_id,
+        "warehouse_id": str(packing_task.picking_task.warehouse_id)
+    }
+    logger.info("Notify packer: %s", payload)
+
+def notify_dispatch_ready(dispatch_record):
+    payload = {
+        "type": "dispatch_ready",
+        "dispatch_id": str(dispatch_record.id),
+        "order_id": dispatch_record.order_id,
+        "warehouse_id": str(dispatch_record.warehouse_id)
+    }
+    logger.info("Notify dispatch: %s", payload)
