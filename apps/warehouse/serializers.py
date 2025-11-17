@@ -1,4 +1,3 @@
-# apps/warehouse/serializers.py
 from rest_framework import serializers
 
 from apps.warehouse.models import (
@@ -10,41 +9,6 @@ from apps.warehouse.models import (
 )
 from apps.inventory.models import SKU, BinInventory, InventoryStock
 
-@permission_classes([IsPicker])
-def scan_pick_view(...)
-
-@permission_classes([IsPicker])
-def pick_skip_view(...)
-
-@permission_classes([IsPicker])
-def short_pick_view(...)
-
-@permission_classes([IsPacker])
-def create_packing_view(...)
-
-@permission_classes([IsPacker])
-def complete_packing_view(...)
-
-@permission_classes([IsPacker])
-def create_grn_putaway_view(...)
-
-@permission_classes([IsPacker])
-def place_putaway_item_view(...)
-
-@permission_classes([IsWarehouseManager])
-def create_grn_putaway_view(...)
-
-@permission_classes([IsWarehouseManager])
-def place_putaway_item_view(...)
-
-@permission_classes([IsAuditor])
-def create_cycle_view(...)
-
-@permission_classes([IsAuditor])
-def record_cycle_item_view(...)
-
-@permission_classes([IsAdmin])
-def admin_fc_view(...)
 
 # --------- Basic structure --------- #
 
@@ -91,7 +55,7 @@ class BinSerializer(serializers.ModelSerializer):
         ]
 
 
-# --------- Inventory serializers (read-only from inventory app) --------- #
+# --------- Inventory serializers --------- #
 
 class SKUSerializer(serializers.ModelSerializer):
     class Meta:
@@ -125,7 +89,7 @@ class InventoryStockSerializer(serializers.ModelSerializer):
         ]
 
 
-# --------- Picking / Packing / Dispatch --------- #
+# --------- Picking --------- #
 
 class PickItemSerializer(serializers.ModelSerializer):
     sku_code = serializers.CharField(source="sku.sku_code", read_only=True)
@@ -169,6 +133,8 @@ class PickingTaskSerializer(serializers.ModelSerializer):
         ]
 
 
+# --------- Packing --------- #
+
 class PackingItemSerializer(serializers.ModelSerializer):
     sku_code = serializers.CharField(source="sku.sku_code", read_only=True)
 
@@ -200,6 +166,8 @@ class PackingTaskSerializer(serializers.ModelSerializer):
         ]
 
 
+# --------- Dispatch --------- #
+
 class DispatchRecordSerializer(serializers.ModelSerializer):
     warehouse_code = serializers.CharField(source="warehouse.code", read_only=True)
 
@@ -221,7 +189,7 @@ class DispatchRecordSerializer(serializers.ModelSerializer):
         ]
 
 
-# --------- Exceptions info serializers --------- #
+# --------- Exceptions info --------- #
 
 class PickSkipSerializer(serializers.ModelSerializer):
     class Meta:

@@ -1,61 +1,92 @@
-# apps/warehouse/urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
 from .views import (
+    # ViewSets
     WarehouseViewSet,
     BinViewSet,
     PickingTaskViewSet,
     PackingTaskViewSet,
     DispatchViewSet,
+
+    # Listings
     BinInventoryList,
     InventoryStockList,
+
+    # Automation
     OrderWebhookAPIView,
+
+    # Picking
     scan_pick_view,
     pick_skip_view,
     short_pick_view,
     admin_fc_view,
+
+    # Packing
     create_packing_view,
     complete_packing_view,
+
+    # Inbound (GRN + Putaway)
     create_grn_putaway_view,
     place_putaway_item_view,
+
+    # Cycle count
     create_cycle_view,
     record_cycle_item_view,
 )
 
+# ===============================================================
+#                     ROUTER (ViewSets)
+# ===============================================================
+
 router = DefaultRouter()
 router.register(r"warehouses", WarehouseViewSet, basename="warehouse")
 router.register(r"bins", BinViewSet, basename="bin")
-router.register(r"pick-tasks", PickingTaskViewSet, basename="picktask")
-router.register(r"pack-tasks", PackingTaskViewSet, basename="packtask")
+router.register(r"picking/tasks", PickingTaskViewSet, basename="picking-task")
+router.register(r"packing/tasks", PackingTaskViewSet, basename="packing-task")
 router.register(r"dispatch", DispatchViewSet, basename="dispatch")
 
 urlpatterns = [
-    # ViewSets
+
+    # ===============================================================
+    #                          STRUCTURE APIs
+    # ===============================================================
     path("", include(router.urls)),
 
-    # Inventory listings
-    path("bin-inventory/", BinInventoryList.as_view(), name="bin-inventory"),
-    path("inventory-stock/", InventoryStockList.as_view(), name="inventory-stock"),
+    # ===============================================================
+    #                          INVENTORY
+    # ===============================================================
+    path("inventory/bin/", BinInventoryList.as_view(), name="wms-bin-inventory"),
+    path("inventory/stock/", InventoryStockList.as_view(), name="wms-inventory-stock"),
 
-    # Order automation
-    path("auto/process_order/", OrderWebhookAPIView.as_view(), name="auto-process-order"),
+    # ===============================================================
+    #                          ORDER AUTOMATION
+    # ===============================================================
+    path("auto/order/process/", OrderWebhookAPIView.as_view(), name="wms-auto-process-order"),
 
-    # Picking
-    path("pick/scan/", scan_pick_view, name="pick-scan"),
-    path("pick/skip/", pick_skip_view, name="pick-skip"),
-    path("pick/short/", short_pick_view, name="pick-short"),
-    path("pick/fulfillment_cancel/", admin_fc_view, name="pick-fc"),
+    # ===============================================================
+    #                          PICKING (PICKER ONLY)
+    # ===============================================================
+    path("picking/scan/", scan_pick_view, name="wms-pick-scan"),
+    path("picking/skip/", pick_skip_view, name="wms-pick-skip"),
+    path("picking/short/", short_pick_view, name="wms-pick-short"),
+    path("picking/fulfillment-cancel/", admin_fc_view, name="wms-pick-fc"),
 
-    # Packing
-    path("pack/create/", create_packing_view, name="pack-create"),
-    path("pack/complete/", complete_packing_view, name="pack-complete"),
+    # ===============================================================
+    #                          PACKING (PACKER ONLY)
+    # ===============================================================
+    path("packing/create/", create_packing_view, name="wms-pack-create"),
+    path("packing/complete/", complete_packing_view, name="wms-pack-complete"),
 
-    # Putaway / GRN
-    path("putaway/create_grn/", create_grn_putaway_view, name="create-grn"),
-    path("putaway/place/", place_putaway_item_view, name="putaway-place"),
+    # ===============================================================
+    #                     INBOUND (GRN + PUTAWAY – MANAGER ONLY)
+    # ===============================================================
+    path("inbound/grn/create/", create_grn_putaway_view, name="wms-grn-create"),
+    path("inbound/putaway/place/", place_putaway_item_view, name="wms-putaway-place"),
 
-    # Cycle count
-    path("cycle/create/", create_cycle_view, name="cycle-create"),
-    path("cycle/record/", record_cycle_item_view, name="cycle-record"),
+    # ===============================================================
+    #                       CYCLE COUNT (AUDITOR ONLY)
+    # ===============================================================
+    path("audit/cycle/create/", create_cycle_view, name="wms-cycle-create"),
+    path("audit/cycle/record/", record_cycle_item_view, name="wms-cycle-record"),
 ]

@@ -1,6 +1,7 @@
-# apps/warehouse/services.py
-from django.db import transaction
+from django.db import transaction, models
 from django.utils import timezone
+
+from .realtime import broadcast_wms_event
 
 from apps.inventory.models import InventoryStock, BinInventory, StockMovement, SKU
 from apps.warehouse.models import (
@@ -17,19 +18,6 @@ from .utils.warehouse_selector import select_best_warehouse
 
 
 # ================== Reservation ================== #
-from channels.layers import get_channel_layer
-layer = get_channel_layer()
-
-async def broadcast(event):
-    await layer.group_send(
-        "wms_realtime",
-        {
-            "type": "wms_event",
-            "data": event,
-        }
-    )
-
-
 
 @transaction.atomic
 def reserve_stock_for_order(order_id, warehouse_id, items):
@@ -86,7 +74,6 @@ def reserve_stock_for_order(order_id, warehouse_id, items):
             remaining -= take
 
         if remaining > 0:
-            # rollback via transaction
             raise OutOfStockError(
                 f"Not enough bin-level stock for SKU {sku_id} in warehouse {warehouse.code}"
             )
@@ -101,9 +88,6 @@ def reserve_stock_for_order(order_id, warehouse_id, items):
 
 @transaction.atomic
 def create_picking_task_from_reservation(order_id, warehouse_id, allocations, picker=None):
-    """
-    allocations from reserve_stock_for_order.
-    """
     task = PickingTask.objects.create(
         order_id=str(order_id),
         warehouse_id=warehouse_id,
@@ -127,9 +111,6 @@ def create_picking_task_from_reservation(order_id, warehouse_id, allocations, pi
 
 @transaction.atomic
 def scan_pick(task_id, bin_id, sku_id, qty, scanned_by=None):
-    """
-    Scan an item while picking.
-    """
     qty = int(qty)
 
     item = PickItem.objects.select_for_update().get(
@@ -148,12 +129,24 @@ def scan_pick(task_id, bin_id, sku_id, qty, scanned_by=None):
         task.status = "in_progress"
         task.started_at = timezone.now()
 
-    # if all items fulfilled -> complete
     all_done = not task.items.filter(picked_qty__lt=models.F("qty")).exists()
     if all_done:
         task.status = "completed"
         task.completed_at = timezone.now()
+
     task.save()
+
+    # 🔥 Real-time broadcast
+    broadcast_wms_event({
+        "type": "picking_update",
+        "task_id": str(task.id),
+        "order_id": task.order_id,
+        "warehouse_id": str(task.warehouse_id),
+        "sku_id": str(item.sku_id),
+        "bin_id": str(item.bin_id),
+        "picked_qty": item.picked_qty,
+        "remaining": item.remaining,
+    })
 
     return item
 
@@ -246,6 +239,16 @@ def complete_packing(packing_task_id, packer=None, total_weight_kg=None):
             "status": "ready",
         },
     )
+
+    broadcast_wms_event({
+        "type": "packing_completed",
+        "packing_task_id": str(pack_task.id),
+        "order_id": pack_task.picking_task.order_id,
+        "warehouse_id": str(pack_task.picking_task.warehouse_id),
+        "dispatch_id": str(dispatch.id),
+        "status": dispatch.status,
+    })
+
     return dispatch
 
 
@@ -253,9 +256,6 @@ def complete_packing(packing_task_id, packer=None, total_weight_kg=None):
 
 @transaction.atomic
 def create_grn_and_putaway(warehouse_id, grn_no, items, created_by=None):
-    """
-    items = [ {"sku_id": <uuid>, "qty": int}, ... ]
-    """
     wh = Warehouse.objects.select_for_update().get(id=warehouse_id)
     grn = GRN.objects.create(
         warehouse=wh,
@@ -275,6 +275,14 @@ def create_grn_and_putaway(warehouse_id, grn_no, items, created_by=None):
             sku_id=it["sku_id"],
             expected_qty=int(it["qty"]),
         )
+
+    broadcast_wms_event({
+        "type": "grn_created",
+        "grn_id": str(grn.id),
+        "grn_no": grn.grn_no,
+        "warehouse_id": str(wh.id),
+    })
+
     return grn, task
 
 
@@ -320,25 +328,22 @@ def place_putaway_item(task_id, bin_id, sku_id, qty, placed_by=None):
         reference_id=str(task.grn_id),
     )
 
-    # if all items fully placed -> complete task & grn
     all_done = not task.items.filter(placed_qty__lt=models.F("expected_qty")).exists()
     if all_done:
         task.status = "completed"
         task.completed_at = timezone.now()
         task.save(update_fields=["status", "completed_at"])
+
         task.grn.status = "completed"
         task.grn.save(update_fields=["status"])
 
     return item
 
 
-# ================== Cycle count / Audit ================== #
+# ================== Cycle count ================== #
 
 @transaction.atomic
 def create_cycle_count(warehouse_id, created_by=None, sample_bins=None):
-    """
-    sample_bins: list of bin_ids to include; if None -> all bins in warehouse.
-    """
     wh = Warehouse.objects.get(id=warehouse_id)
     task = CycleCountTask.objects.create(
         warehouse=wh,

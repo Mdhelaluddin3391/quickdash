@@ -2,20 +2,35 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.utils import timezone
 from datetime import timedelta
-import uuid 
+import uuid
 from .managers import UserManager
 from django.db import transaction
 
+# High-level app role (for login / client app)
+USER_ROLE_CHOICES = [
+    ("CUSTOMER", "Customer"),
+    ("RIDER", "Rider"),
+    ("EMPLOYEE", "Employee"),
+    ("ADMIN", "Admin"),
+]
+
+
 class User(AbstractBaseUser, PermissionsMixin):
-    
     phone = models.CharField(max_length=15, unique=True)
     email = models.EmailField(null=True, blank=True)
     full_name = models.CharField(max_length=255, blank=True)
 
-    # role flags
+    # flags
     is_customer = models.BooleanField(default=False)
     is_rider = models.BooleanField(default=False)
     is_employee = models.BooleanField(default=False)
+
+    # high-level role (only one primary app role)
+    app_role = models.CharField(
+        max_length=20,
+        choices=USER_ROLE_CHOICES,
+        default="CUSTOMER",
+    )
 
     # standard django flags
     is_active = models.BooleanField(default=True)
@@ -25,11 +40,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     USERNAME_FIELD = "phone"
     REQUIRED_FIELDS = []
-    role = models.CharField(
-        max_length=20,
-        choices=ROLE_CHOICES,
-        default="picker",
-    )
+
     objects = UserManager()
 
     def __str__(self):
@@ -74,7 +85,7 @@ class EmployeeProfile(models.Model):
         ("SUPERVISOR", "Supervisor"),
         ("MANAGER", "Manager"),
         ("SUPPORT", "Support"),
-        ("ADMIN", "Admin")
+        ("ADMIN", "Admin"),
     ]
 
     user = models.OneToOneField(
@@ -118,21 +129,18 @@ class PhoneOTP(models.Model):
         Create an OTP but first invalidate old OTPs for this phone+login_type.
         Use a DB transaction to avoid races.
         """
-
         now = timezone.now()
         expires_at = now + timedelta(minutes=ttl_minutes)
         with transaction.atomic():
-            # Optionally keep last N for audit, but mark them expired to prevent reuse
-            cls.objects.filter(phone=phone, login_type=login_type, is_used=False).update(
-                is_used=True
-            )
+            cls.objects.filter(
+                phone=phone, login_type=login_type, is_used=False
+            ).update(is_used=True)
             return cls.objects.create(
                 phone=phone,
                 login_type=login_type,
                 otp_code=code,
                 expires_at=expires_at,
             )
-
 
     def is_valid(self, otp_code):
         now = timezone.now()
@@ -159,13 +167,15 @@ class UserSession(models.Model):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sessions")
     role = models.CharField(max_length=16, choices=ROLE_CHOICES)
-    client = models.CharField(max_length=32)  # customer_app / rider_app / employee_app / admin_panel
+    client = models.CharField(
+        max_length=32
+    )  # customer_app / rider_app / employee_app / admin_panel
 
     jti = models.CharField(max_length=255, db_index=True)  # refresh token ID
 
     device_id = models.CharField(max_length=255, blank=True)
-    device_model = models.CharField(max_length=255, blank=True)   # 👈 NEW
-    os_version = models.CharField(max_length=100, blank=True)     # 👈 NEW
+    device_model = models.CharField(max_length=255, blank=True)
+    os_version = models.CharField(max_length=100, blank=True)
 
     user_agent = models.TextField(blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
@@ -183,11 +193,11 @@ class UserSession(models.Model):
         self.save(update_fields=["is_active", "revoked_at"])
 
 
-
 class PasswordResetToken(models.Model):
     """
     Admin password reset ke liye token store karta hai.
     """
+
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="reset_tokens")
     token = models.CharField(max_length=100, unique=True, default=uuid.uuid4)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -200,12 +210,11 @@ class PasswordResetToken(models.Model):
     @classmethod
     def create_token(cls, user, ttl_minutes=60):
         now = timezone.now()
-        # Purane tokens (agar hain) ko inactive kar do
         cls.objects.filter(user=user, is_used=False).update(is_used=True)
-        
+
         return cls.objects.create(
             user=user,
-            expires_at=now + timedelta(minutes=ttl_minutes)
+            expires_at=now + timedelta(minutes=ttl_minutes),
         )
 
     def is_valid(self):

@@ -1,13 +1,19 @@
-# apps/warehouse/views.py
 import logging
 
-from django.db import models
 from django.db.models import F
 from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAuthenticated
+
+from apps.accounts.permissions import (
+    IsPickerEmployee,
+    IsPackerEmployee,
+    IsAuditorEmployee,
+    IsWarehouseManagerEmployee,
+    IsAdminEmployee,
+)
 
 from apps.inventory.models import BinInventory, InventoryStock
 from apps.warehouse.models import (
@@ -36,7 +42,9 @@ from apps.warehouse.tasks import orchestrate_order_fulfilment_from_order_payload
 logger = logging.getLogger(__name__)
 
 
-# --------- ViewSets --------- #
+# ===================================================================
+#                          WAREHOUSE STRUCTURE
+# ===================================================================
 
 class WarehouseViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Warehouse.objects.filter(is_active=True)
@@ -49,6 +57,10 @@ class BinViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = BinSerializer
     permission_classes = [IsAuthenticated]
 
+
+# ===================================================================
+#                          WMS TASK VIEWSETS
+# ===================================================================
 
 class PickingTaskViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = PickingTask.objects.all().prefetch_related("items", "warehouse")
@@ -77,7 +89,9 @@ class DispatchViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
 
-# --------- Inventory listing --------- #
+# ===================================================================
+#                           INVENTORY LISTING
+# ===================================================================
 
 class BinInventoryList(generics.ListAPIView):
     serializer_class = BinInventorySerializer
@@ -109,19 +123,21 @@ class InventoryStockList(generics.ListAPIView):
         return qs
 
 
-# --------- Order automation webhook (sync) --------- #
+# ===================================================================
+#                        ORDER WEBHOOK (SYNC+ASYNC)
+# ===================================================================
 
 class OrderWebhookAPIView(APIView):
     """
-    POST body:
+    Payload:
     {
       "order_id": "O123",
-      "warehouse_id": "<uuid optional>",
-      "items": [{"sku_id": "<uuid>", "qty": 2}, ...],
+      "warehouse_id": "<uuid>",
+      "items": [{"sku_id": "<uuid>", "qty": 2}],
       "mode": "async" or "sync"
     }
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsWarehouseManagerEmployee]
 
     def post(self, request, *args, **kwargs):
         data = request.data
@@ -143,13 +159,10 @@ class OrderWebhookAPIView(APIView):
             orchestrate_order_fulfilment_from_order_payload.delay(payload)
             return Response({"status": "queued"}, status=202)
 
-        # sync: reserve + create picking task directly
+        if warehouse_id is None:
+            return Response({"detail": "warehouse_id required for sync mode"}, status=400)
+
         try:
-            if warehouse_id is None:
-                return Response(
-                    {"detail": "warehouse_id required for sync mode"},
-                    status=400,
-                )
             allocations = reserve_stock_for_order(order_id, warehouse_id, items)
             from apps.warehouse.services import create_picking_task_from_reservation
             task = create_picking_task_from_reservation(order_id, warehouse_id, allocations)
@@ -159,14 +172,13 @@ class OrderWebhookAPIView(APIView):
         return Response(PickingTaskSerializer(task).data, status=201)
 
 
-# --------- Picking endpoints --------- #
+# ===================================================================
+#                              PICKING (PICKER ONLY)
+# ===================================================================
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsPickerEmployee])
 def scan_pick_view(request):
-    """
-    body: { "task_id": "", "bin_id": "", "sku_id": "", "qty": 1 }
-    """
     try:
         item = scan_pick(
             request.data["task_id"],
@@ -177,16 +189,12 @@ def scan_pick_view(request):
         )
     except Exception as e:
         return Response({"detail": str(e)}, status=400)
-
     return Response(PickItemSerializer(item).data)
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsPickerEmployee])
 def pick_skip_view(request):
-    """
-    body: { "pick_item_id": "", "reason": "" }
-    """
     try:
         skip = create_pick_skip(
             request.data["pick_item_id"],
@@ -200,11 +208,8 @@ def pick_skip_view(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsPickerEmployee])
 def short_pick_view(request):
-    """
-    body: { "pick_item_id": "", "note": "" }
-    """
     try:
         incident = record_short_pick(
             request.data["pick_item_id"],
@@ -217,12 +222,13 @@ def short_pick_view(request):
     return Response(ShortPickIncidentSerializer(incident).data)
 
 
+# ===================================================================
+#                     ADMIN OVERRIDE (ADMIN ONLY)
+# ===================================================================
+
 @api_view(["POST"])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAdminEmployee])
 def admin_fc_view(request):
-    """
-    body: { "pick_item_id": "", "reason": "" }
-    """
     try:
         fc = create_fulfillment_cancel(
             request.data["pick_item_id"],
@@ -235,14 +241,13 @@ def admin_fc_view(request):
     return Response(FulfillmentCancelSerializer(fc).data)
 
 
-# --------- Packing endpoints --------- #
+# ===================================================================
+#                              PACKING (PACKER ONLY)
+# ===================================================================
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsPackerEmployee])
 def create_packing_view(request):
-    """
-    body: { "picking_task_id": "" }
-    """
     try:
         pack_task = create_packing_task_from_picking(
             request.data["picking_task_id"],
@@ -250,16 +255,12 @@ def create_packing_view(request):
         )
     except Exception as e:
         return Response({"detail": str(e)}, status=400)
-
     return Response(PackingTaskSerializer(pack_task).data)
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsPackerEmployee])
 def complete_packing_view(request):
-    """
-    body: { "packing_task_id": "", "total_weight_kg": 3.5 }
-    """
     try:
         dispatch = complete_packing(
             request.data["packing_task_id"],
@@ -272,18 +273,13 @@ def complete_packing_view(request):
     return Response(DispatchRecordSerializer(dispatch).data)
 
 
-# --------- Inbound: GRN + Putaway --------- #
+# ===================================================================
+#                     INBOUND (GRN + PUTAWAY – MANAGER ONLY)
+# ===================================================================
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsWarehouseManagerEmployee])
 def create_grn_putaway_view(request):
-    """
-    body: {
-      "warehouse_id": "",
-      "grn_no": "",
-      "items": [{"sku_id": "", "qty": 10}, ...]
-    }
-    """
     wh_id = request.data.get("warehouse_id")
     grn_no = request.data.get("grn_no")
     items = request.data.get("items", [])
@@ -308,11 +304,8 @@ def create_grn_putaway_view(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsWarehouseManagerEmployee])
 def place_putaway_item_view(request):
-    """
-    body: { "task_id": "", "bin_id": "", "sku_id": "", "qty": 10 }
-    """
     try:
         item = place_putaway_item(
             request.data["task_id"],
@@ -327,14 +320,13 @@ def place_putaway_item_view(request):
     return Response(PutawayItemSerializer(item).data)
 
 
-# --------- Cycle count --------- #
+# ===================================================================
+#                       CYCLE COUNT (AUDITOR ONLY)
+# ===================================================================
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuditorEmployee])
 def create_cycle_view(request):
-    """
-    body: { "warehouse_id": "", "bin_ids": [.. optional ..] }
-    """
     wh_id = request.data.get("warehouse_id")
     bin_ids = request.data.get("bin_ids")
     try:
@@ -345,11 +337,8 @@ def create_cycle_view(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuditorEmployee])
 def record_cycle_item_view(request):
-    """
-    body: { "task_id": "", "bin_id": "", "sku_id": "", "counted_qty": 10 }
-    """
     try:
         item = record_cycle_count_item(
             request.data["task_id"],

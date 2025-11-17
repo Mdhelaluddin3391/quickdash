@@ -1,5 +1,8 @@
 from rest_framework.permissions import BasePermission
 
+ffrom rest_framework.permissions import BasePermission
+from .models import EmployeeProfile
+
 
 def _get_token_claim(request, key, default=None):
     token = getattr(request, "auth", None)
@@ -13,29 +16,54 @@ def _get_token_claim(request, key, default=None):
         return getattr(token, key, default)
 
 
-from rest_framework.permissions import BasePermission
+
+def _get_employee_role(user):
+    """
+    Helper: safe way to get employee role or None
+    """
+    if not user or not user.is_authenticated:
+        return None
+    try:
+        profile = user.employee_profile
+    except EmployeeProfile.DoesNotExist:
+        return None
+    if not profile.is_active_employee:
+        return None
+    return profile.role
 
 
-class IsPicker(BasePermission):
+class IsEmployee(BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role == "picker"
+        return _get_employee_role(request.user) is not None
 
 
-class IsPacker(BasePermission):
+class IsPickerEmployee(BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role == "packer"
+        return _get_employee_role(request.user) == "PICKER"
 
 
-class IsWarehouseManager(BasePermission):
+class IsPackerEmployee(BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role == "manager"
+        return _get_employee_role(request.user) == "PACKER"
 
 
-class IsAuditor(BasePermission):
+class IsAuditorEmployee(BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role == "auditor"
+        return _get_employee_role(request.user) == "AUDITOR"
 
 
-class IsAdmin(BasePermission):
+class IsWarehouseManagerEmployee(BasePermission):
+    """
+    Manager level access: MANAGER or SUPERVISOR or ADMIN employees
+    """
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role == "admin"
+        role = _get_employee_role(request.user)
+        return role in ("MANAGER", "SUPERVISOR", "ADMIN")
+
+
+class IsAdminEmployee(BasePermission):
+    """
+    Strict admin, warehouse-level
+    """
+    def has_permission(self, request, view):
+        return _get_employee_role(request.user) == "ADMIN"
