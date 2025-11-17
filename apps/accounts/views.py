@@ -135,19 +135,25 @@ class CustomerVerifyOTPView(BaseVerifyOTPView):
         self._validate_otp(phone, otp_code)
 
         # Step 2: User ko ab create ya get karein (Verification ke baad)
-        user, created = User.objects.get_or_create(phone=phone)
-        if created:
-            user.is_customer = True
-            user.save(update_fields=["is_customer"])
-            customer = CustomerProfile.objects.create(user=user)
-        else:
-            if not user.is_customer:
-                user.is_customer = True
-                user.save(update_fields=["is_customer"])
-            customer, _ = CustomerProfile.objects.get_or_create(user=user)
+        # FIX: Default mein app_role="CUSTOMER" set kiya
+        user, created = User.objects.get_or_create(
+            phone=phone, 
+            defaults={"app_role": "CUSTOMER"}
+        )
         
-        if not customer:
-             customer = CustomerProfile.objects.create(user=user)
+        update_fields = []
+        if not user.is_customer:
+            user.is_customer = True
+            update_fields.append("is_customer")
+        
+        # FIX: Agar user pehle se tha (jaise employee) toh uska app_role update nahi hoga,
+        # lekin humein Customer banne ke liye flag True karna zaroori hai.
+        # Naye user ka app_role default="CUSTOMER" se set ho jaayega.
+        
+        if update_fields:
+            user.save(update_fields=update_fields)
+
+        customer, _ = CustomerProfile.objects.get_or_create(user=user)
 
 
         device_info = {
@@ -482,13 +488,27 @@ class AdminCreateRiderView(APIView):
         full_name = serializer.validated_data["full_name"]
         vehicle_type = serializer.validated_data.get("vehicle_type", "")
 
+        # FIX: Default mein app_role="RIDER" set kiya
         user, created = User.objects.get_or_create(
-            phone=phone, defaults={"full_name": full_name}
+            phone=phone, defaults={"full_name": full_name, "app_role": "RIDER"}
         )
+        
+        update_fields = []
         if not created and user.full_name != full_name:
             user.full_name = full_name
-        user.is_rider = True
-        user.save(update_fields=["is_rider", "full_name"])
+            update_fields.append("full_name")
+            
+        if not user.is_rider:
+            user.is_rider = True
+            update_fields.append("is_rider")
+        
+        # FIX: Agar user pehle se tha (jaise customer) toh uska app_role "RIDER" set karein
+        if user.app_role != "RIDER":
+            user.app_role = "RIDER"
+            update_fields.append("app_role")
+            
+        if update_fields:
+            user.save(update_fields=update_fields)
 
         # simple rider_code generator
         if hasattr(user, "rider_profile"):
@@ -572,13 +592,27 @@ class AdminCreateEmployeeView(APIView):
         role = serializer.validated_data["role"]
         warehouse_code = serializer.validated_data["warehouse_code"]
 
+        # FIX: Default mein app_role="EMPLOYEE" set kiya
         user, created = User.objects.get_or_create(
-            phone=phone, defaults={"full_name": full_name}
+            phone=phone, defaults={"full_name": full_name, "app_role": "EMPLOYEE"}
         )
+        
+        update_fields = []
         if not created and user.full_name != full_name:
             user.full_name = full_name
-        user.is_employee = True
-        user.save(update_fields=["is_employee", "full_name"])
+            update_fields.append("full_name")
+            
+        if not user.is_employee:
+            user.is_employee = True
+            update_fields.append("is_employee")
+            
+        # FIX: Agar user pehle se tha (jaise customer) toh uska app_role "EMPLOYEE" set karein
+        if user.app_role != "EMPLOYEE":
+            user.app_role = "EMPLOYEE"
+            update_fields.append("app_role")
+
+        if update_fields:
+            user.save(update_fields=update_fields)
 
         if hasattr(user, "employee_profile"):
             emp = user.employee_profile

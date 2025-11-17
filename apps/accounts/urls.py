@@ -22,6 +22,8 @@ from .views import (
     AdminResetPasswordView,
     CustomTokenRefreshView,
 )
+# FIX: Yeh import missing tha
+from .views_roles import ChangeUserRole 
 
 urlpatterns = [
     # Customer auth
@@ -56,6 +58,7 @@ urlpatterns = [
     path("token/refresh/", CustomTokenRefreshView.as_view()),
     # logout
     path("logout/", LogoutView.as_view()),
+    # FIX: Ab yeh URL kaam karega
     path("change-role/", ChangeUserRole.as_view()),
 
 ]
