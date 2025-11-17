@@ -2,7 +2,6 @@
 from celery import shared_task
 from celery.utils.log import get_task_logger
 from django.db import transaction
-from .utils.warehouse_selector import choose_best_warehouse_for_order
 from .services import reserve_stock_for_order, create_picking_task_from_reservation, create_packing_task_from_picking, complete_packing, assign_dispatch
 from .notifications import notify_picker_new_task, notify_packer_new_task, notify_dispatch_ready
 from .exceptions import NoAvailableWarehouseError, ReservationFailedError
@@ -12,8 +11,8 @@ import requests
 from django.conf import settings
 from celery.utils.log import get_task_logger
 from django.db import transaction
-from .warehouse_selector import choose_best_warehouse_for_order # <-- YEH SAHI HAI
-from .services import reserve_stock_for_order, create_picking_task_from_reservation, create_packing_task_from_picking, complete_packing, assign_dispatch
+from .utils.warehouse_selector import choose_best_warehouse_for_order
+
 
 logger = get_task_logger(__name__)
 

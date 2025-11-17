@@ -5,8 +5,8 @@ import logging
 
 # Custom signal that other apps can send if they don't use Django Order model:
 # send_order_created.send(sender=..., order_id=..., order_items=[{sku_id, qty}], metadata={...})
-send_order_created = Signal(providing_args=["order_id", "order_items", "metadata"])
-
+# send_order_created = Signal(providing_args=["order_id", "order_items", "metadata"])
+send_order_created = Signal()
 logger = logging.getLogger(__name__)
 
 # Import Celery task that orchestrates

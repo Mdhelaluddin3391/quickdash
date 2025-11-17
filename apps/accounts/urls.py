@@ -53,7 +53,7 @@ urlpatterns = [
     path("admin/employees/change-status/", AdminChangeEmployeeStatusView.as_view()),
 
     # token refresh
-    path("token/refresh/", TokenRefreshView.as_view()),
+    path("token/refresh/", CustomTokenRefreshView.as_view()),
     # logout
     path("logout/", LogoutView.as_view()),
 ]

@@ -29,6 +29,13 @@ from .serializers import (
 )
 from .utils import create_and_send_otp, normalize_phone, create_tokens_with_session,check_otp_rate_limit,get_client_ip
 from .permissions import IsCustomer, IsRider, IsEmployee, IsAdmin
+from rest_framework_simplejwt.views import TokenRefreshView
+from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
+from .utils import rotate_refresh_token
+from .models import PasswordResetToken
+
+
+
 
 
 # ========== Base OTP Views ==========
@@ -643,6 +650,38 @@ class AdminChangeEmployeeStatusView(APIView):
 
         return Response({"detail": "Employee status updated."})
 
+
+# ========== CUSTOM TOKEN REFRESH VIEW ==========
+
+class CustomTokenRefreshView(TokenRefreshView):
+    """
+    Standard TokenRefreshView ko override kiya gaya hai taaki hum:
+    1. Token Rotation laagu kar sakein (naya refresh token return karein).
+    2. Hamare UserSession model mein naye token ka 'jti' update kar sakein.
+    """
+    def post(self, request, *args, **kwargs):
+        refresh_token = request.data.get("refresh")
+        if not refresh_token:
+            raise InvalidToken("Refresh token not provided")
+
+        try:
+            # Hamara custom utility function (utils.py se)
+            # Yeh rotation aur session update, dono handle karta hai
+            rotated_tokens = rotate_refresh_token(
+                old_refresh_token_str=refresh_token,
+                request=request
+            )
+            return Response(rotated_tokens, status=status.HTTP_200_OK)
+
+        except TokenError as e:
+            # Agar token invalid, expired ya revoke ho chuka hai
+            raise InvalidToken(e.args[0])
+        except Exception as e:
+            # Koi aur galti (jaise session nahi mila)
+            return Response(
+                {"detail": f"Token rotation failed: {str(e)}"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
 # ========== ADMIN PASSWORD RESET ==========
