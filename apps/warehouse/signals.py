@@ -82,4 +82,4 @@ def create_packing_for_pick_task(pick_task_id):
         notify_packer_new_task(pack)
     except Exception:
         import logging
-        logging.exception("Failed to
+        logging.exception("Failed to import warehouse signals")

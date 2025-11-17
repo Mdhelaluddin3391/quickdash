@@ -62,7 +62,9 @@ INSTALLED_APPS = [
 ]
 
 
-AUTH_USER_MODEL = 'apps.accounts.User'
+# AUTH_USER_MODEL = 'apps.accounts.User'
+AUTH_USER_MODEL = 'accounts.User'
+
 
 
 

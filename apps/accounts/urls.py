@@ -20,6 +20,7 @@ from .views import (
     AdminChangeEmployeeStatusView,
     AdminForgotPasswordView,
     AdminResetPasswordView,
+    CustomTokenRefreshView,
 )
 
 urlpatterns = [

@@ -107,13 +107,25 @@ class PhoneOTP(models.Model):
 
     @classmethod
     def create_otp(cls, phone, login_type, code, ttl_minutes=5):
+        """
+        Create an OTP but first invalidate old OTPs for this phone+login_type.
+        Use a DB transaction to avoid races.
+        """
+
         now = timezone.now()
-        return cls.objects.create(
-            phone=phone,
-            login_type=login_type,
-            otp_code=code,
-            expires_at=now + timedelta(minutes=ttl_minutes),
-        )
+        expires_at = now + timedelta(minutes=ttl_minutes)
+        with transaction.atomic():
+            # Optionally keep last N for audit, but mark them expired to prevent reuse
+            cls.objects.filter(phone=phone, login_type=login_type, is_used=False).update(
+                is_used=True
+            )
+            return cls.objects.create(
+                phone=phone,
+                login_type=login_type,
+                otp_code=code,
+                expires_at=expires_at,
+            )
+
 
     def is_valid(self, otp_code):
         now = timezone.now()

@@ -80,48 +80,17 @@ class BaseVerifyOTPView(APIView):
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-    def handle_verify(self, request, phone: str, otp_code: str):
-        raise NotImplementedError
-
-    def _get_latest_otp(self, phone: str):
-        return (
-            PhoneOTP.objects.filter(phone=phone, login_type=self.login_type)
+    @transaction.atomic
+    def _validate_otp(self, phone: str, otp_code: str) -> PhoneOTP:
+        """
+        Atomically OTP ko check aur 'used' mark karta hai.
+        """
+        otp_obj = (
+            PhoneOTP.objects.select_for_update()
+            .filter(phone=phone, login_type=self.login_type)
             .order_by("-created_at")
             .first()
         )
-
-
-# ========== CUSTOMER AUTH ==========
-
-class CustomerRequestOTPView(BaseRequestOTPView):
-    login_type = "CUSTOMER"
-
-    @transaction.atomic
-    def handle_request(self, phone: str):
-        user, created = User.objects.get_or_create(phone=phone)
-
-        if created:
-            user.is_customer = True
-            user.save(update_fields=["is_customer"])
-            CustomerProfile.objects.create(user=user)
-        else:
-            if not user.is_customer:
-                user.is_customer = True
-                user.save(update_fields=["is_customer"])
-                CustomerProfile.objects.get_or_create(user=user)
-
-        create_and_send_otp(phone, self.login_type)
-        return Response({"detail": "OTP sent to customer phone."})
-
-
-class CustomerVerifyOTPView(BaseVerifyOTPView):
-    login_type = "CUSTOMER"
-    role_claim = "CUSTOMER"
-    client_claim = "customer_app"
-
-    def handle_verify(self, request, phone: str, otp_code: str):
-        phone = normalize_phone(phone)
-        otp_obj = self._get_latest_otp(phone)
         if not otp_obj:
             raise ValueError("OTP not found. Please request again.")
 
@@ -131,15 +100,48 @@ class CustomerVerifyOTPView(BaseVerifyOTPView):
 
         otp_obj.is_used = True
         otp_obj.save(update_fields=["is_used"])
+        return otp_obj
 
-        try:
-            user = User.objects.get(phone=phone, is_customer=True)
-        except User.DoesNotExist:
-            raise ValueError("Customer profile not found.")
+    def handle_verify(self, request, phone: str, otp_code: str):
+        raise NotImplementedError
 
-        customer = getattr(user, "customer_profile", None)
-        if not customer:
+
+# ========== CUSTOMER AUTH ==========
+
+class CustomerRequestOTPView(BaseRequestOTPView):
+    login_type = "CUSTOMER"
+    def handle_request(self, phone: str):
+        create_and_send_otp(phone, self.login_type)
+        return Response({"detail": "OTP sent to customer phone."})
+
+
+class CustomerVerifyOTPView(BaseVerifyOTPView):
+    login_type = "CUSTOMER"
+    role_claim = "CUSTOMER"
+    client_claim = "customer_app"
+
+    @transaction.atomic
+    def handle_verify(self, request, phone: str, otp_code: str):
+        phone = normalize_phone(phone)
+        
+        # Step 1: OTP Validate karein (ye ab atomic hai)
+        self._validate_otp(phone, otp_code)
+
+        # Step 2: User ko ab create ya get karein (Verification ke baad)
+        user, created = User.objects.get_or_create(phone=phone)
+        if created:
+            user.is_customer = True
+            user.save(update_fields=["is_customer"])
             customer = CustomerProfile.objects.create(user=user)
+        else:
+            if not user.is_customer:
+                user.is_customer = True
+                user.save(update_fields=["is_customer"])
+            customer, _ = CustomerProfile.objects.get_or_create(user=user)
+        
+        if not customer:
+             customer = CustomerProfile.objects.create(user=user)
+
 
         device_info = {
             "device_id": request.data.get("device_id", ""),
@@ -151,12 +153,12 @@ class CustomerVerifyOTPView(BaseVerifyOTPView):
             user=user,
             role=self.role_claim,
             client=self.client_claim,
-            extra_claims={"customer_id": customer.id},
+            extra_claims={"customer_id": str(customer.id)}, # UUIDs ko string mein bhejna a_ch_ch_ha hai
             device_info=device_info,
             request=request,
+            single_session_for_client=False, # Customer multiple device use kar sakta hai
         )
         return Response(tokens, status=status.HTTP_200_OK)
-
 
 # ========== RIDER AUTH ==========
 
@@ -184,19 +186,14 @@ class RiderVerifyOTPView(BaseVerifyOTPView):
     role_claim = "RIDER"
     client_claim = "rider_app"
 
+    @transaction.atomic
     def handle_verify(self, request, phone: str, otp_code: str):
         phone = normalize_phone(phone)
-        otp_obj = self._get_latest_otp(phone)
-        if not otp_obj:
-            raise ValueError("OTP not found. Please request again.")
+        
+        # Step 1: OTP Validate karein
+        self._validate_otp(phone, otp_code)
 
-        ok, reason = otp_obj.is_valid(otp_code)
-        if not ok:
-            raise ValueError(reason)
-
-        otp_obj.is_used = True
-        otp_obj.save(update_fields=["is_used"])
-
+        # Step 2: User verify karein
         try:
             user = User.objects.get(phone=phone, is_rider=True)
         except User.DoesNotExist:
@@ -219,11 +216,12 @@ class RiderVerifyOTPView(BaseVerifyOTPView):
             role=self.role_claim,
             client=self.client_claim,
             extra_claims={
-                "rider_id": rider.id,
+                "rider_id": str(rider.id), # UUIDs
                 "rider_code": rider.rider_code,
             },
             device_info=device_info,
             request=request,
+            single_session_for_client=True, # SINGLE DEVICE POLICY
         )
         return Response(tokens, status=status.HTTP_200_OK)
 
@@ -254,19 +252,14 @@ class EmployeeVerifyOTPView(BaseVerifyOTPView):
     role_claim = "EMPLOYEE"
     client_claim = "employee_app"
 
+    @transaction.atomic
     def handle_verify(self, request, phone: str, otp_code: str):
         phone = normalize_phone(phone)
-        otp_obj = self._get_latest_otp(phone)
-        if not otp_obj:
-            raise ValueError("OTP not found. Please request again.")
+        
+        # Step 1: OTP Validate karein
+        self._validate_otp(phone, otp_code)
 
-        ok, reason = otp_obj.is_valid(otp_code)
-        if not ok:
-            raise ValueError(reason)
-
-        otp_obj.is_used = True
-        otp_obj.save(update_fields=["is_used"])
-
+        # Step 2: User verify karein
         try:
             user = User.objects.get(phone=phone, is_employee=True)
         except User.DoesNotExist:
@@ -289,16 +282,16 @@ class EmployeeVerifyOTPView(BaseVerifyOTPView):
             role=self.role_claim,
             client=self.client_claim,
             extra_claims={
-                "employee_id": emp.id,
+                "employee_id": str(emp.id), # UUIDs
                 "employee_code": emp.employee_code,
                 "warehouse_code": emp.warehouse_code,
                 "employee_role": emp.role,
             },
             device_info=device_info,
             request=request,
+            single_session_for_client=True, # SINGLE DEVICE POLICY
         )
         return Response(tokens, status=status.HTTP_200_OK)
-
 
 # ========== LOGOUT / SESSION REVOKE ==========
 
@@ -442,7 +435,7 @@ class AdminLoginView(APIView):
             extra_claims={"admin_id": user.id},
             request=request,
             device_info=device_info,
-            request=request,
+            # request=request,
         )
         return Response(tokens, status=status.HTTP_200_OK)
 
@@ -545,8 +538,14 @@ class AdminChangeRiderStatusView(APIView):
 
         rider.status = status_value
         rider.save(update_fields=["status"])
-        return Response({"detail": "Rider status updated."})
+        
+        # FEATURE: Agar rider "SUSPENDED" hai to use fauran logout kar dein
+        if status_value == "SUSPENDED":
+            UserSession.objects.filter(user=rider.user, client="rider_app", is_active=True).update(
+                is_active=False, revoked_at=timezone.now()
+            )
 
+        return Response({"detail": "Rider status updated."})
 
 class AdminCreateEmployeeView(APIView):
     """
@@ -635,6 +634,13 @@ class AdminChangeEmployeeStatusView(APIView):
 
         emp.is_active_employee = status_value == "ACTIVE"
         emp.save(update_fields=["is_active_employee"])
+        
+        # FEATURE: Agar employee "INACTIVE" hai to use fauran logout kar dein
+        if status_value == "INACTIVE":
+            UserSession.objects.filter(user=emp.user, client="employee_app", is_active=True).update(
+                is_active=False, revoked_at=timezone.now()
+            )
+
         return Response({"detail": "Employee status updated."})
 
 
