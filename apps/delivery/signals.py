@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 # Yeh wms ko batayega ki rider assign ho gaya hai
 rider_assigned_to_dispatch = Signal()
 
+# --- FIX: Naya Signal (delivery -> orders) ---
+# Yeh orders ko batayega ki delivery poori ho gayi hai
+delivery_completed = Signal()
+
 
 @receiver(dispatch_ready_for_delivery)
 def handle_dispatch_ready_signal(sender, dispatch_id, order_id, warehouse_id, pickup_otp, **kwargs):

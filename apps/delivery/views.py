@@ -8,13 +8,16 @@ from django.db import transaction  # <-- FIX: Import kiya
 
 from apps.accounts.permissions import IsRider
 from apps.accounts.models import RiderProfile
-from apps.orders.models import OrderTimeline  # <-- FIX: Import kiya
+# FIX: OrderTimeline ka import hata diya
+# from apps.orders.models import OrderTimeline
 from .models import RiderLocation, DeliveryTask
 from .serializers import (
     UpdateRiderLocationSerializer,
     RiderLocationSerializer,
     RiderDeliveryTaskSerializer,
 )
+# FIX: Apna naya signal import kiya
+from .signals import delivery_completed
 
 import logging
 logger = logging.getLogger(__name__)
@@ -168,20 +171,28 @@ class UpdateTaskStatusAPIView(APIView):
                 task.status = "delivered"
                 task.delivered_at = timezone.now()
                 
-                # FIX: Order ka status bhi 'delivered' set karein
-                if task.order:
-                    task.order.status = "delivered"
-                    task.order.delivered_at = task.delivered_at
-                    task.order.save(update_fields=['status', 'delivered_at'])
+                # FIX: Order ka status update karna HATA diya
+                # if task.order:
+                #     task.order.status = "delivered"
+                #     ...
+                #     task.order.save(...)
 
-                    # FIX: Order timeline mein bhi add karein
-                    OrderTimeline.objects.create(
-                        order=task.order,
-                        status="delivered",
-                        notes=f"Delivered by rider {request.user.rider_profile.rider_code}."
-                    )
+                # FIX: Order timeline mein add karna HATA diya
+                # OrderTimeline.objects.create(...)
                 
                 task.save() # Task ko aakhir mein save karein
+            
+            # FIX: Ab hum 'orders' app ko batane ke liye signal bhejenge
+            if task.order:
+                try:
+                    delivery_completed.send(
+                        sender=DeliveryTask, 
+                        order=task.order, 
+                        rider_code=request.user.rider_profile.rider_code
+                    )
+                    logger.info(f"Sent delivery_completed signal for order {task.order.id}")
+                except Exception as e:
+                    logger.error(f"Error sending delivery_completed signal for order {task.order.id}: {e}")
 
         else:
             return Response({"detail": f"Invalid target status: {new_status}"}, status=status.HTTP_400_BAD_REQUEST)

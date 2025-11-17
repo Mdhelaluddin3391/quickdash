@@ -1,11 +1,13 @@
 from django.db import transaction, models
 from django.utils import timezone
+import random # FIX: Random ko import kiya (complete_packing ke liye)
 
 from .realtime import broadcast_wms_event
 # FIX: Naya signal import karein
 from .signals import dispatch_ready_for_delivery 
 
-from apps.inventory.models import InventoryStock, BinInventory, StockMovement, SKU
+# FIX: Imports ko update kiya
+from apps.inventory.models import InventoryStock, SKU
 from apps.warehouse.models import (
     Warehouse, Bin,
     PickingTask, PickItem,
@@ -14,6 +16,8 @@ from apps.warehouse.models import (
     PickSkip, ShortPickIncident, FulfillmentCancel,
     GRN, PutawayTask, PutawayItem,
     CycleCountTask, CycleCountItem,
+    # FIX: Move kiye gaye models ko yahaan se import kiya
+    BinInventory, StockMovement, 
 )
 from .exceptions import OutOfStockError
 from .utils.warehouse_selector import select_best_warehouse

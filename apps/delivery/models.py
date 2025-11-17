@@ -1,9 +1,9 @@
 import uuid
 from django.db import models
 from django.conf import settings
-from apps.accounts.models import RiderProfile
-# from apps.warehouse.models import DispatchRecord # <-- FIX: Direct import hata diya
-from apps.orders.models import Order
+# FIX: Direct model imports hata diye
+# from apps.accounts.models import RiderProfile
+# from apps.orders.models import Order
 
 # Delivery Task ka status
 DELIVERY_STATUS_CHOICES = [
@@ -24,15 +24,17 @@ class DeliveryTask(models.Model):
     # Taki WMS app se koi direct dependency na rahe
     dispatch_record_id = models.UUIDField(unique=True, db_index=True)
     
+    # FIX: String reference ka istemaal kiya
     order = models.ForeignKey(
-        Order,
+        "orders.Order",
         on_delete=models.SET_NULL,
         null=True,
         related_name="delivery_tasks"
     )
     
+    # FIX: String reference ka istemaal kiya
     rider = models.ForeignKey(
-        RiderProfile,
+        "accounts.RiderProfile",
         on_delete=models.SET_NULL,
         null=True, blank=True, 
         related_name="delivery_tasks"
@@ -64,8 +66,9 @@ class DeliveryTask(models.Model):
 
 
 class RiderLocation(models.Model):
+    # FIX: String reference ka istemaal kiya
     rider = models.OneToOneField(
-        RiderProfile,
+        "accounts.RiderProfile",
         primary_key=True,
         on_delete=models.CASCADE,
         related_name="location"

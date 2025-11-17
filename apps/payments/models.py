@@ -1,6 +1,7 @@
 import uuid
 from django.db import models
-from apps.orders.models import Order
+# FIX: Order ka import hata diya
+# from apps.orders.models import Order
 
 PAYMENT_STATUS_CHOICES = [
     ("pending", "Pending"),
@@ -21,7 +22,8 @@ class PaymentIntent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
     # Hamara internal Order ID
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="payment_intents")
+    # FIX: String reference ka istemaal kiya
+    order = models.ForeignKey("orders.Order", on_delete=models.CASCADE, related_name="payment_intents")
     
     # Payment Gateway (Razorpay) ka Order ID
     gateway_order_id = models.CharField(max_length=100, unique=True, db_index=True)
@@ -56,15 +58,17 @@ class Refund(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
     # Kis payment ke against refund hai
+    # FIX: String reference ka istemaal kiya
     payment = models.ForeignKey(
-        PaymentIntent, 
+        "payments.PaymentIntent", 
         on_delete=models.SET_NULL, 
         null=True, 
         related_name="refunds"
     )
     
     # WMS se aane waali details
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="refunds")
+    # FIX: String reference ka istemaal kiya
+    order = models.ForeignKey("orders.Order", on_delete=models.CASCADE, related_name="refunds")
     pick_item_id = models.CharField(max_length=100, null=True, blank=True)
     reason = models.TextField(blank=True)
     

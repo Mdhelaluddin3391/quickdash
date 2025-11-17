@@ -12,14 +12,19 @@ from rest_framework.permissions import IsAuthenticated
 
 # Hamare apne apps se import
 from apps.accounts.permissions import IsCustomer
-from apps.orders.models import Order, OrderTimeline
-from apps.warehouse.signals import send_order_created
+# FIX: Order aur Timeline ke imports hata diye
+# from apps.orders.models import Order, OrderTimeline
+# FIX: Warehouse signal ka import hata diya
+# from apps.warehouse.signals import send_order_created
 from .models import PaymentIntent
 from .serializers import (
     CreatePaymentIntentSerializer,
     VerifyPaymentSerializer,
     PaymentIntentSerializer,
 )
+# FIX: Apna naya signal import kiya
+from .signals import payment_succeeded
+
 
 logger = logging.getLogger(__name__)
 
@@ -127,40 +132,23 @@ class VerifyPaymentAPIView(APIView):
                 intent.gateway_payment_id = data['gateway_payment_id']
                 intent.save()
                 
-                # Order ko "confirmed" mark karein
-                order.status = "confirmed"
-                order.payment_status = "paid"
-                order.save()
+                # FIX: Order ko "confirmed" mark karna HATA diya
+                # order.status = "confirmed"
+                # order.payment_status = "paid"
+                # order.save()
                 
-                # Order ki history (timeline) mein entry daalein
-                OrderTimeline.objects.create(
-                    order=order,
-                    status="confirmed",
-                    notes=f"Payment successful. Gateway Payment ID: {data['gateway_payment_id']}"
-                )
+                # FIX: Order ki history (timeline) mein entry daalna HATA diya
+                # OrderTimeline.objects.create( ... )
 
             # --- Transaction (Database ka kaam) poora hua ---
 
-            # Step 3: WMS (Warehouse) ko signal bhej kar batayein ki order process karna hai
-            # (Yeh kaam ab 'orders' app se hatkar 'payments' app mein aa gaya hai)
+            # Step 3: WMS (Warehouse) ko signal bhejna HATA diya
+            # FIX: Ab hum 'orders' app ko batane ke liye signal bhejenge
             try:
-                wms_items_list = [
-                    {"sku_id": str(item.sku_id), "qty": item.quantity}
-                    for item in order.items.all()
-                ]
-                
-                send_order_created.send(
-                    sender=Order,
-                    order_id=order.id,
-                    order_items=wms_items_list,
-                    metadata={
-                        "warehouse_id": str(order.warehouse_id),
-                        "customer_id": str(order.customer_id)
-                    }
-                )
-                logger.info(f"WMS signal sent for confirmed order {order.id}")
+                payment_succeeded.send(sender=PaymentIntent, order=order)
+                logger.info(f"Sent payment_succeeded signal for order {order.id}")
             except Exception as e:
-                logger.error(f"Failed to send WMS signal for order {order.id}: {e}")
+                logger.error(f"Error sending payment_succeeded signal for order {order.id}: {e}")
                 # Note: Payment ho chuka hai, agar signal fail hota hai toh background job se retry karna hoga
 
             return Response(
