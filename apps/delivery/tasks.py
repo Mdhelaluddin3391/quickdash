@@ -5,8 +5,9 @@ from django.db import transaction
 from django.utils import timezone
 
 # Zaroori models ko import karein
-from apps.warehouse.models import DispatchRecord, Warehouse
-from apps.accounts.models import RiderProfile
+# FIX: Ab humein DispatchRecord ya Warehouse ko yahaan import karne ki zaroorat nahi hai
+from apps.accounts.models import RiderProfile, User
+from apps.orders.models import Order
 from .models import DeliveryTask, RiderLocation
 
 logger = logging.getLogger(__name__)
@@ -15,20 +16,17 @@ def _generate_otp(length=4):
     """Helper function to generate a simple numeric OTP."""
     return "".join(str(random.randint(0, 9)) for _ in range(length))
 
-def _find_best_rider_for_warehouse(warehouse: Warehouse) -> RiderProfile | None:
+def _find_best_rider_for_warehouse(warehouse_id: str) -> RiderProfile | None:
     """
     Sabse achha (available) rider dhoondhta hai.
-    System Design[cite: 165, 168]: "Optimized rider assignment based on distance... and online state"
+    FIX: Ab yeh Warehouse Model ke bajaaye warehouse_id ka istemaal karega.
     """
-    
-    # TODO: Asli system mein, yahaan warehouse ke (lat, lng) ke
-    # aaspas waale nazdeeki riders ko dhoondhna chahiye. (Geospatial query)
     
     # 1. Sabhi on-duty riders ko dhoondein
     on_duty_locations = RiderLocation.objects.filter(on_duty=True).select_related('rider')
     
     if not on_duty_locations.exists():
-        logger.warning(f"No riders are on duty for warehouse {warehouse.code}.")
+        logger.warning(f"No riders are on duty for warehouse {warehouse_id}.")
         return None
 
     # 2. Un riders ki IDs lein jinke paas pehle se active task hai
@@ -40,22 +38,20 @@ def _find_best_rider_for_warehouse(warehouse: Warehouse) -> RiderProfile | None:
     for loc in on_duty_locations:
         if loc.rider_id not in active_rider_ids:
             logger.info(f"Found available rider: {loc.rider.rider_code}")
-            return loc.rider # Pehla free rider mil gaya
+            return loc.rider 
 
-    logger.warning(f"All on-duty riders are busy for warehouse {warehouse.code}.")
-    return None # Sabhi on-duty riders busy hain
+    logger.warning(f"All on-duty riders are busy for warehouse {warehouse_id}.")
+    return None 
 
 
-@shared_task(bind=True, max_retries=12, default_retry_delay=300) # 1 ghante tak (12 * 5 min) retry karega
-def find_and_assign_rider_for_task(self, delivery_task_id: str):
+@shared_task(bind=True, max_retries=12, default_retry_delay=300) 
+def find_and_assign_rider_for_task(self, delivery_task_id: str, warehouse_id: str):
     """
     Ek specific delivery task ke liye rider dhoondhta hai aur assign karta hai.
+    FIX: Ab yeh warehouse_id bhi leta hai.
     """
     try:
-        task = DeliveryTask.objects.select_related(
-            'dispatch_record__warehouse', 
-            'order'
-        ).get(id=delivery_task_id)
+        task = DeliveryTask.objects.select_related('order').get(id=delivery_task_id)
     except DeliveryTask.DoesNotExist:
         logger.warning(f"DeliveryTask {delivery_task_id} not found for assignment.")
         return f"Task {delivery_task_id} not found."
@@ -64,90 +60,86 @@ def find_and_assign_rider_for_task(self, delivery_task_id: str):
         logger.info(f"Task {task.id} is already {task.status}. Skipping assignment.")
         return f"Task {task.id} already processed."
 
-    warehouse = task.dispatch_record.warehouse
-    
     try:
-        best_rider = _find_best_rider_for_warehouse(warehouse)
+        best_rider = _find_best_rider_for_warehouse(warehouse_id)
         
         if not best_rider:
             logger.info(f"No available riders found for task {task.id}. Retrying in 5 mins...")
-            # Retry karein
             raise self.retry()
 
         with transaction.atomic():
+            # Rider ki User ID (Order model mein save karne ke liye)
+            rider_user = User.objects.get(id=best_rider.user_id)
+
             # Task ko update karo
             task.rider = best_rider
             task.status = "assigned"
             task.assigned_at = timezone.now()
-            task.pickup_otp = task.dispatch_record.pickup_otp # WMS se OTP copy karo
             task.delivery_otp = _generate_otp(4) # Customer ke liye naya OTP
             task.save()
-            
-            # DispatchRecord ko bhi update karo
-            dispatch = task.dispatch_record
-            dispatch.status = "assigned"
-            dispatch.rider_id = str(best_rider.id) # RiderProfile ka ID
-            dispatch.save(update_fields=['status', 'rider_id'])
             
             # Order ko bhi update karo (taki customer ko dikhe)
             if task.order:
                 task.order.status = "dispatched"
-                task.order.rider = best_rider.user # User model ko link karo
+                task.order.rider = rider_user # User model ko link karo
                 task.order.save(update_fields=['status', 'rider'])
+
+            # WMS (DispatchRecord) ko update karne ke liye signal bhejein
+            # (Hum direct import nahi kar rahe hain)
+            # FIX: Hum delivery app se wms ko signal bhejenge
+            from .signals import rider_assigned_to_dispatch
+            rider_assigned_to_dispatch.send(
+                sender=DeliveryTask,
+                dispatch_id=task.dispatch_record_id,
+                rider_profile_id=best_rider.id
+            )
 
         logger.info(f"Task {task.id} assigned to Rider {best_rider.rider_code}")
         
         # TODO: Yahaan Rider ko Push Notification (FCM) bhejna chahiye
-        # notify_rider_new_task(best_rider, task)
         
         return f"Task {task.id} assigned to {best_rider.rider_code}"
 
     except Exception as exc:
         logger.error(f"Failed to assign rider for task {task.id}: {exc}")
-        raise self.retry(exc=exc, countdown=60) # Koi aur error aaye toh 1 min mein retry
+        raise self.retry(exc=exc, countdown=60)
 
 
 @shared_task
-def create_delivery_tasks_from_dispatch():
+def create_delivery_task_from_signal(dispatch_id, order_id, warehouse_id, pickup_otp):
     """
-    Yeh task Celery Beat se har minute chalna chahiye.
-    Yeh "ready" DispatchRecords ko dhoondhta hai aur unke liye DeliveryTasks banata hai.
+    Yeh task WMS ke signal se trigger hota hai.
+    Yeh DeliveryTask banata hai aur rider assignment ko trigger karta hai.
     """
-    logger.info("Running create_delivery_tasks_from_dispatch...")
+    logger.info(f"Creating DeliveryTask for Dispatch {dispatch_id}...")
     
-    # Un DispatchRecords ko dhoondein jo 'ready' hain aur jinka 'delivery_task' abhi nahi bana hai
-    ready_dispatches = DispatchRecord.objects.filter(
-        status="ready",
-        delivery_task__isnull=True
-    ).select_related('packing_task__picking_task__order') # Order fetch karne ke liye
-
-    if not ready_dispatches.exists():
-        logger.info("No new 'ready' dispatches found.")
-        return "No new dispatches."
-
-    tasks_created_count = 0
-    for dispatch in ready_dispatches:
-        try:
-            # Har dispatch ke liye ek naya DeliveryTask banayein
-            # transaction.atomic() ka istemaal, taaki duplicate na bane
-            with transaction.atomic():
-                task, created = DeliveryTask.objects.get_or_create(
-                    dispatch_record=dispatch,
-                    defaults={
-                        'order': dispatch.packing_task.picking_task.order,
-                        'status': "pending_assignment",
-                        'pickup_otp': dispatch.pickup_otp
-                    }
+    try:
+        order = Order.objects.get(id=order_id)
+        
+        with transaction.atomic():
+            task, created = DeliveryTask.objects.get_or_create(
+                dispatch_record_id=dispatch_id, # FIX: Foreign key ke bajaaye ID use karein
+                defaults={
+                    'order': order,
+                    'status': "pending_assignment",
+                    'pickup_otp': pickup_otp
+                }
+            )
+            
+            if created:
+                # Naya task ban gaya, ab iske liye rider dhoondhne ka task trigger karein
+                find_and_assign_rider_for_task.delay(
+                    delivery_task_id=str(task.id),
+                    warehouse_id=str(warehouse_id)
                 )
+                logger.info(f"DeliveryTask {task.id} created for Dispatch {dispatch_id}.")
+            else:
+                logger.warning(f"DeliveryTask for Dispatch {dispatch_id} already exists.")
                 
-                if created:
-                    # Naya task ban gaya, ab iske liye rider dhoondhne ka task trigger karein
-                    find_and_assign_rider_for_task.delay(str(task.id))
-                    tasks_created_count += 1
-                
-        except Exception as e:
-            # Agar DeliveryTask banate waqt error aaye
-            logger.error(f"Failed to create DeliveryTask for Dispatch {dispatch.id}: {e}")
-    
-    logger.info(f"Created {tasks_created_count} new delivery tasks.")
-    return f"Created {tasks_created_count} new tasks."
+    except Order.DoesNotExist:
+        logger.error(f"Order {order_id} not found. Cannot create DeliveryTask for Dispatch {dispatch_id}.")
+    except Exception as e:
+        logger.error(f"Failed to create DeliveryTask for Dispatch {dispatch_id}: {e}")
+
+# FIX: Puraana polling task (create_delivery_tasks_from_dispatch)
+# ko poori tarah se HATA diya gaya hai.

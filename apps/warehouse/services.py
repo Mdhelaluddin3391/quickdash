@@ -2,6 +2,8 @@ from django.db import transaction, models
 from django.utils import timezone
 
 from .realtime import broadcast_wms_event
+# FIX: Naya signal import karein
+from .signals import dispatch_ready_for_delivery 
 
 from apps.inventory.models import InventoryStock, BinInventory, StockMovement, SKU
 from apps.warehouse.models import (
@@ -237,6 +239,8 @@ def complete_packing(packing_task_id, packer=None, total_weight_kg=None):
             "order_id": pack_task.picking_task.order_id,
             "warehouse": pack_task.picking_task.warehouse,
             "status": "ready",
+            # FIX: Pickup OTP ab yahaan generate hoga
+            "pickup_otp": "".join(str(random.randint(0, 9)) for _ in range(4))
         },
     )
 
@@ -248,6 +252,17 @@ def complete_packing(packing_task_id, packer=None, total_weight_kg=None):
         "dispatch_id": str(dispatch.id),
         "status": dispatch.status,
     })
+    
+    # --- FIX: NAYA SIGNAL BHEJEIN ---
+    # Ab delivery app ko batayein ki order taiyaar hai
+    dispatch_ready_for_delivery.send(
+        sender=DispatchRecord,
+        dispatch_id=dispatch.id,
+        order_id=dispatch.order_id,
+        warehouse_id=dispatch.warehouse_id,
+        pickup_otp=dispatch.pickup_otp
+    )
+    # -------------------------------
 
     return dispatch
 
