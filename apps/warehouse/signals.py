@@ -2,15 +2,18 @@
 from django.dispatch import receiver, Signal
 from django.conf import settings
 import logging
-
+from .models import PickingTask
+from .services import create_packing_task_from_picking
+from .tasks import orchestrate_order_fulfilment_from_order_payload
+from .notifications import notify_packer_new_task
+from .tasks import orchestrate_order_fulfilment_from_order_payload
 # Custom signal that other apps can send if they don't use Django Order model:
 # send_order_created.send(sender=..., order_id=..., order_items=[{sku_id, qty}], metadata={...})
 # send_order_created = Signal(providing_args=["order_id", "order_items", "metadata"])
 send_order_created = Signal()
 logger = logging.getLogger(__name__)
 
-# Import Celery task that orchestrates
-from .tasks import orchestrate_order_fulfilment_from_order_payload
+
 
 @receiver(send_order_created)
 def on_order_created_signal(sender, order_id, order_items, metadata=None, **kwargs):

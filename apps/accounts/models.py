@@ -4,7 +4,7 @@ from django.utils import timezone
 from datetime import timedelta
 import uuid 
 from .managers import UserManager
-
+from django.db import transaction
 
 class User(AbstractBaseUser, PermissionsMixin):
     phone = models.CharField(max_length=15, unique=True)

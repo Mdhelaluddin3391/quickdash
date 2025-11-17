@@ -4,7 +4,7 @@ from django.db import transaction
 from django.db.models import F, OuterRef, Subquery, Sum, IntegerField
 from django.db.models.functions import Coalesce
 from django.utils import timezone
-
+from django.db.models import F
 from apps.inventory.models import (
     InventoryStock, BinInventory, StockMovement, SKU
 )
@@ -304,37 +304,53 @@ def admin_fulfillment_cancel(pick_item: PickItem, admin_user, reason=""):
         remaining = pick_item.qty - pick_item.picked_qty
 
         if remaining > 0:
-            bi = BinInventory.objects.select_for_update().get(
-                bin_id=pick_item.bin_id,
-                sku_id=pick_item.sku_id
-            )
+            
+            # --- Step 1: Original Bin se Stock Debit karein ---
+            # Hum maan rahe hain ki 'remaining' quantity us bin se kho gayi hai.
+            try:
+                bi = BinInventory.objects.select_for_update().get(
+                    bin_id=pick_item.bin_id,
+                    sku_id=pick_item.sku_id
+                )
+                
+                # Physical 'qty' aur 'reserved_qty' dono ko kam karein
+                bi.qty = F("qty") - remaining
+                bi.reserved_qty = F("reserved_qty") - remaining
+                bi.save(update_fields=["qty", "reserved_qty"])
 
-            new_qty = bi.qty + remaining
-            new_reserved = bi.reserved_qty - remaining
-            if new_reserved < 0:
-                new_reserved = 0
+            except BinInventory.DoesNotExist:
+                # Aisa hona nahi chahiye, lekin agar ho toh log karein
+                logger.error(f"BinInventory missing for FC on pick_item {pick_item.id}")
+                pass
 
-            bi.qty = new_qty
-            bi.reserved_qty = new_reserved
-            bi.save(update_fields=["qty", "reserved_qty"])
 
-            inv = InventoryStock.objects.select_for_update().get(
-                warehouse_id=pick_item.task.warehouse_id,
-                sku_id=pick_item.sku_id
-            )
+            # --- Step 2: Warehouse ke Total Stock ko Update karein ---
+            try:
+                inv = InventoryStock.objects.select_for_update().get(
+                    warehouse_id=pick_item.task.warehouse_id,
+                    sku_id=pick_item.sku_id
+                )
 
-            inv.available_qty += remaining
-            inv.reserved_qty = max(inv.reserved_qty - remaining, 0)
-            inv.save(update_fields=["available_qty", "reserved_qty"])
+                # Sirf 'reserved_qty' ko kam karein.
+                # Hum 'available_qty' ko wapas ADD NAHI kar rahe.
+                # Isse warehouse ka total sellable stock 'remaining' amount se kam ho jaata hai.
+                inv.reserved_qty = max(inv.reserved_qty - remaining, 0)
+                inv.save(update_fields=["reserved_qty"])
+            
+            except InventoryStock.DoesNotExist:
+                logger.error(f"InventoryStock missing for FC on pick_item {pick_item.id}")
+                pass
 
+            
+            # --- Step 3: Stock Movement ko 'lost' ki tarah log karein ---
             StockMovement.objects.create(
                 sku_id=pick_item.sku_id,
                 warehouse_id=pick_item.task.warehouse_id,
                 bin_id=pick_item.bin_id,
-                change_type="fc_return",
-                delta_qty=remaining,
+                change_type="fc_lost",  # Pehle yeh 'fc_return' tha
+                delta_qty=-remaining,   # Hum stock ghata rahe hain
                 reference_type="fulfillment_cancel",
-                reference_id=pick_item.task.order_id
+                reference_id=str(pick_item.task.order_id)
             )
 
         return fc

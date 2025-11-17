@@ -8,7 +8,7 @@ from django.db import transaction
 from django.core.exceptions import ValidationError
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
-
+from .tasks import send_sms_task
 from .models import PhoneOTP, UserSession, User
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ def send_otp_sms(phone: str, otp_code: str, login_type: str):
     """
     # TODO: Production mein, isko Celery task se call karein
     logger.info(f"[SMS STUB] Sending OTP {otp_code} to {phone} for {login_type}")
-    print(f"[SMS STUB] Sending OTP {otp_code} to {phone} for {login_type}")
+    send_sms_task.delay(phone=phone, otp_code=otp_code, login_type=login_type)
 
 
 def check_otp_rate_limit(phone: str, login_type: str, ip: str | None = None):
