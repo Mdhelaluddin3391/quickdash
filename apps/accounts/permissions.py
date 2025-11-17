@@ -13,39 +13,29 @@ def _get_token_claim(request, key, default=None):
         return getattr(token, key, default)
 
 
-class RolePermission(BasePermission):
-    required_role = None
-    required_client = None
+from rest_framework.permissions import BasePermission
 
+
+class IsPicker(BasePermission):
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
-            return False
-
-        role = _get_token_claim(request, "role")
-        client = _get_token_claim(request, "client")
-
-        if self.required_role and role != self.required_role:
-            return False
-        if self.required_client and client != self.required_client:
-            return False
-        return True
+        return request.user.is_authenticated and request.user.role == "picker"
 
 
-class IsCustomer(RolePermission):
-    required_role = "CUSTOMER"
-    required_client = "customer_app"
+class IsPacker(BasePermission):
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.role == "packer"
 
 
-class IsRider(RolePermission):
-    required_role = "RIDER"
-    required_client = "rider_app"
+class IsWarehouseManager(BasePermission):
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.role == "manager"
 
 
-class IsEmployee(RolePermission):
-    required_role = "EMPLOYEE"
-    required_client = "employee_app"
+class IsAuditor(BasePermission):
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.role == "auditor"
 
 
-class IsAdmin(RolePermission):
-    required_role = "ADMIN"
-    required_client = "admin_panel"
+class IsAdmin(BasePermission):
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.role == "admin"

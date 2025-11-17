@@ -1,55 +1,54 @@
+# apps/warehouse/utils/warehouse_selector.py
+from django.db.models import Sum
 from apps.inventory.models import InventoryStock
-from django.db.models import Q
+from apps.warehouse.models import Warehouse
 
-def choose_best_warehouse_for_order(order_items, candidate_warehouses=None):
-    """
-    Simple warehouse selection strategy:
-    - candidate_warehouses: optional queryset/list of warehouse ids to consider
-    - order_items: list of dicts: [{'sku_id': <uuid>, 'qty': 2}, ...]
-    Returns: warehouse_id or raises ValueError if none suitable.
-    Strategy implemented:
-    1) prefer warehouses that have all SKUs available (available_qty >= needed)
-    2) if none have all, choose warehouse with max number of SKUs covered and sufficient overall qty
-    3) fallback: choose first warehouse with at least one item.
-    This is a simple strategy — replace with geo + load + TTLed metrics for production.
-    """
-    sku_ids = [it['sku_id'] for it in order_items]
-    # Build counts per warehouse
-    # Query InventoryStock for the SKUs
-    stocks = InventoryStock.objects.filter(sku_id__in=sku_ids)
-    if candidate_warehouses:
-        stocks = stocks.filter(warehouse_id__in=candidate_warehouses)
 
-    # Map: warehouse -> {sku_id: available_qty}
+def select_best_warehouse(order_items, candidate_warehouses=None):
+    """
+    Very simple selector:
+    - filter warehouses that have *some* stock for all SKUs
+    - pick the warehouse with the highest total "coverage"
+      (sum of min(available, requested) for each sku)
+    order_items = [{"sku_id": <uuid>, "qty": int}, ...]
+    candidate_warehouses = queryset or list of Warehouses or None
+    """
+    if candidate_warehouses is None:
+        candidate_warehouses = Warehouse.objects.filter(is_active=True)
+
+    sku_ids = [it["sku_id"] for it in order_items]
+    stocks = (
+        InventoryStock.objects.filter(warehouse__in=candidate_warehouses, sku_id__in=sku_ids)
+        .values("warehouse_id", "sku_id")
+        .annotate(avail=Sum("available_qty"))
+    )
+
+    # build map: warehouse -> {sku_id: avail}
     wh_map = {}
-    for s in stocks:
-        wh = s.warehouse_id
-        wh_map.setdefault(wh, {})[s.sku_id] = s.available_qty
+    for row in stocks:
+        wh_map.setdefault(row["warehouse_id"], {})[row["sku_id"]] = row["avail"]
 
-    # Check for warehouse that satisfies all SKUs
-    for wh, sku_map in wh_map.items():
-        ok = True
-        for it in order_items:
-            avl = sku_map.get(it['sku_id'], 0)
-            if avl < it['qty']:
-                ok = False
-                break
-        if ok:
-            return wh
-
-    # otherwise pick warehouse with highest total coverage (sum of min(avail, needed))
-    best_wh = None
+    best_wh_id = None
     best_score = -1
-    for wh, sku_map in wh_map.items():
+
+    for wh in candidate_warehouses:
+        sku_map = wh_map.get(wh.id, {})
+        # must have >0 for every sku to be "eligible"
+        eligible = True
         score = 0
         for it in order_items:
-            avl = sku_map.get(it['sku_id'], 0)
-            score += min(avl, it['qty'])
+            avl = sku_map.get(it["sku_id"], 0)
+            if avl <= 0:
+                eligible = False
+                break
+            score += min(avl, it["qty"])
+        if not eligible:
+            continue
         if score > best_score:
             best_score = score
-            best_wh = wh
+            best_wh_id = wh.id
 
-    if best_wh is None:
-        raise ValueError("No candidate warehouses have any stock for given SKUs")
+    if best_wh_id is None:
+        raise ValueError("No candidate warehouses can fulfill this order")
 
-    return best_wh
+    return Warehouse.objects.get(id=best_wh_id)

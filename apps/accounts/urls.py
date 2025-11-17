@@ -56,4 +56,6 @@ urlpatterns = [
     path("token/refresh/", CustomTokenRefreshView.as_view()),
     # logout
     path("logout/", LogoutView.as_view()),
+    path("change-role/", ChangeUserRole.as_view()),
+
 ]

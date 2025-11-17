@@ -7,6 +7,7 @@ from .managers import UserManager
 from django.db import transaction
 
 class User(AbstractBaseUser, PermissionsMixin):
+    
     phone = models.CharField(max_length=15, unique=True)
     email = models.EmailField(null=True, blank=True)
     full_name = models.CharField(max_length=255, blank=True)
@@ -24,7 +25,11 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     USERNAME_FIELD = "phone"
     REQUIRED_FIELDS = []
-
+    role = models.CharField(
+        max_length=20,
+        choices=ROLE_CHOICES,
+        default="picker",
+    )
     objects = UserManager()
 
     def __str__(self):
@@ -65,9 +70,11 @@ class EmployeeProfile(models.Model):
     ROLE_CHOICES = [
         ("PICKER", "Picker"),
         ("PACKER", "Packer"),
+        ("AUDITOR", "Auditor"),
         ("SUPERVISOR", "Supervisor"),
         ("MANAGER", "Manager"),
         ("SUPPORT", "Support"),
+        ("ADMIN", "Admin")
     ]
 
     user = models.OneToOneField(
