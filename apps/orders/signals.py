@@ -3,10 +3,15 @@ import logging
 from django.dispatch import receiver
 from django.utils import timezone
 from apps.payments.signals import payment_succeeded
-from apps.delivery.signals import delivery_completed
+# FIX: 'rider_assigned_to_dispatch' ko import kiya
+from apps.delivery.signals import delivery_completed, rider_assigned_to_dispatch
 from apps.warehouse.signals import send_order_created
 from .models import Order, OrderTimeline
+# FIX: User model ko import karne ke liye imports add kiye
+from django.conf import settings
+from django.contrib.auth import get_user_model
 
+User = get_user_model()
 logger = logging.getLogger(__name__)
 
 @receiver(payment_succeeded)
@@ -62,3 +67,37 @@ def handle_delivery_success(sender, order, rider_code, **kwargs):
             notes=f"Delivered by rider {rider_code}."
         )
         logger.info(f"Order {order.id} marked as delivered.")
+
+# --- FIX: YEH NAYA RECEIVER ADD KIYA GAYA HAI ---
+@receiver(rider_assigned_to_dispatch)
+def handle_rider_assigned(sender, order_id, rider_user_id, **kwargs):
+    """
+    Jab delivery app se signal aaye ki rider assign ho gaya hai,
+    tab order ko 'dispatched' mark karo.
+    """
+    try:
+        order = Order.objects.get(id=order_id)
+        rider_user = User.objects.get(id=rider_user_id)
+        
+        # Check karein ki order pehle se hi delivered ya cancelled na ho
+        if order.status in ["ready", "packed", "confirmed", "picking"]:
+            order.status = "dispatched"
+            order.rider = rider_user
+            order.save(update_fields=['status', 'rider'])
+            
+            OrderTimeline.objects.create(
+                order=order,
+                status="dispatched",
+                # Rider code lene ke liye profile access karna
+                notes=f"Rider {getattr(rider_user, 'rider_profile', {}).rider_code} assigned."
+            )
+            logger.info(f"Order {order.id} marked as dispatched.")
+        else:
+            logger.warning(f"Order {order.id} received rider assignment but was in status {order.status}.")
+            
+    except Order.DoesNotExist:
+        logger.error(f"Received rider assignment for non-existent Order {order_id}.")
+    except User.DoesNotExist:
+        logger.error(f"Received rider assignment with non-existent User {rider_user_id}.")
+    except Exception as e:
+        logger.error(f"Error updating Order {order_id} from rider assignment signal: {e}")

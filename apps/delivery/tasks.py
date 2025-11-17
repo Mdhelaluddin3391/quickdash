@@ -5,10 +5,12 @@ from django.db import transaction
 from django.utils import timezone
 
 # Zaroori models ko import karein
-# FIX: Ab humein DispatchRecord ya Warehouse ko yahaan import karne ki zaroorat nahi hai
 from apps.accounts.models import RiderProfile, User
 from apps.orders.models import Order
 from .models import DeliveryTask, RiderLocation
+# FIX: Signal ko import karein
+from .signals import rider_assigned_to_dispatch
+
 
 logger = logging.getLogger(__name__)
 
@@ -78,20 +80,20 @@ def find_and_assign_rider_for_task(self, delivery_task_id: str, warehouse_id: st
             task.delivery_otp = _generate_otp(4) # Customer ke liye naya OTP
             task.save()
             
-            # Order ko bhi update karo (taki customer ko dikhe)
-            if task.order:
-                task.order.status = "dispatched"
-                task.order.rider = rider_user # User model ko link karo
-                task.order.save(update_fields=['status', 'rider'])
+            # --- FIX: Order ko direct update karne waala code HATA diya gaya hai ---
+            # if task.order:
+            #     task.order.status = "dispatched"
+            #     task.order.rider = rider_user 
+            #     task.order.save(update_fields=['status', 'rider'])
 
-            # WMS (DispatchRecord) ko update karne ke liye signal bhejein
-            # (Hum direct import nahi kar rahe hain)
-            # FIX: Hum delivery app se wms ko signal bhejenge
-            from .signals import rider_assigned_to_dispatch
+            # WMS (DispatchRecord) aur Orders app ko update karne ke liye signal bhejein
+            # FIX: Signal mein 'order_id' aur 'rider_user_id' add kiya
             rider_assigned_to_dispatch.send(
                 sender=DeliveryTask,
                 dispatch_id=task.dispatch_record_id,
-                rider_profile_id=best_rider.id
+                rider_profile_id=best_rider.id,
+                order_id=task.order_id, # Naya parameter
+                rider_user_id=rider_user.id # Naya parameter
             )
 
         logger.info(f"Task {task.id} assigned to Rider {best_rider.rider_code}")
