@@ -45,13 +45,16 @@ class DeliveryTaskSerializer(serializers.ModelSerializer):
     """
     rider_code = serializers.CharField(source='rider.rider_code', read_only=True, default=None)
     order_id_str = serializers.CharField(source='order.id', read_only=True)
-    warehouse_code = serializers.CharField(source='dispatch_record.warehouse.code', read_only=True)
+    
+    # FIX: Warehouse code ko 'dispatch_record.warehouse.code' se 'order.warehouse.code' mein badla
+    warehouse_code = serializers.CharField(source='order.warehouse.code', read_only=True)
     customer_phone = serializers.CharField(source='order.customer.phone', read_only=True)
     
     class Meta:
         model = DeliveryTask
         fields = (
             'id',
+            'dispatch_record_id', # FIX: 'dispatch_record' ko ID se badla
             'order_id_str',
             'status',
             'rider',
@@ -79,9 +82,10 @@ class RiderDeliveryTaskSerializer(serializers.ModelSerializer):
     customer_lat = serializers.DecimalField(source='order.delivery_lat', max_digits=9, decimal_places=6, read_only=True)
     customer_lng = serializers.DecimalField(source='order.delivery_lng', max_digits=9, decimal_places=6, read_only=True)
     
-    warehouse_address = serializers.CharField(source='dispatch_record.warehouse.address', read_only=True)
-    warehouse_lat = serializers.DecimalField(source='dispatch_record.warehouse.lat', max_digits=9, decimal_places=6, read_only=True)
-    warehouse_lng = serializers.DecimalField(source='dispatch_record.warehouse.lng', max_digits=9, decimal_places=6, read_only=True)
+    # --- FIX: Warehouse ki details ab 'dispatch_record' ke bajaaye 'order' se aa rahi hain ---
+    warehouse_address = serializers.CharField(source='order.warehouse.address', read_only=True)
+    warehouse_lat = serializers.DecimalField(source='order.warehouse.lat', max_digits=9, decimal_places=6, read_only=True)
+    warehouse_lng = serializers.DecimalField(source='order.warehouse.lng', max_digits=9, decimal_places=6, read_only=True)
 
     class Meta:
         model = DeliveryTask

@@ -2,8 +2,9 @@
 from django.dispatch import receiver, Signal
 import logging
 
-from .tasks import orchestrate_order_fulfilment_from_order_payload
-# FIX: Delivery app se naya signal import karein
+# FIX: Yahaan se task import ko HATA diya gaya hai
+# from .tasks import orchestrate_order_fulfilment_from_order_payload 
+
 from apps.delivery.signals import rider_assigned_to_dispatch
 from .models import DispatchRecord # Model ko update karne ke liye
 
@@ -18,6 +19,11 @@ dispatch_ready_for_delivery = Signal()
 
 @receiver(send_order_created)
 def handle_order_created(sender, order_id, order_items, metadata=None, **kwargs):
+    
+    # --- FIX: Import ko function ke ANDAR move kar diya gaya hai ---
+    # Isse circular import fix ho jaata hai
+    from .tasks import orchestrate_order_fulfilment_from_order_payload
+    
     payload = {
         "order_id": str(order_id),
         "items": order_items,
@@ -27,7 +33,7 @@ def handle_order_created(sender, order_id, order_items, metadata=None, **kwargs)
     orchestrate_order_fulfilment_from_order_payload.delay(payload)
 
 
-# --- FIX: Naya Receiver (delivery -> wms) ---
+# --- Receiver (delivery -> wms) ---
 @receiver(rider_assigned_to_dispatch)
 def handle_rider_assigned_signal(sender, dispatch_id, rider_profile_id, **kwargs):
     """

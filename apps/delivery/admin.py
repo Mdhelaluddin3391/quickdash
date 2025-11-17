@@ -1,7 +1,4 @@
 from django.contrib import admin
-
-# Register your models here.
-from django.contrib import admin
 from .models import DeliveryTask, RiderLocation
 
 @admin.register(DeliveryTask)
@@ -24,7 +21,7 @@ class DeliveryTaskAdmin(admin.admin.ModelAdmin):
     # In fields ko admin mein badla nahi ja sakta
     readonly_fields = (
         'id',
-        'dispatch_record',
+        'dispatch_record_id', # FIX: 'dispatch_record' ko 'dispatch_record_id' se badla
         'order',
         'rider',
         'pickup_otp',
