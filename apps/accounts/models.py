@@ -2,7 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.utils import timezone
 from datetime import timedelta
-
+import uuid 
 from .managers import UserManager
 
 
@@ -147,7 +147,7 @@ class UserSession(models.Model):
     device_id = models.CharField(max_length=255, blank=True)
     device_model = models.CharField(max_length=255, blank=True)   # 👈 NEW
     os_version = models.CharField(max_length=100, blank=True)     # 👈 NEW
-    
+
     user_agent = models.TextField(blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
 
@@ -162,3 +162,36 @@ class UserSession(models.Model):
         self.is_active = False
         self.revoked_at = timezone.now()
         self.save(update_fields=["is_active", "revoked_at"])
+
+
+
+class PasswordResetToken(models.Model):
+    """
+    Admin password reset ke liye token store karta hai.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="reset_tokens")
+    token = models.CharField(max_length=100, unique=True, default=uuid.uuid4)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"ResetToken for {self.user.phone}"
+
+    @classmethod
+    def create_token(cls, user, ttl_minutes=60):
+        now = timezone.now()
+        # Purane tokens (agar hain) ko inactive kar do
+        cls.objects.filter(user=user, is_used=False).update(is_used=True)
+        
+        return cls.objects.create(
+            user=user,
+            expires_at=now + timedelta(minutes=ttl_minutes)
+        )
+
+    def is_valid(self):
+        if self.is_used:
+            return False
+        if self.expires_at < timezone.now():
+            return False
+        return True

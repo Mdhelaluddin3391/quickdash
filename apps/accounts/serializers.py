@@ -50,3 +50,30 @@ class AdminChangeRiderStatusSerializer(serializers.Serializer):
 class AdminChangeEmployeeStatusSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     status = serializers.CharField(max_length=16)  # ACTIVE / INACTIVE
+
+
+
+
+class AdminForgotPasswordSerializer(serializers.Serializer):
+    """
+    Serializer to request a password reset for an admin.
+    User pehchanne ke liye 'identifier' (email ya phone) leta hai.
+    """
+    identifier = serializers.CharField(max_length=255)
+
+
+class AdminResetPasswordSerializer(serializers.Serializer):
+    """
+    Serializer to set a new password using a reset token.
+    """
+    token = serializers.CharField(max_length=100)
+    new_password = serializers.CharField(
+        max_length=128, 
+        write_only=True,
+        style={'input_type': 'password'}
+    )
+
+    def validate_token(self, value):
+        # Token ko yahaan validate nahi karenge, view mein karenge
+        # taaki humein token object mil sake
+        return value

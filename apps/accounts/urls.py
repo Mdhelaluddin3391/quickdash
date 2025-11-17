@@ -18,6 +18,8 @@ from .views import (
     AdminChangeRiderStatusView,
     AdminCreateEmployeeView,
     AdminChangeEmployeeStatusView,
+    AdminForgotPasswordView,
+    AdminResetPasswordView,
 )
 
 urlpatterns = [
@@ -39,6 +41,9 @@ urlpatterns = [
     # Admin auth
     path("admin/login/", AdminLoginView.as_view()),
     path("admin/me/", AdminMeView.as_view()),
+
+    path("admin/forgot-password/", AdminForgotPasswordView.as_view()),
+    path("admin/reset-password/", AdminResetPasswordView.as_view()),
 
     # Admin rider/employee management
     path("admin/riders/create/", AdminCreateRiderView.as_view()),

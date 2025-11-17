@@ -1,6 +1,9 @@
 from django.db import transaction
 from django.utils import timezone
-
+from .models import PasswordResetToken
+from .serializers import AdminForgotPasswordSerializer, AdminResetPasswordSerializer
+from .tasks import send_admin_password_reset_email_task
+from django.db.models import Q
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -633,3 +636,99 @@ class AdminChangeEmployeeStatusView(APIView):
         emp.is_active_employee = status_value == "ACTIVE"
         emp.save(update_fields=["is_active_employee"])
         return Response({"detail": "Employee status updated."})
+
+
+
+# ========== ADMIN PASSWORD RESET ==========
+
+class AdminForgotPasswordView(APIView):
+    """
+    Admin ke liye password reset request.
+    Ye 'identifier' (email ya phone) lega.
+    """
+    def post(self, request, *args, **kwargs):
+        serializer = AdminForgotPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        identifier = serializer.validated_data["identifier"]
+
+        # User ko email ya phone se dhoondein
+        user = User.objects.filter(
+            Q(email__iexact=identifier) | Q(phone=identifier),
+            is_staff=True,
+            is_active=True
+        ).first()
+
+        if not user:
+            # User ko nahi batana ki email/phone exist karta hai ya nahi (security)
+            return Response(
+                {"detail": "If an account matches, a reset link will be sent."},
+                status=status.HTTP_200_OK
+            )
+        
+        if not user.email:
+            # Agar user ka email hi nahi hai to reset nahi kar sakte
+            return Response(
+                {"detail": "This admin account does not have an email associated."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Token create karein
+        reset_token = PasswordResetToken.create_token(user=user)
+        
+        # Email task ko trigger karein
+        send_admin_password_reset_email_task.delay(
+            user_email=user.email,
+            user_name=user.full_name or user.phone,
+            reset_token=str(reset_token.token)
+        )
+
+        return Response(
+            {"detail": "If an account matches, a reset link will be sent."},
+            status=status.HTTP_200_OK
+        )
+
+
+class AdminResetPasswordView(APIView):
+    """
+    Token aur naye password ka istemal karke password reset karein.
+    """
+    def post(self, request, *args, **kwargs):
+        serializer = AdminResetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        token_value = serializer.validated_data["token"]
+        new_password = serializer.validated_data["new_password"]
+
+        # Token ko database mein dhoondein
+        try:
+            token_obj = PasswordResetToken.objects.get(token=token_value)
+        except PasswordResetToken.DoesNotExist:
+            return Response(
+                {"detail": "Invalid or expired token."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        if not token_obj.is_valid():
+            return Response(
+                {"detail": "Invalid or expired token."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Password set karein aur token ko 'used' mark karein
+        user = token_obj.user
+        user.set_password(new_password)
+        user.save()
+        
+        token_obj.is_used = True
+        token_obj.save()
+        
+        # Bonus: Password reset ke baad purane saare sessions revoke kar dein
+        UserSession.objects.filter(user=user, is_active=True).update(
+            is_active=False,
+            revoked_at=timezone.now()
+        )
+
+        return Response(
+            {"detail": "Password has been reset successfully."},
+            status=status.HTTP_200_OK
+        )

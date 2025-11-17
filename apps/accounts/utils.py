@@ -1,15 +1,26 @@
 import random
+import logging # Logging add karein
 from datetime import timedelta
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import PhoneOTP, UserSession
+from .tasks import send_sms_task  # Naya task import karein
+
+# Logger setup
+logger = logging.getLogger(__name__)
 
 
 def normalize_phone(phone: str) -> str:
     phone = phone.strip().replace(" ", "")
     # TODO: yaha +91 attach logic dal sakte ho
+    # Example:
+    if not phone.startswith('+'):
+         # Assuming Indian numbers agar + nahi laga hai
+         if len(phone) == 10:
+             phone = '+91' + phone
+         # Aap yahaan aur behtar logic laga sakte hain
     return phone
 
 
@@ -19,10 +30,27 @@ def generate_otp_code(length: int = 6) -> str:
 
 def send_otp_sms(phone: str, otp_code: str, login_type: str):
     """
-    REAL enterprise me yaha SMS provider integrate hoga.
-    Abhi ke liye log print kar rahe:
+    STUB function ko replace kar diya gaya hai.
+    Ye ab Asynchronously Celery task ko trigger karega.
     """
-    print(f"[SMS STUB] Sending OTP {otp_code} to {phone} for {login_type}")
+    try:
+        # Celery task ko call karein
+        # .delay() se ye background mein chala jayega
+        send_sms_task.delay(phone, otp_code, login_type)
+        
+        # Log karein ki task queue ho gaya hai
+        logger.info("Enqueued SMS task for phone: %s, type: %s", phone, login_type)
+        
+    except Exception as e:
+        # Agar Celery (ya Redis) down hai, to error log karein
+        logger.critical(
+            "Failed to enqueue SMS task for %s. CELERY/REDIS down? Error: %s",
+            phone,
+            str(e)
+        )
+    
+    # PURANA CODE (ab hata diya gaya hai):
+    # print(f"[SMS STUB] Sending OTP {otp_code} to {phone} for {login_type}")
 
 
 def check_otp_rate_limit(phone: str, login_type: str, ip: str | None = None):
@@ -58,7 +86,10 @@ def create_and_send_otp(phone: str, login_type: str) -> PhoneOTP:
     phone = normalize_phone(phone)
     otp_code = generate_otp_code()
     otp = PhoneOTP.create_otp(phone=phone, login_type=login_type, code=otp_code)
-    send_otp_sms(phone, otp_code, login_type)
+    
+    # Ye function ab background task ko call karega
+    send_otp_sms(phone, otp_code, login_type) 
+    
     return otp
 
 

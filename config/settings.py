@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 import datetime
+import os
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -24,6 +25,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = 'django-insecure-fozrjd47d9hh(!jqfwi!(ewm4!p0=kz&*#7sm1d#lbkfbo2%o2'
+
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
+TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -172,3 +177,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 IDEMPOTENCY_KEY_TTL = datetime.timedelta(minutes=30)  # import datetime
 WMS_REFUND_WEBHOOK_URL = 'https://payments.example.com/api/refund/'  # your payments endpoint
+
+
+
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = 'support@quickdash.com'
