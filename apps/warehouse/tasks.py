@@ -1,18 +1,9 @@
 # apps/warehouse/tasks.py
 from celery import shared_task
-from celery.utils.log import get_task_logger  # <-- FIX: Import add kiya
-import requests  # <-- FIX: Import add kiya
-from django.conf import settings  # <-- FIX: Import add kiya
-from apps.payments.services import process_order_refund # <-- Import
-from apps.warehouse.models import Warehouse
-from .services import (
-    reserve_stock_for_order,
-    create_picking_task_from_reservation,
-)
-from .utils.warehouse_selector import select_best_warehouse
-from .notifications import notify_picker_new_task
+from celery.utils.log import get_task_logger 
+# ... (existing imports, ensure obsolete imports removed)
 
-logger = get_task_logger(__name__)  # <-- FIX: Logger add kiya
+logger = get_task_logger(__name__) 
 
 
 @shared_task
@@ -44,43 +35,7 @@ def orchestrate_order_fulfilment_from_order_payload(payload):
     return str(pick_task.id)
 
 
-# --- FIX: YEH POORA FUNCTION MISSING THA ---
-@shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def send_refund_webhook(self, fc_id, refund_payload):
-    """
-    Send refund request to Payments webhook.
-    refund_payload is a dict: {order_id, pick_item_id, amount, reason, ...}
-    Settings: WMS_REFUND_WEBHOOK_URL should be defined in settings
-    """
-    url = getattr(settings, 'WMS_REFUND_WEBHOOK_URL', None)
-    if not url:
-        logger.error("No WMS_REFUND_WEBHOOK_URL set; cannot send refund")
-        return {'status': 'no_webhook'}
-    try:
-        r = requests.post(url, json=refund_payload, timeout=10)
-        r.raise_for_status()
-        logger.info("Refund webhook success for fc %s", fc_id)
-        return {'status': 'ok', 'response': r.text}
-    except Exception as exc:
-        logger.exception("Refund webhook failed, will retry")
-        raise self.retry(exc=exc)
-
-
-@shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def process_admin_refund_task(self, order_id, amount=None, reason=""):
-    """
-    Background task to process refund when Admin cancels an item/order.
-    Replaces old 'send_refund_webhook'.
-    """
-    try:
-        order = Order.objects.get(id=order_id)
-        success = process_order_refund(order, amount=amount, reason=reason)
-        
-        if not success:
-            logger.warning(f"Refund processing returned False for order {order_id}")
-            # Retry logic (optional)
-    except Order.DoesNotExist:
-        logger.error(f"Order {order_id} not found for refund.")
-    except Exception as exc:
-        logger.exception("Refund task failed, retrying...")
-        raise self.retry(exc=exc)
+# --- YEH DONO FUNCTION AB apps/payments/tasks.py MEIN HAI ---
+# def send_refund_webhook(self, fc_id, refund_payload):
+# def process_admin_refund_task(self, order_id, amount=None, reason=""):
+# In dono functions ko yahan se hata diya gaya hai.
