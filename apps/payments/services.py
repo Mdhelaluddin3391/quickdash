@@ -1,16 +1,18 @@
+# apps/payments/services.py
 import razorpay
 import logging
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from .models import Refund
+from apps.orders.models import Order # Order model is needed here
 
 logger = logging.getLogger(__name__)
 
 def get_razorpay_client():
     return razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
-def process_order_refund(order, amount=None, reason=""):
+def process_order_refund(order: Order, amount=None, reason=""):
     """
     Order ka refund process karta hai.
     Agar amount None hai, toh full refund karega.

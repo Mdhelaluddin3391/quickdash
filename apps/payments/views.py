@@ -1,6 +1,4 @@
-from django.shortcuts import render
-
-# Create your views here.
+# apps/payments/views.py
 import razorpay
 import logging
 from django.conf import settings
@@ -10,19 +8,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-# Hamare apne apps se import
 from apps.accounts.permissions import IsCustomer
-# FIX: Order aur Timeline ke imports hata diye
-# from apps.orders.models import Order, OrderTimeline
-# FIX: Warehouse signal ka import hata diya
-# from apps.warehouse.signals import send_order_created
 from .models import PaymentIntent
 from .serializers import (
     CreatePaymentIntentSerializer,
     VerifyPaymentSerializer,
     PaymentIntentSerializer,
 )
-# FIX: Apna naya signal import kiya
 from .signals import payment_succeeded
 
 
@@ -33,10 +25,15 @@ logger = logging.getLogger(__name__)
 # ===================================================================
 
 try:
-    razorpay_client = razorpay.Client(
-        auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
-    )
-    logger.info("Razorpay client initialized successfully.")
+    # Ensure keys are available before initialization
+    if settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET:
+        razorpay_client = razorpay.Client(
+            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
+        )
+        logger.info("Razorpay client initialized successfully.")
+    else:
+        logger.error("Razorpay keys missing in settings.")
+        razorpay_client = None
 except Exception as e:
     logger.error(f"Failed to initialize Razorpay client: {e}")
     razorpay_client = None
@@ -132,24 +129,14 @@ class VerifyPaymentAPIView(APIView):
                 intent.gateway_payment_id = data['gateway_payment_id']
                 intent.save()
                 
-                # FIX: Order ko "confirmed" mark karna HATA diya
-                # order.status = "confirmed"
-                # order.payment_status = "paid"
-                # order.save()
-                
-                # FIX: Order ki history (timeline) mein entry daalna HATA diya
-                # OrderTimeline.objects.create( ... )
-
             # --- Transaction (Database ka kaam) poora hua ---
 
-            # Step 3: WMS (Warehouse) ko signal bhejna HATA diya
-            # FIX: Ab hum 'orders' app ko batane ke liye signal bhejenge
+            # Step 3: Orders app ko signal bhejein
             try:
                 payment_succeeded.send(sender=PaymentIntent, order=order)
                 logger.info(f"Sent payment_succeeded signal for order {order.id}")
             except Exception as e:
                 logger.error(f"Error sending payment_succeeded signal for order {order.id}: {e}")
-                # Note: Payment ho chuka hai, agar signal fail hota hai toh background job se retry karna hoga
 
             return Response(
                 {"status": "success", "order_id": order.id, "payment_status": "paid"},

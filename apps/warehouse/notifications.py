@@ -36,3 +36,13 @@ def notify_dispatch_ready(dispatch_record):
         "warehouse_id": str(dispatch_record.warehouse_id),
     }
     logger.info("Notify dispatch: %s", payload)
+
+
+def notify_packer_new_task(packing_task): # <-- YEH FUNCTION ADD KAREIN
+    payload = {
+        "type": "new_pack_task",
+        "packing_task_id": str(packing_task.id),
+        "order_id": packing_task.picking_task.order_id,
+        "warehouse_id": str(packing_task.picking_task.warehouse_id),
+    }
+    logger.info("Notify packer: %s", payload)
