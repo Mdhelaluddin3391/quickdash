@@ -13,7 +13,7 @@ from .models import (
 from .exceptions import OutOfStockError, ReservationFailedError
 from .notifications import notify_packer_new_task 
 
-# --- DECOUPLED IMPORTS ---
+# --- DECOUPLED IMPORTS (Corrected) ---
 # Inventory DB ko directly touch karne ki bajaye Service use karein
 from apps.inventory.services import check_and_lock_inventory 
 
@@ -23,6 +23,8 @@ from .signals import (
     inventory_change_required, 
     item_fulfillment_cancelled
 )
+
+# NOTE: Yahan se Order aur Payment tasks ke imports HATA DIYE GAYE HAIN.
 
 @transaction.atomic
 def reserve_stock_for_order(order_id, warehouse_id, items):
