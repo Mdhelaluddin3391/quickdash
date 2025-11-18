@@ -4,7 +4,7 @@ from rest_framework import status, generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-
+from apps.payments.services import process_order_refund # <-- Import Refund Service
 # Hamare apne apps se import
 from apps.accounts.permissions import IsCustomer
 from apps.inventory.models import SKU
@@ -145,3 +145,50 @@ class OrderDetailAPIView(generics.RetrieveAPIView):
         return Order.objects.filter(customer=self.request.user).prefetch_related(
             'items__sku', 'timeline'
         )
+
+
+
+
+# apps/orders/views.py mein add karein
+
+class CancelOrderAPIView(APIView):
+    """
+    Customer khud order cancel kar sake.
+    POST /api/v1/orders/<id>/cancel/
+    """
+    permission_classes = [IsAuthenticated, IsCustomer]
+
+    def post(self, request, id):
+        # Order dhoondhein jo sirf isi customer ka ho
+        order = get_object_or_404(Order, id=id, customer=request.user)
+        
+        # Sirf 'pending' ya 'confirmed' order hi cancel ho sakte hain
+        # Agar 'picking' ya 'dispatched' hai toh cancel nahi hoga
+        if order.status not in ['pending', 'confirmed']:
+            return Response(
+                {"detail": "Cannot cancel order at this stage (already processing)."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        try:
+            with transaction.atomic():
+                order.status = 'cancelled'
+                order.save(update_fields=['status'])
+                
+                # Timeline update
+                OrderTimeline.objects.create(
+                    order=order, 
+                    status='cancelled', 
+                    notes="Cancelled by customer."
+                )
+                
+                # --- AUTO REFUND LOGIC ---
+                if order.payment_status == 'paid':
+                    process_order_refund(order, reason="Cancelled by customer")
+                # -------------------------
+
+            return Response({"status": "Order cancelled and refund initiated if applicable."}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error cancelling order {order.id}: {e}")
+            return Response({"detail": "Failed to cancel order."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

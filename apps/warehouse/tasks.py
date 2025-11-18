@@ -3,7 +3,7 @@ from celery import shared_task
 from celery.utils.log import get_task_logger  # <-- FIX: Import add kiya
 import requests  # <-- FIX: Import add kiya
 from django.conf import settings  # <-- FIX: Import add kiya
-
+from apps.payments.services import process_order_refund # <-- Import
 from apps.warehouse.models import Warehouse
 from .services import (
     reserve_stock_for_order,
@@ -63,4 +63,24 @@ def send_refund_webhook(self, fc_id, refund_payload):
         return {'status': 'ok', 'response': r.text}
     except Exception as exc:
         logger.exception("Refund webhook failed, will retry")
+        raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def process_admin_refund_task(self, order_id, amount=None, reason=""):
+    """
+    Background task to process refund when Admin cancels an item/order.
+    Replaces old 'send_refund_webhook'.
+    """
+    try:
+        order = Order.objects.get(id=order_id)
+        success = process_order_refund(order, amount=amount, reason=reason)
+        
+        if not success:
+            logger.warning(f"Refund processing returned False for order {order_id}")
+            # Retry logic (optional)
+    except Order.DoesNotExist:
+        logger.error(f"Order {order_id} not found for refund.")
+    except Exception as exc:
+        logger.exception("Refund task failed, retrying...")
         raise self.retry(exc=exc)

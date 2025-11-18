@@ -3,6 +3,7 @@ from .views import (
     CreateOrderAPIView,
     OrderHistoryAPIView,
     OrderDetailAPIView,
+    CancelOrderAPIView
 )
 
 urlpatterns = [
@@ -17,4 +18,6 @@ urlpatterns = [
     # Ek order ki poori detail
     # GET /api/v1/orders/<uuid:id>/
     path('<uuid:id>/', OrderDetailAPIView.as_view(), name='order-detail'),
+
+    path('<uuid:id>/cancel/', CancelOrderAPIView.as_view(), name='cancel-order'),
 ]

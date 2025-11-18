@@ -15,7 +15,7 @@ from apps.warehouse.models import (
     CycleCountTask, CycleCountItem,
     IdempotencyKey
 )
-
+from .tasks import process_admin_refund_task # <-- Updated import
 from apps.inventory.models import (
     SKU, BinInventory, InventoryStock, StockMovement
 )
@@ -195,15 +195,12 @@ def mark_fc_action(modeladmin, request, queryset):
             # FIX: Sahi function ka naam aur parameter (pi.id) use kiya
             fc = create_fulfillment_cancel(pi.id, request.user, reason="Admin bulk FC")
 
-            payload = {
-                'order_id': pi.task.order_id,
-                'pick_item_id': str(pi.id),
-                'sku_id': str(pi.sku_id),
-                'qty': remaining,
-                'reason': 'Fulfillment canceled by admin',
-            }
-
-            send_refund_webhook.delay(str(fc.id), payload)
+            process_admin_refund_task.delay(
+                order_id=pi.task.order_id,
+                # Hum abhi specific amount nahi bhej rahe, internal logic handle karega
+                # Ya aap chaho to amount calculate karke bhej sakte ho
+                reason=f'Fulfillment canceled for Item {pi.sku.sku_code}'
+            )
 
             modeladmin.message_user(request,
                 f"FC + refund queued for PickItem {pi.id}",
