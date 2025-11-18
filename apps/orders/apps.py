@@ -1,13 +1,12 @@
 from django.apps import AppConfig
-
+import logging
 
 class OrdersConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'apps.orders'
 
-    # FIX: Yeh function add karein
     def ready(self):
         try:
-            from . import signals  # Signals ko register karne ke liye
-        except ImportError:
-            pass
+            import apps.orders.receivers  # noqa: F401
+        except ImportError as e:
+            logging.error(f"Failed to load orders receivers: {e}")

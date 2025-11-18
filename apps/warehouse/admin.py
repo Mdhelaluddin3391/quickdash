@@ -3,9 +3,10 @@
 from django.contrib import admin, messages
 from django.urls import path
 from django.shortcuts import redirect
-# FIX: Sahi function ka naam import kiya
 from .services import create_fulfillment_cancel
-from .tasks import send_refund_webhook
+from .tasks import send_refund_webhook, process_admin_refund_task 
+
+# --- FIX: Import BinInventory & StockMovement from HERE (warehouse), not inventory ---
 from apps.warehouse.models import (
     Warehouse, Zone, Aisle, Shelf, Bin,
     PickingTask, PickItem, PickSkip, ShortPickIncident, FulfillmentCancel,
@@ -13,14 +14,13 @@ from apps.warehouse.models import (
     DispatchRecord,
     GRN, PutawayTask, PutawayItem,
     CycleCountTask, CycleCountItem,
-    IdempotencyKey
-)
-from .tasks import process_admin_refund_task # <-- Updated import
-from apps.inventory.models import (
-    SKU, BinInventory, InventoryStock, StockMovement
+    IdempotencyKey,
+    BinInventory,   # <--- Moved here
+    StockMovement   # <--- Moved here
 )
 
-# FIX: Duplicate import ko hata diya
+# --- FIX: Only import SKU and InventoryStock from inventory ---
+from apps.inventory.models import SKU, InventoryStock
 
 
 # -----------------------------------------------------------
@@ -49,9 +49,6 @@ class ShelfAdmin(admin.ModelAdmin):
 
 @admin.register(Bin)
 class BinAdmin(admin.ModelAdmin):
-    # FIX: 'preferred_sku' aur 'capacity' fields aapke naye Bin model mein nahi hain.
-    #
-    # Isko naye fields se update kar diya hai.
     list_display = ('shelf', 'code', 'bin_type', 'is_active')
 
 
@@ -90,16 +87,11 @@ class PickingTaskAdmin(admin.ModelAdmin):
 
 @admin.register(PickSkip)
 class PickSkipAdmin(admin.ModelAdmin):
-    # FIX: 'resolved' field aapke naye PickSkip model mein nahi hai.
-    #
-    # Isko 'reopened' se badal diya hai.
     list_display = ('pick_item', 'picker', 'skipped_at', 'reopened')
 
 
 @admin.register(ShortPickIncident)
 class ShortPickIncidentAdmin(admin.ModelAdmin):
-    # FIX: 'created_at' field ka naam 'reported_at' hai.
-    #
     list_display = ('pick_item', 'reported_at', 'status')
 
 
@@ -113,8 +105,6 @@ class FulfillmentCancelAdmin(admin.ModelAdmin):
 # -----------------------------------------------------------
 @admin.register(PackingTask)
 class PackingTaskAdmin(admin.ModelAdmin):
-    # FIX: 'packed_at' field ka naam 'completed_at' hai.
-    #
     list_display = ('picking_task', 'status', 'packer', 'created_at', 'completed_at')
 
 
@@ -128,10 +118,8 @@ class PackingItemAdmin(admin.ModelAdmin):
 # -----------------------------------------------------------
 @admin.register(DispatchRecord)
 class DispatchRecordAdmin(admin.ModelAdmin):
-    # FIX: 'courier' ko 'rider_id' se aur 'assigned_at' ko 'created_at' se badal diya hai.
-    #
     list_display = ('order_id', 'warehouse', 'status', 'rider_id', 'created_at', 'picked_up_at', 'delivered_at')
-    list_filter = ('status', 'rider_id') # FIX: 'courier' ko 'rider_id' se badla
+    list_filter = ('status', 'rider_id')
 
 
 # -----------------------------------------------------------
@@ -149,8 +137,6 @@ class PutawayTaskAdmin(admin.ModelAdmin):
 
 @admin.register(PutawayItem)
 class PutawayItemAdmin(admin.ModelAdmin):
-    # FIX: Model fields se match karne ke liye update kiya.
-    #
     list_display = ('task', 'sku', 'expected_qty', 'bin', 'placed_qty')
 
 
@@ -159,8 +145,6 @@ class PutawayItemAdmin(admin.ModelAdmin):
 # -----------------------------------------------------------
 @admin.register(CycleCountTask)
 class CycleCountTaskAdmin(admin.ModelAdmin):
-    # FIX: 'status' field model mein nahi hai, use 'completed_at' se badal diya.
-    #
     list_display = ('id', 'warehouse', 'created_at', 'completed_at', 'scheduled_for')
 
 
@@ -192,13 +176,10 @@ def mark_fc_action(modeladmin, request, queryset):
             continue
 
         try:
-            # FIX: Sahi function ka naam aur parameter (pi.id) use kiya
             fc = create_fulfillment_cancel(pi.id, request.user, reason="Admin bulk FC")
 
             process_admin_refund_task.delay(
                 order_id=pi.task.order_id,
-                # Hum abhi specific amount nahi bhej rahe, internal logic handle karega
-                # Ya aap chaho to amount calculate karke bhej sakte ho
                 reason=f'Fulfillment canceled for Item {pi.sku.sku_code}'
             )
 

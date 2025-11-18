@@ -1,4 +1,5 @@
 from django.apps import AppConfig
+import logging
 
 class NotificationsConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
@@ -6,6 +7,6 @@ class NotificationsConfig(AppConfig):
 
     def ready(self):
         try:
-            from . import signals
-        except ImportError:
-            pass
+            import apps.notifications.receivers  # noqa: F401
+        except ImportError as e:
+            logging.error(f"Failed to load notification receivers: {e}")

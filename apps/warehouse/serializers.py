@@ -6,10 +6,10 @@ from apps.warehouse.models import (
     DispatchRecord, PickSkip, ShortPickIncident, FulfillmentCancel,
     GRN, PutawayTask, PutawayItem,
     CycleCountTask, CycleCountItem,
+    # FIX: Import BinInventory here
+    BinInventory
 )
-from apps.inventory.models import SKU, BinInventory, InventoryStock
-
-
+from apps.inventory.models import SKU, InventoryStock
 # --------- Basic structure --------- #
 
 class WarehouseSerializer(serializers.ModelSerializer):

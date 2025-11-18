@@ -5,7 +5,5 @@ class PaymentsConfig(AppConfig):
     name = 'apps.payments'
 
     def ready(self):
-        try:
-            from . import signals
-        except ImportError:
-            pass
+        # Agar future mein receivers banayein, toh unhe yahan import karein
+        pass

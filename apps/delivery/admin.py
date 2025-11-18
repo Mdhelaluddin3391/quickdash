@@ -2,7 +2,8 @@ from django.contrib import admin
 from .models import DeliveryTask, RiderLocation
 
 @admin.register(DeliveryTask)
-class DeliveryTaskAdmin(admin.admin.ModelAdmin):
+# FIX: Change 'admin.admin.ModelAdmin' to 'admin.ModelAdmin'
+class DeliveryTaskAdmin(admin.ModelAdmin):
     """
     Delivery Task ko Admin Panel mein dikhane ke liye configuration.
     """
@@ -21,7 +22,7 @@ class DeliveryTaskAdmin(admin.admin.ModelAdmin):
     # In fields ko admin mein badla nahi ja sakta
     readonly_fields = (
         'id',
-        'dispatch_record_id', # FIX: 'dispatch_record' ko 'dispatch_record_id' se badla
+        'dispatch_record_id',
         'order',
         'rider',
         'pickup_otp',
@@ -38,7 +39,8 @@ class DeliveryTaskAdmin(admin.admin.ModelAdmin):
 
 
 @admin.register(RiderLocation)
-class RiderLocationAdmin(admin.admin.ModelAdmin):
+# FIX: Change 'admin.admin.ModelAdmin' to 'admin.ModelAdmin'
+class RiderLocationAdmin(admin.ModelAdmin):
     """
     Rider Location ko Admin Panel mein dikhane ke liye.
     """
