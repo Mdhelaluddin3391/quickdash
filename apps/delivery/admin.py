@@ -1,8 +1,8 @@
+# apps/delivery/admin.py
 from django.contrib import admin
 from .models import DeliveryTask, RiderLocation
 
 @admin.register(DeliveryTask)
-# FIX: Change 'admin.admin.ModelAdmin' to 'admin.ModelAdmin'
 class DeliveryTaskAdmin(admin.ModelAdmin):
     """
     Delivery Task ko Admin Panel mein dikhane ke liye configuration.
@@ -34,12 +34,10 @@ class DeliveryTaskAdmin(admin.ModelAdmin):
     )
 
     def has_add_permission(self, request):
-        # Admin se naya delivery task banana allow nahi hai
         return False
 
 
 @admin.register(RiderLocation)
-# FIX: Change 'admin.admin.ModelAdmin' to 'admin.ModelAdmin'
 class RiderLocationAdmin(admin.ModelAdmin):
     """
     Rider Location ko Admin Panel mein dikhane ke liye.
@@ -55,5 +53,4 @@ class RiderLocationAdmin(admin.ModelAdmin):
         return False
 
     def has_delete_permission(self, request, obj=None):
-        # Location records ko delete nahi karna hai
         return False

@@ -1,3 +1,4 @@
+# apps/inventory/models.py
 from django.db import models
 from apps.catalog.models import SKU
 
@@ -7,7 +8,7 @@ class InventoryStock(models.Model):
     Source of Truth for 'Availability' (Can we sell this?).
     """
     id = models.BigAutoField(primary_key=True)
-    # Warehouse ko string reference se refer kar rahe hain to avoid circular import issues initially
+    # Warehouse ko string reference se refer kar rahe hain
     warehouse = models.ForeignKey("warehouse.Warehouse", on_delete=models.CASCADE, related_name='stocks')
     
     sku = models.ForeignKey(SKU, on_delete=models.CASCADE, related_name='warehouse_stocks')
@@ -23,5 +24,4 @@ class InventoryStock(models.Model):
         verbose_name_plural = "Inventory Stocks"
 
     def __str__(self):
-        # Warehouse code access karne ke liye select_related use karna behtar hoga views mein
         return f"{self.warehouse_id} / {self.sku.sku_code}: Avl={self.available_qty} (Res={self.reserved_qty})"

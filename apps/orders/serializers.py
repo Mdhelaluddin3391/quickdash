@@ -1,3 +1,4 @@
+# apps/orders/serializers.py
 from rest_framework import serializers
 from .models import Order, OrderItem, OrderTimeline
 # FIX: Import from catalog
@@ -30,6 +31,10 @@ class CreateOrderSerializer(serializers.Serializer):
     warehouse_id = serializers.UUIDField()
     items = CreateOrderItemSerializer(many=True)
     delivery_address_json = serializers.JSONField() # Customer ka address
+    # FIX: Add optional lat/lng fields
+    delivery_lat = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, allow_null=True)
+    delivery_lng = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, allow_null=True)
+
 
     def validate_warehouse_id(self, value):
         # Check karein ki Warehouse active hai ya nahi
@@ -104,6 +109,8 @@ class OrderSerializer(serializers.ModelSerializer):
             'created_at',
             'delivered_at',
             'delivery_address_json',
+            'delivery_lat', 
+            'delivery_lng', 
             'items',        # Nested list of items
             'timeline',     # Nested list of status changes
         )

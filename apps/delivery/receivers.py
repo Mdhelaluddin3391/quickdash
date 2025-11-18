@@ -1,3 +1,4 @@
+# apps/delivery/receivers.py
 import logging
 from django.dispatch import receiver
 from apps.warehouse.signals import dispatch_ready_for_delivery

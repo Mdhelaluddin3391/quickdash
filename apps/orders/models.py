@@ -1,3 +1,4 @@
+# apps/orders/models.py
 import uuid
 from django.db import models
 from django.conf import settings
@@ -5,14 +6,14 @@ from django.conf import settings
 # Choices (Jaisa system design mein bataya gaya hai)
 # 
 ORDER_STATUS_CHOICES = [
-    ("pending", "Pending"),           # Order receive hua, payment baki
+    ("pending", "Pending")[cite_start],           # Order receive hua, payment baki [cite: 149]
     ("confirmed", "Confirmed"),       # Payment ho gaya, WMS ko bhej diya
-    ("picking", "Picking"),           # WMS mein picking shuru
-    ("packed", "Packed"),             # WMS mein packing ho gayi
-    ("ready", "Ready for Dispatch"),  # WMS se nikal gaya, rider ka intezaar
-    ("dispatched", "Dispatched"),     # Rider ne utha liya
-    ("delivered", "Delivered"),       # Customer ko mil gaya
-    ("cancelled", "Cancelled"),       # Order cancel ho gaya
+    ("picking", "Picking")[cite_start],           # WMS mein picking shuru [cite: 150]
+    ("packed", "Packed")[cite_start],             # WMS mein packing ho gayi [cite: 151]
+    ("ready", "Ready for Dispatch")[cite_start],  # WMS se nikal gaya, rider ka intezaar [cite: 152]
+    ("dispatched", "Dispatched")[cite_start],     # Rider ne utha liya [cite: 153]
+    ("delivered", "Delivered")[cite_start],       # Customer ko mil gaya [cite: 154]
+    ("cancelled", "Cancelled")[cite_start],       # Order cancel ho gaya [cite: 155]
 ]
 
 # 
@@ -26,12 +27,11 @@ PAYMENT_STATUS_CHOICES = [
 
 class Order(models.Model):
     """
-    Yeh main Order model hai, jaisa system design PDF [cite: 102] mein bataya gaya hai.
+    [cite_start]Yeh main Order model hai. [cite: 106]
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
-    # Kiska order hai?
-    # [cite: 104]
+    # [cite_start]Kiska order hai? [cite: 108]
     customer = models.ForeignKey(
         settings.AUTH_USER_MODEL, 
         on_delete=models.SET_NULL, 
@@ -39,8 +39,7 @@ class Order(models.Model):
         related_name="orders"
     )
     
-    # Kahan se deliver hoga?
-    # [cite: 105]
+    # [cite_start]Kahan se deliver hoga? [cite: 109]
     warehouse = models.ForeignKey(
         "warehouse.Warehouse", 
         on_delete=models.SET_NULL, 
@@ -48,8 +47,7 @@ class Order(models.Model):
         related_name="orders"
     )
 
-    # Order ka status kya hai?
-    # 
+    # [cite_start]Order ka status kya hai? [cite: 110]
     status = models.CharField(
         max_length=30, 
         choices=ORDER_STATUS_CHOICES, 
@@ -57,14 +55,12 @@ class Order(models.Model):
         db_index=True
     )
 
-    # Paise ka hisaab
-    # [cite: 107]
+    # [cite_start]Paise ka hisaab [cite: 111]
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
     final_amount = models.DecimalField(max_digits=10, decimal_places=2)
     
-    # Payment ka status kya hai?
-    # 
+    # [cite_start]Payment ka status kya hai? [cite: 112]
     payment_status = models.CharField(
         max_length=30,
         choices=PAYMENT_STATUS_CHOICES,
@@ -72,15 +68,13 @@ class Order(models.Model):
     )
     payment_gateway_order_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
 
-    # WMS/Delivery waale log (jo baad mein update honge)
-    # [cite: 109]
+    # [cite_start]WMS/Delivery waale log [cite: 113, 114]
     packer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True, blank=True,
         related_name="packed_orders"
     )
-    # [cite: 110]
     rider = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -88,8 +82,7 @@ class Order(models.Model):
         related_name="delivered_orders"
     )
 
-    # Time kab-kab kya hua
-    # [cite: 111]
+    # [cite_start]Time kab-kab kya hua [cite: 115]
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     promised_eta = models.DateTimeField(null=True, blank=True)
@@ -110,20 +103,17 @@ class Order(models.Model):
 
 class OrderItem(models.Model):
     """
-    Ek order mein kya-kya items they. [cite: 112]
+    Ek order mein kya-kya items they.
     """
     id = models.BigAutoField(primary_key=True)
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
     
-    # FIX: Point to the correct app 'catalog'
     sku = models.ForeignKey("catalog.SKU", on_delete=models.SET_NULL, null=True)
-    # Item ki details (us time ki)
-    # [cite: 116]
-    quantity = models.PositiveIntegerField()
-    # [cite: 117]
-    unit_price = models.DecimalField(max_digits=10, decimal_places=2)
-    # [cite: 118]
-    total_price = models.DecimalField(max_digits=10, decimal_places=2)
+    
+    # [cite_start]Item ki details (us time ki) [cite: 120, 121, 122]
+    quantity = models.PositiveIntegerField() 
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2) 
+    total_price = models.DecimalField(max_digits=10, decimal_places=2) 
     
     # Jab order create hua, tab item ka naam kya tha (copy karke save karna)
     sku_name_snapshot = models.CharField(max_length=255, blank=True)
@@ -145,7 +135,7 @@ class OrderItem(models.Model):
 
 class OrderTimeline(models.Model):
     """
-    Order ki poori history track karne ke liye. System Design 
+    Order ki poori history track karne ke liye.
     """
     id = models.BigAutoField(primary_key=True)
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="timeline")

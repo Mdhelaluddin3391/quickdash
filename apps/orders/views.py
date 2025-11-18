@@ -1,3 +1,4 @@
+# apps/orders/views.py
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from rest_framework import status, generics
@@ -7,8 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from apps.payments.services import process_order_refund # <-- Import Refund Service
 # Hamare apne apps se import
 from apps.accounts.permissions import IsCustomer
-from apps.inventory.models import SKU
-# from apps.warehouse.signals import send_order_created # FIX: Yahaan se signal hata diya
+from apps.catalog.models import SKU
 from .models import Order, OrderItem, OrderTimeline
 from .serializers import (
     CreateOrderSerializer,
@@ -68,7 +68,6 @@ class CreateOrderAPIView(APIView):
 
                 # Step 3: Order object banayein (Pending state mein)
                 
-                # FIX: Status "pending" hoga
                 payment_status = "pending"
                 order_status = "pending" 
                 
@@ -76,6 +75,8 @@ class CreateOrderAPIView(APIView):
                     customer=request.user,
                     warehouse_id=validated_data['warehouse_id'],
                     delivery_address_json=validated_data['delivery_address_json'],
+                    delivery_lat=validated_data.get('delivery_lat'),
+                    delivery_lng=validated_data.get('delivery_lng'),
                     status=order_status,
                     payment_status=payment_status,
                     total_amount=total_amount,
@@ -95,13 +96,7 @@ class CreateOrderAPIView(APIView):
                     notes="Order created and awaiting payment."
                 )
 
-            # --- Transaction (Database ka kaam) poora hua ---
-
-            # FIX: WMS ko signal bhejna yahaan se HATA diya gaya hai.
-            # Signal ab 'VerifyPaymentAPIView' bhejega.
-
             # Step 6: Customer ko Order ID aur Amount waapas bhejein
-            # taaki woh payment API ko call kar sake.
             return Response({
                 "order_id": order.id,
                 "final_amount": order.final_amount,
@@ -110,7 +105,6 @@ class CreateOrderAPIView(APIView):
             }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
-            # Agar transaction ke dauraan koi bhi error aata hai
             logger.exception(f"Order creation failed for user {request.user.id}: {e}")
             return Response(
                 {"detail": f"An error occurred while creating the order: {str(e)}"}, 
@@ -147,10 +141,6 @@ class OrderDetailAPIView(generics.RetrieveAPIView):
         )
 
 
-
-
-# apps/orders/views.py mein add karein
-
 class CancelOrderAPIView(APIView):
     """
     Customer khud order cancel kar sake.
@@ -163,7 +153,6 @@ class CancelOrderAPIView(APIView):
         order = get_object_or_404(Order, id=id, customer=request.user)
         
         # Sirf 'pending' ya 'confirmed' order hi cancel ho sakte hain
-        # Agar 'picking' ya 'dispatched' hai toh cancel nahi hoga
         if order.status not in ['pending', 'confirmed']:
             return Response(
                 {"detail": "Cannot cancel order at this stage (already processing)."}, 

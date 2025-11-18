@@ -1,9 +1,6 @@
+# apps/delivery/models.py
 import uuid
 from django.db import models
-from django.conf import settings
-# FIX: Direct model imports hata diye
-# from apps.accounts.models import RiderProfile
-# from apps.orders.models import Order
 
 # Delivery Task ka status
 DELIVERY_STATUS_CHOICES = [
@@ -20,11 +17,10 @@ DELIVERY_STATUS_CHOICES = [
 class DeliveryTask(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
-    # FIX: Foreign Key ke bajaaye ab hum simple ID store karenge
-    # Taki WMS app se koi direct dependency na rahe
+    # WMS se aane wala Dispatch ID
     dispatch_record_id = models.UUIDField(unique=True, db_index=True)
     
-    # FIX: String reference ka istemaal kiya
+    # Order link (string reference)
     order = models.ForeignKey(
         "orders.Order",
         on_delete=models.SET_NULL,
@@ -32,7 +28,7 @@ class DeliveryTask(models.Model):
         related_name="delivery_tasks"
     )
     
-    # FIX: String reference ka istemaal kiya
+    # Rider link (string reference)
     rider = models.ForeignKey(
         "accounts.RiderProfile",
         on_delete=models.SET_NULL,
@@ -58,7 +54,6 @@ class DeliveryTask(models.Model):
     failed_reason = models.TextField(blank=True, default="")
 
     def __str__(self):
-        # order_id ab direct nahi milega, isliye dispatch_record_id dikhayenge
         return f"Delivery for Dispatch {self.dispatch_record_id} ({self.status})"
 
     class Meta:
@@ -66,7 +61,7 @@ class DeliveryTask(models.Model):
 
 
 class RiderLocation(models.Model):
-    # FIX: String reference ka istemaal kiya
+    # Rider link (string reference)
     rider = models.OneToOneField(
         "accounts.RiderProfile",
         primary_key=True,

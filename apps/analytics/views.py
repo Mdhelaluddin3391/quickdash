@@ -1,16 +1,16 @@
 # apps/analytics/views.py
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
-from apps.accounts.permissions import IsWarehouseManagerEmployee, IsAdmin
+from apps.accounts.permissions import IsAdmin # Strictest permission for analytics
 from .models import DailyKPI
 from .serializers import DailyKPISerializer
 
 class DailyKPIListView(generics.ListAPIView):
     """
     GET /api/v1/analytics/kpis/
-    Warehouse Managers/Admins ke liye Daily KPIs ki list.
+    Admin users ke liye Daily KPIs ki list.
     """
-    permission_classes = [IsAuthenticated, IsAdmin] # Sirf Admin/Superuser access
+    permission_classes = [IsAuthenticated, IsAdmin] 
     serializer_class = DailyKPISerializer
     queryset = DailyKPI.objects.all().select_related('warehouse')
     

@@ -1,3 +1,4 @@
+# apps/orders/admin.py
 from django.contrib import admin
 from .models import Order, OrderItem, OrderTimeline
 
@@ -11,11 +12,9 @@ class OrderItemInline(admin.TabularInline):
     readonly_fields = ('sku', 'sku_name_snapshot', 'unit_price', 'quantity', 'total_price')
 
     def has_add_permission(self, request, obj=None):
-        # Admin se order item add karne ki permission nahi denge
         return False
 
     def has_delete_permission(self, request, obj=None):
-        # Admin se order item delete karne ki permission nahi denge
         return False
 
 
@@ -71,7 +70,6 @@ class OrderAdmin(admin.ModelAdmin):
     )
 
     def has_add_permission(self, request):
-        # Admin panel se naya order create karna allow nahi hai
         return False
 
 

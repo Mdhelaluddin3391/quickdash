@@ -1,3 +1,4 @@
+# apps/orders/receivers.py
 import logging
 from django.dispatch import receiver
 from django.utils import timezone
@@ -34,10 +35,10 @@ def handle_payment_success(sender, order, **kwargs):
         try:
             wms_items_list = [
                 {"sku_id": str(item.sku.id), "qty": item.quantity}
-                for item in order.items.all()
+                for item in order.items.all().select_related('sku')
             ]
             
-            # Note: 'send_order_created' signal WMS app mein defined hai
+            # 'send_order_created' signal WMS app mein defined hai
             send_order_created.send(
                 sender=Order,
                 order_id=order.id,

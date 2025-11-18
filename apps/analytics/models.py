@@ -5,8 +5,6 @@ from apps.warehouse.models import Warehouse
 class DailyKPI(models.Model):
     """
     Core performance metrics ko track karne ke liye model.
-    Analytics queries ko OLTP database (PostgreSQL) se offload kiya jayega
-    aur yahan store kiya jayega. [cite: 103]
     """
     date = models.DateField(unique=True)
     warehouse = models.ForeignKey(

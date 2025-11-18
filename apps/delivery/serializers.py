@@ -1,7 +1,6 @@
+# apps/delivery/serializers.py
 from rest_framework import serializers
 from .models import DeliveryTask, RiderLocation
-from apps.accounts.models import RiderProfile
-from apps.orders.models import Order
 
 
 # ===================================================================
@@ -46,7 +45,6 @@ class DeliveryTaskSerializer(serializers.ModelSerializer):
     rider_code = serializers.CharField(source='rider.rider_code', read_only=True, default=None)
     order_id_str = serializers.CharField(source='order.id', read_only=True)
     
-    # FIX: Warehouse code ko 'dispatch_record.warehouse.code' se 'order.warehouse.code' mein badla
     warehouse_code = serializers.CharField(source='order.warehouse.code', read_only=True)
     customer_phone = serializers.CharField(source='order.customer.phone', read_only=True)
     
@@ -54,7 +52,7 @@ class DeliveryTaskSerializer(serializers.ModelSerializer):
         model = DeliveryTask
         fields = (
             'id',
-            'dispatch_record_id', # FIX: 'dispatch_record' ko ID se badla
+            'dispatch_record_id', 
             'order_id_str',
             'status',
             'rider',
@@ -74,15 +72,13 @@ class DeliveryTaskSerializer(serializers.ModelSerializer):
 class RiderDeliveryTaskSerializer(serializers.ModelSerializer):
     """
     Rider App ko uski current task ki detail dikhane ke liye.
-    Yeh 'Order' model se customer ka address bhi lega.
-    OUTPUT serializer.
     """
     order_id_str = serializers.CharField(source='order.id', read_only=True)
     customer_address = serializers.JSONField(source='order.delivery_address_json', read_only=True)
     customer_lat = serializers.DecimalField(source='order.delivery_lat', max_digits=9, decimal_places=6, read_only=True)
     customer_lng = serializers.DecimalField(source='order.delivery_lng', max_digits=9, decimal_places=6, read_only=True)
     
-    # --- FIX: Warehouse ki details ab 'dispatch_record' ke bajaaye 'order' se aa rahi hain ---
+    # Warehouse ki details order ke warehouse foreign key se
     warehouse_address = serializers.CharField(source='order.warehouse.address', read_only=True)
     warehouse_lat = serializers.DecimalField(source='order.warehouse.lat', max_digits=9, decimal_places=6, read_only=True)
     warehouse_lng = serializers.DecimalField(source='order.warehouse.lng', max_digits=9, decimal_places=6, read_only=True)

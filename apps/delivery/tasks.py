@@ -1,3 +1,4 @@
+# apps/delivery/tasks.py
 import logging
 import random
 from celery import shared_task
@@ -8,7 +9,6 @@ from django.utils import timezone
 from apps.accounts.models import RiderProfile, User
 from apps.orders.models import Order
 from .models import DeliveryTask, RiderLocation
-# FIX: Signal ko import karein
 from .signals import rider_assigned_to_dispatch
 
 
@@ -21,11 +21,10 @@ def _generate_otp(length=4):
 def _find_best_rider_for_warehouse(warehouse_id: str) -> RiderProfile | None:
     """
     Sabse achha (available) rider dhoondhta hai.
-    FIX: Ab yeh Warehouse Model ke bajaaye warehouse_id ka istemaal karega.
     """
     
     # 1. Sabhi on-duty riders ko dhoondein
-    on_duty_locations = RiderLocation.objects.filter(on_duty=True).select_related('rider')
+    on_duty_locations = RiderLocation.objects.filter(on_duty=True).select_related('rider').order_by('-timestamp')
     
     if not on_duty_locations.exists():
         logger.warning(f"No riders are on duty for warehouse {warehouse_id}.")
@@ -38,7 +37,7 @@ def _find_best_rider_for_warehouse(warehouse_id: str) -> RiderProfile | None:
 
     # 3. Pehla aisa rider dhoondein jo on_duty hai, lekin active task list mein nahi hai
     for loc in on_duty_locations:
-        if loc.rider_id not in active_rider_ids:
+        if str(loc.rider_id) not in [str(id) for id in active_rider_ids]: # Compare UUIDs as strings
             logger.info(f"Found available rider: {loc.rider.rider_code}")
             return loc.rider 
 
@@ -50,7 +49,6 @@ def _find_best_rider_for_warehouse(warehouse_id: str) -> RiderProfile | None:
 def find_and_assign_rider_for_task(self, delivery_task_id: str, warehouse_id: str):
     """
     Ek specific delivery task ke liye rider dhoondhta hai aur assign karta hai.
-    FIX: Ab yeh warehouse_id bhi leta hai.
     """
     try:
         task = DeliveryTask.objects.select_related('order').get(id=delivery_task_id)
@@ -80,30 +78,22 @@ def find_and_assign_rider_for_task(self, delivery_task_id: str, warehouse_id: st
             task.delivery_otp = _generate_otp(4) # Customer ke liye naya OTP
             task.save()
             
-            # --- FIX: Order ko direct update karne waala code HATA diya gaya hai ---
-            # if task.order:
-            #     task.order.status = "dispatched"
-            #     task.order.rider = rider_user 
-            #     task.order.save(update_fields=['status', 'rider'])
-
             # WMS (DispatchRecord) aur Orders app ko update karne ke liye signal bhejein
-            # FIX: Signal mein 'order_id' aur 'rider_user_id' add kiya
             rider_assigned_to_dispatch.send(
                 sender=DeliveryTask,
                 dispatch_id=task.dispatch_record_id,
                 rider_profile_id=best_rider.id,
-                order_id=task.order_id, # Naya parameter
-                rider_user_id=rider_user.id # Naya parameter
+                order_id=task.order_id, 
+                rider_user_id=rider_user.id 
             )
 
         logger.info(f"Task {task.id} assigned to Rider {best_rider.rider_code}")
-        
-        # TODO: Yahaan Rider ko Push Notification (FCM) bhejna chahiye
         
         return f"Task {task.id} assigned to {best_rider.rider_code}"
 
     except Exception as exc:
         logger.error(f"Failed to assign rider for task {task.id}: {exc}")
+        # Next retry 60 seconds (1 minute) mein
         raise self.retry(exc=exc, countdown=60)
 
 
@@ -120,7 +110,7 @@ def create_delivery_task_from_signal(dispatch_id, order_id, warehouse_id, pickup
         
         with transaction.atomic():
             task, created = DeliveryTask.objects.get_or_create(
-                dispatch_record_id=dispatch_id, # FIX: Foreign key ke bajaaye ID use karein
+                dispatch_record_id=dispatch_id, 
                 defaults={
                     'order': order,
                     'status': "pending_assignment",
@@ -142,6 +132,3 @@ def create_delivery_task_from_signal(dispatch_id, order_id, warehouse_id, pickup
         logger.error(f"Order {order_id} not found. Cannot create DeliveryTask for Dispatch {dispatch_id}.")
     except Exception as e:
         logger.error(f"Failed to create DeliveryTask for Dispatch {dispatch_id}: {e}")
-
-# FIX: Puraana polling task (create_delivery_tasks_from_dispatch)
-# ko poori tarah se HATA diya gaya hai.

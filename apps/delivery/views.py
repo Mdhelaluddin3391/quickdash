@@ -1,22 +1,20 @@
+# apps/delivery/views.py
 from django.utils import timezone
 from rest_framework import status, generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
-from django.db import transaction  # <-- FIX: Import kiya
+from django.db import transaction 
 
 from apps.accounts.permissions import IsRider
 from apps.accounts.models import RiderProfile
-# FIX: OrderTimeline ka import hata diya
-# from apps.orders.models import OrderTimeline
 from .models import RiderLocation, DeliveryTask
 from .serializers import (
     UpdateRiderLocationSerializer,
     RiderLocationSerializer,
     RiderDeliveryTaskSerializer,
 )
-# FIX: Apna naya signal import kiya
 from .signals import delivery_completed
 
 import logging
@@ -68,7 +66,7 @@ class GetRiderLocationAPIView(generics.RetrieveAPIView):
     (Optional) Admin ya internal service ke liye rider ki location dekhne hetu.
     GET /api/v1/delivery/location/<rider_id>/
     """
-    permission_classes = [IsAuthenticated] # Isko IsAdmin se protect kar sakte hain
+    permission_classes = [IsAuthenticated] 
     serializer_class = RiderLocationSerializer
     queryset = RiderLocation.objects.all()
     lookup_field = 'rider__id'
@@ -94,7 +92,6 @@ class GetMyCurrentTaskAPIView(APIView):
         ).exclude(
             status__in=['delivered', 'failed']
         ).select_related(
-            # FIX: 'dispatch_record__warehouse' ko 'order__warehouse' se badla
             'order__warehouse' 
         ).first() # Ek rider ke paas ek hi active task hoga
 
@@ -128,9 +125,8 @@ class UpdateTaskStatusAPIView(APIView):
             )
         
         try:
-            # FIX: Humein 'order' ko bhi fetch karna hai taaki use update kar sakein
             task = get_object_or_404(
-                DeliveryTask.objects.select_related('order'), 
+                DeliveryTask.objects.select_related('order__rider'), 
                 id=task_id, 
                 rider=request.user.rider_profile
             )
@@ -166,23 +162,12 @@ class UpdateTaskStatusAPIView(APIView):
             if task.delivery_otp != otp:
                 return Response({"detail": "Invalid Delivery OTP."}, status=status.HTTP_400_BAD_REQUEST)
             
-            # FIX: Ek saath 3 models update karne ke liye transaction ka istemaal
             with transaction.atomic():
                 task.status = "delivered"
                 task.delivered_at = timezone.now()
-                
-                # FIX: Order ka status update karna HATA diya
-                # if task.order:
-                #     task.order.status = "delivered"
-                #     ...
-                #     task.order.save(...)
-
-                # FIX: Order timeline mein add karna HATA diya
-                # OrderTimeline.objects.create(...)
-                
-                task.save() # Task ko aakhir mein save karein
+                task.save() # Task ko save karein
             
-            # FIX: Ab hum 'orders' app ko batane ke liye signal bhejenge
+            # Ab hum 'orders' app ko batane ke liye signal bhejenge
             if task.order:
                 try:
                     delivery_completed.send(

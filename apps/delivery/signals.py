@@ -1,3 +1,4 @@
+# apps/delivery/signals.py
 from django.dispatch import Signal
 
 # --- Signal (delivery -> wms) ---

@@ -1,3 +1,4 @@
+# apps/inventory/views.py
 from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -12,6 +13,7 @@ class InventoryListAPIView(generics.ListAPIView):
     """
     Employees ke liye stock check karne ki API.
     Filters: ?warehouse_id=...&sku_code=...
+    GET /api/v1/inventory/stock/ 
     """
     permission_classes = [IsAuthenticated, IsEmployee]
     serializer_class = InventoryStockSerializer
@@ -35,20 +37,21 @@ class InventoryListAPIView(generics.ListAPIView):
 class AdjustStockAPIView(APIView):
     """
     Direct manual adjustment (Emergency/Admin use).
-    Ideally, adjustments should happen via WMS (GRN/Cycle Count),
-    but this is for quick fixes.
+    POST /api/v1/inventory/adjust/ 
     """
     permission_classes = [IsAuthenticated, IsWarehouseManagerEmployee]
 
     def post(self, request):
         sku_id = request.data.get('sku_id')
         warehouse_id = request.data.get('warehouse_id')
-        quantity = request.data.get('quantity') # Kitna add/subtract karna hai
+        quantity = request.data.get('quantity') # Kitna add/subtract karna hai (+10 ya -5)
         
         if not all([sku_id, warehouse_id, quantity]):
             return Response({"detail": "sku_id, warehouse_id, and quantity required."}, status=status.HTTP_400_BAD_REQUEST)
             
         try:
+            quantity = int(quantity)
+            
             # Stock fetch ya create karo
             stock, created = InventoryStock.objects.get_or_create(
                 warehouse_id=warehouse_id,
@@ -57,7 +60,7 @@ class AdjustStockAPIView(APIView):
             )
             
             # Adjustment logic
-            stock.available_qty += int(quantity)
+            stock.available_qty += quantity
             if stock.available_qty < 0:
                 return Response({"detail": "Stock cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
                 
@@ -68,5 +71,7 @@ class AdjustStockAPIView(APIView):
                 "new_available_qty": stock.available_qty
             }, status=status.HTTP_200_OK)
             
+        except ValueError:
+            return Response({"detail": "Quantity must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
