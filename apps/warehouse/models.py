@@ -3,8 +3,9 @@ import uuid
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
-# FIX: SKU ko 'inventory' app se import kiya
-from apps.inventory.models import SKU
+
+# FIX: Correct Import - SKU is now in Catalog
+from apps.catalog.models import SKU
 
 
 class Warehouse(models.Model):

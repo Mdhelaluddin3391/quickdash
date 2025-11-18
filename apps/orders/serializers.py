@@ -1,9 +1,9 @@
 from rest_framework import serializers
 from .models import Order, OrderItem, OrderTimeline
-from apps.inventory.models import SKU
+# FIX: Import from catalog
+from apps.catalog.models import SKU
 from apps.warehouse.models import Warehouse
 import uuid
-
 # ===================================================================
 #                      WRITE Serializers (Input)
 # ===================================================================

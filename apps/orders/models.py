@@ -113,11 +113,10 @@ class OrderItem(models.Model):
     Ek order mein kya-kya items they. [cite: 112]
     """
     id = models.BigAutoField(primary_key=True)
-    # [cite: 114]
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
-    # [cite: 115]
-    sku = models.ForeignKey("inventory.SKU", on_delete=models.SET_NULL, null=True)
     
+    # FIX: Point to the correct app 'catalog'
+    sku = models.ForeignKey("catalog.SKU", on_delete=models.SET_NULL, null=True)
     # Item ki details (us time ki)
     # [cite: 116]
     quantity = models.PositiveIntegerField()
