@@ -1,40 +1,11 @@
 from django.db import transaction
-from django.utils import timezone
-from .models import PasswordResetToken
-from .serializers import AdminForgotPasswordSerializer, AdminResetPasswordSerializer
-from .tasks import send_admin_password_reset_email_task
-from django.db.models import Q
 from rest_framework import status
-from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
-from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.exceptions import TokenError
-from django.core.exceptions import ValidationError
-from .models import (
-    User,
-    CustomerProfile,
-    RiderProfile,
-    EmployeeProfile,
-    PhoneOTP,
-    UserSession,
-)
-from .serializers import (
-    RequestOTPSerializer,
-    VerifyOTPSerializer,
-    AdminCreateRiderSerializer,
-    AdminCreateEmployeeSerializer,
-    AdminChangeRiderStatusSerializer,
-    AdminChangeEmployeeStatusSerializer,
-)
-from .utils import create_and_send_otp, normalize_phone, create_tokens_with_session,check_otp_rate_limit,get_client_ip
-from .permissions import IsCustomer, IsRider, IsEmployee, IsAdmin
-from rest_framework_simplejwt.views import TokenRefreshView
-from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
-from .utils import rotate_refresh_token
-from .models import PasswordResetToken
-
-
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from .models import User, CustomerProfile, PhoneOTP
+from .serializers import RequestOTPSerializer, VerifyOTPSerializer
+from .utils import create_and_send_otp, normalize_phone, create_tokens_with_session
 
 
 
@@ -115,63 +86,38 @@ class BaseVerifyOTPView(APIView):
 
 # ========== CUSTOMER AUTH ==========
 
-class CustomerRequestOTPView(BaseRequestOTPView):
-    login_type = "CUSTOMER"
-    def handle_request(self, phone: str):
-        create_and_send_otp(phone, self.login_type)
-        return Response({"detail": "OTP sent to customer phone."})
+class CustomerRequestOTPView(APIView):
+    def post(self, request):
+        serializer = RequestOTPSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        create_and_send_otp(serializer.validated_data["phone"], "CUSTOMER")
+        return Response({"detail": "OTP sent."})
 
 
-class CustomerVerifyOTPView(BaseVerifyOTPView):
-    login_type = "CUSTOMER"
-    role_claim = "CUSTOMER"
-    client_claim = "customer_app"
 
+class CustomerVerifyOTPView(APIView):
     @transaction.atomic
-    def handle_verify(self, request, phone: str, otp_code: str):
-        phone = normalize_phone(phone)
-        
-        # Step 1: OTP Validate karein (ye ab atomic hai)
-        self._validate_otp(phone, otp_code)
+    def post(self, request):
+        serializer = VerifyOTPSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        phone, otp_code = serializer.validated_data["phone"], serializer.validated_data["otp"]
 
-        # Step 2: User ko ab create ya get karein (Verification ke baad)
-        # FIX: Default mein app_role="CUSTOMER" set kiya
-        user, created = User.objects.get_or_create(
-            phone=phone, 
-            defaults={"app_role": "CUSTOMER"}
-        )
+        otp_obj = PhoneOTP.objects.filter(phone=phone, login_type="CUSTOMER").order_by("-created_at").first()
+        if not otp_obj: return Response({"detail": "OTP not found"}, status=400)
         
-        update_fields = []
+        valid, msg = otp_obj.is_valid(otp_code)
+        if not valid: return Response({"detail": msg}, status=400)
+        otp_obj.is_used = True
+        otp_obj.save()
+
+        user, _ = User.objects.get_or_create(phone=phone, defaults={"app_role": "CUSTOMER"})
         if not user.is_customer:
             user.is_customer = True
-            update_fields.append("is_customer")
-        
-        # FIX: Agar user pehle se tha (jaise employee) toh uska app_role update nahi hoga,
-        # lekin humein Customer banne ke liye flag True karna zaroori hai.
-        # Naye user ka app_role default="CUSTOMER" se set ho jaayega.
-        
-        if update_fields:
-            user.save(update_fields=update_fields)
+            user.save()
+        CustomerProfile.objects.get_or_create(user=user)
 
-        customer, _ = CustomerProfile.objects.get_or_create(user=user)
-
-
-        device_info = {
-            "device_id": request.data.get("device_id", ""),
-            "device_model": request.data.get("device_model", ""),
-            "os_version": request.data.get("os_version", ""),
-        }
-
-        tokens = create_tokens_with_session(
-            user=user,
-            role=self.role_claim,
-            client=self.client_claim,
-            extra_claims={"customer_id": str(customer.id)}, # UUIDs ko string mein bhejna a_ch_ch_ha hai
-            device_info=device_info,
-            request=request,
-            single_session_for_client=False, # Customer multiple device use kar sakta hai
-        )
-        return Response(tokens, status=status.HTTP_200_OK)
+        tokens = create_tokens_with_session(user=user, role="CUSTOMER", client="customer_app", request=request)
+        return Response(tokens)
 
 # ========== RIDER AUTH ==========
 

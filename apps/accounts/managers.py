@@ -6,7 +6,7 @@ class UserManager(BaseUserManager):
     def _create_user(self, phone, password=None, **extra_fields):
         if not phone:
             raise ValueError("The phone field must be set")
-        phone = self.normalize_email(phone) if "@" in phone else phone
+        # Email normalization hata diya kyunki hum phone use kar rahe hain
         user = self.model(phone=phone, **extra_fields)
         if password:
             user.set_password(password)
