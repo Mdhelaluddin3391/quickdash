@@ -1,9 +1,8 @@
 # apps/inventory/services.py
-from django.db import transaction
 from django.db.models import Sum
+from django.db import transaction
 from .models import InventoryStock
 from apps.warehouse.models import Warehouse
-from .exceptions import OutOfStockError # (Ensure this exception exists or use standard ValueError)
 
 def check_and_lock_inventory(warehouse_id, sku_id, qty_needed):
     """
@@ -11,7 +10,7 @@ def check_and_lock_inventory(warehouse_id, sku_id, qty_needed):
     Yeh function InventoryStock table ko lock (select_for_update) karega.
     """
     try:
-        # Transaction lock
+        # Transaction lock taaki race condition na ho
         inv = InventoryStock.objects.select_for_update().get(
             warehouse_id=warehouse_id, 
             sku_id=sku_id
@@ -24,10 +23,9 @@ def check_and_lock_inventory(warehouse_id, sku_id, qty_needed):
 
     return True
 
+# ... (baaki ka find_best_warehouse_for_items function waisa hi rakhein)
 def find_best_warehouse_for_items(order_items):
-    """
-    Existing logic...
-    """
+    # ... (existing code)
     candidate_warehouses = Warehouse.objects.filter(is_active=True)
     sku_ids = [it["sku_id"] for it in order_items]
     
@@ -62,6 +60,6 @@ def find_best_warehouse_for_items(order_items):
             best_wh_id = wh.id
 
     if best_wh_id is None:
-        return None
+        return None 
         
     return Warehouse.objects.get(id=best_wh_id)

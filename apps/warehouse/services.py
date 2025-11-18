@@ -3,19 +3,26 @@ import random
 from django.db import transaction, models
 from django.utils import timezone
 from django.db.models import Sum
+
 from .models import (
     Warehouse, Bin, BinInventory, StockMovement, 
     PickingTask, PickItem, PackingTask, DispatchRecord,
     PickSkip, ShortPickIncident, FulfillmentCancel,
     GRN, GRNItem, PutawayTask, PutawayItem, CycleCountItem
 )
-from apps.inventory.models import InventoryStock
 from .exceptions import OutOfStockError, ReservationFailedError
-from .signals import dispatch_ready_for_delivery, inventory_change_required
-from apps.orders.models import Order 
-from apps.payments.tasks import process_order_refund_task
 from .notifications import notify_packer_new_task 
 
+# --- DECOUPLED IMPORTS ---
+# Inventory DB ko directly touch karne ki bajaye Service use karein
+from apps.inventory.services import check_and_lock_inventory 
+
+# Signals import karein (Order/Inventory ko notify karne ke liye)
+from .signals import (
+    dispatch_ready_for_delivery, 
+    inventory_change_required, 
+    item_fulfillment_cancelled
+)
 
 @transaction.atomic
 def reserve_stock_for_order(order_id, warehouse_id, items):
@@ -26,8 +33,7 @@ def reserve_stock_for_order(order_id, warehouse_id, items):
         sku_id = it["sku_id"]
         qty_needed = int(it["qty"])
 
-        # 1. Check Aggregate Stock (Via Service Call)
-        # Warehouse ab Inventory DB ko directly touch nahi karega
+        # 1. Check Aggregate Stock (Via Service Call - Decoupled)
         try:
             check_and_lock_inventory(warehouse_id, sku_id, qty_needed)
         except ValueError as e:
@@ -61,7 +67,7 @@ def reserve_stock_for_order(order_id, warehouse_id, items):
         if remaining > 0:
             raise ReservationFailedError(f"Bin integrity error for SKU {sku_id}.")
 
-        # 3. Update Aggregate (Via Signal)
+        # 3. Update Aggregate Inventory (Via Signal)
         inventory_change_required.send(
             sender=Warehouse,
             sku_id=sku_id,
@@ -133,6 +139,7 @@ def complete_packing(packing_task_id, packer_user):
         bi.reserved_qty -= pitem.qty
         bi.save()
         
+        # Inventory Update Signal
         inventory_change_required.send(
             sender=Warehouse,
             sku_id=pitem.sku_id,
@@ -154,6 +161,7 @@ def complete_packing(packing_task_id, packer_user):
         status="ready", pickup_otp=pickup_otp
     )
     
+    # Delivery Update Signal
     dispatch_ready_for_delivery.send(
         sender=DispatchRecord, dispatch_id=dispatch.id, order_id=dispatch.order_id,
         warehouse_id=warehouse.id, pickup_otp=pickup_otp
@@ -186,12 +194,11 @@ def resolve_skip_as_shortpick(skip: PickSkip, resolved_by_user, note: str):
         short_picked_qty=qty_needed, notes=note
     )
 
-    # Local Bin Update
     bi = BinInventory.objects.get(bin=item.bin, sku=item.sku)
     bi.reserved_qty -= qty_needed
     bi.save(update_fields=['reserved_qty'])
     
-    # Inventory Signal
+    # Inventory Update Signal
     inventory_change_required.send(
         sender=Warehouse, sku_id=item.sku_id, warehouse_id=item.task.warehouse.id,
         delta_available=qty_needed, delta_reserved=-qty_needed,
@@ -210,43 +217,37 @@ def resolve_skip_as_shortpick(skip: PickSkip, resolved_by_user, note: str):
 @transaction.atomic
 def admin_fulfillment_cancel(pick_item: PickItem, cancelled_by_user, reason: str):
     """
-    Completely Decoupled: No Order import, No Payment task call.
-    Just updates local WMS state and fires a signal.
+    Item cancel hone par ab Warehouse App khud refund process nahi karega.
+    Yeh sirf ek SIGNAL (Event) broadcast karega.
     """
-    if pick_item.qty == pick_item.picked_qty:
-        raise ValueError("Cannot cancel fully picked item.")
-    
+    if pick_item.qty == pick_item.picked_qty: raise ValueError("Cannot cancel fully picked item.")
     qty_to_cancel = pick_item.qty - pick_item.picked_qty
     
-    # 1. FC Record
     fc_record = FulfillmentCancel.objects.create(
-        pick_item=pick_item,
-        cancelled_by=cancelled_by_user,
-        reason=reason,
-        refund_initiated=True # Assumes listener will handle it
+        pick_item=pick_item, cancelled_by=cancelled_by_user,
+        reason=reason, refund_initiated=True # Signal bheja ja raha hai
     )
     
-    # 2. BinInventory Update
+    # Local Bin Update
     bi = BinInventory.objects.get(bin=pick_item.bin, sku=pick_item.sku)
     bi.reserved_qty -= qty_to_cancel
     bi.save(update_fields=['reserved_qty'])
     
-    # 3. InventoryStock Signal
+    # Inventory Update Signal
     inventory_change_required.send(
-        sender=Warehouse,
-        sku_id=pick_item.sku_id,
-        warehouse_id=pick_item.task.warehouse.id,
-        delta_available=qty_to_cancel,
-        delta_reserved=-qty_to_cancel,
-        reference=str(pick_item.task.order_id),
-        change_type='fulfillment_cancel_rollback'
+        sender=Warehouse, sku_id=pick_item.sku_id, warehouse_id=pick_item.task.warehouse.id,
+        delta_available=qty_to_cancel, delta_reserved=-qty_to_cancel,
+        reference=str(pick_item.task.order_id), change_type='fulfillment_cancel_rollback'
     )
 
-    # 4. Update PickItem
     pick_item.qty = pick_item.picked_qty
     pick_item.save(update_fields=['qty'])
 
-    # 5. Fire Signal - Orders App will listen to this!
+    # === MAIN DECOUPLING ===
+    # Yahan Order model import karke refund calculate karne ki jagah,
+    # hum sirf signal bhej rahe hain ki "Item Cancel Ho Gaya".
+    # Orders App is signal ko sunega aur refund process karega.
+    
     item_fulfillment_cancelled.send(
         sender=FulfillmentCancel,
         order_id=pick_item.task.order_id,
@@ -288,6 +289,7 @@ def place_putaway_item(task_id, putaway_item_id, bin_id, qty_placed, user):
     bi.qty += qty_placed
     bi.save(update_fields=['qty'])
 
+    # Inventory Update Signal
     inventory_change_required.send(
         sender=Warehouse, sku_id=sku.id, warehouse_id=warehouse.id,
         delta_available=qty_placed, delta_reserved=0,
@@ -339,6 +341,7 @@ def record_cycle_count_item(task_id, bin_id, sku_id, counted_qty, user):
         bi.qty += delta
         bi.save(update_fields=['qty'])
         
+        # Inventory Update Signal
         inventory_change_required.send(
             sender=Warehouse, sku_id=sku_id, warehouse_id=cc_item.task.warehouse.id,
             delta_available=delta, delta_reserved=0,
