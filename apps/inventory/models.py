@@ -11,6 +11,7 @@ class SKU(models.Model):
     is_active = models.BooleanField(default=True)
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    sale_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
 
     def __str__(self):
         return f"{self.sku_code} - {self.name}"

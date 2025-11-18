@@ -155,22 +155,33 @@ class OrderWebhookAPIView(APIView):
             "warehouse_id": warehouse_id,
         }
 
+        # Case 1: Async Mode
         if mode == "async":
             orchestrate_order_fulfilment_from_order_payload.delay(payload)
-            return Response({"status": "queued"}, status=202)
+            # Async response ke liye bhi idempotency enable kar sakte hain
+            response = Response({"status": "queued"}, status=202)
+            response['X-STORE-IDEMPOTENCY'] = '1'
+            return response
 
         if warehouse_id is None:
             return Response({"detail": "warehouse_id required for sync mode"}, status=400)
 
+        # Case 2: Sync Mode
         try:
             allocations = reserve_stock_for_order(order_id, warehouse_id, items)
+            # Import inside method to avoid circular import if necessary, 
+            # though top-level is usually fine if structure allows.
             from apps.warehouse.services import create_picking_task_from_reservation
             task = create_picking_task_from_reservation(order_id, warehouse_id, allocations)
         except OutOfStockError as e:
             return Response({"detail": str(e)}, status=400)
 
-        return Response(PickingTaskSerializer(task).data, status=201)
-
+        # --- FIX START: Idempotency Header Setup ---
+        # Pehle direct return kar rahe the, ab variable mein lekar header add karenge
+        response = Response(PickingTaskSerializer(task).data, status=201)
+        response['X-STORE-IDEMPOTENCY'] = '1'
+        return response
+        # --- FIX END ---
 
 # ===================================================================
 #                              PICKING (PICKER ONLY)

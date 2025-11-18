@@ -48,11 +48,10 @@ class CreateOrderAPIView(APIView):
                     sku_id = item_data['sku_id']
                     quantity = item_data['quantity']
                     
-                    # TODO: Asli system mein, price SKU se lein.
-                    # sku = SKU.objects.get(id=sku_id)
-                    # unit_price = sku.sale_price
-                    
-                    unit_price = 10.00  # <-- FAKE PRICE (ABHI KE LIYE)
+                    # --- FIX: SKU se asli price fetch karein ---
+                    sku = SKU.objects.get(id=sku_id)
+                    unit_price = sku.sale_price 
+                    # -------------------------------------------
                     
                     item_total = unit_price * quantity
                     total_amount += item_total
