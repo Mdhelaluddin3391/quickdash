@@ -106,6 +106,7 @@ class UserSession(models.Model):
     client = models.CharField(max_length=32)
     jti = models.CharField(max_length=255, db_index=True)
     device_id = models.CharField(max_length=255, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True) # <-- Naya Field Add Kiya
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
