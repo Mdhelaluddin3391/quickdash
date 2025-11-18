@@ -1,7 +1,7 @@
 from django.dispatch import Signal
 
-# --- Signal (payments/orders -> wms) ---
-send_order_created = Signal()
-
-# --- Signal (wms -> delivery) ---
+# Jab Dispatch ready ho jaye (Packing complete hone par)
 dispatch_ready_for_delivery = Signal()
+
+# Jab order create ho (Orders app se WMS ko batane ke liye)
+send_order_created = Signal()
