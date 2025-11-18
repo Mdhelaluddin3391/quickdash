@@ -100,33 +100,38 @@ def handle_rider_assigned(sender, order_id, rider_user_id, **kwargs):
 @receiver(item_fulfillment_cancelled)
 def handle_warehouse_cancellation(sender, order_id, sku_id, qty, reason, **kwargs):
     """
-    Jab warehouse se koi item cancel ho, to Order update karo aur refund trigger karo.
+    Decoupled Logic: 
+    1. Warehouse tells "Item Cancelled".
+    2. Orders app looks up price.
+    3. Orders app tells Payments "Refund this amount".
     """
     try:
         order = Order.objects.get(id=order_id)
         
-        # 1. Find the item price
-        # Note: OrderItem shayad delete nahi hoga, bas hum refund process karenge
+        # 1. Item ki price pata karo (Order ke context mein)
+        # Note: Hum assume kar rahe hain OrderItem abhi bhi exist karta hai
         order_item = order.items.filter(sku__id=sku_id).first()
         
         if not order_item:
             logger.error(f"Item SKU {sku_id} not found in Order {order_id} during cancellation.")
             return
 
-        # 2. Calculate Refund
+        # 2. Refund Amount Calculate karo
+        # (Unit Price * Cancelled Qty)
         refund_amount = order_item.unit_price * qty
         
-        # 3. Update Order (Optional - Final amount kam kar sakte hain)
-        # order.final_amount -= refund_amount
-        # order.save()
-        
+        # 3. Order Timeline Update karo
         OrderTimeline.objects.create(
             order=order,
-            status=order.status, # Status change nahi ho raha, bas note add kar rahe
+            status=order.status, 
             notes=f"Item Cancelled by Warehouse: {qty} x {order_item.sku_name_snapshot}. Reason: {reason}"
         )
+        
+        # Optional: Aap chahein to Order ka total_amount bhi update kar sakte hain
+        # order.final_amount -= refund_amount
+        # order.save()
 
-        # 4. Trigger Refund via Signal (to Payments App)
+        # 4. Payments App ko signal bhejo
         if order.payment_status == 'paid':
             order_refund_requested.send(
                 sender=Order,
@@ -134,7 +139,7 @@ def handle_warehouse_cancellation(sender, order_id, sku_id, qty, reason, **kwarg
                 amount=refund_amount,
                 reason=f"Warehouse Cancellation: {reason}"
             )
-            logger.info(f"Refund of {refund_amount} requested for Order {order.id}")
+            logger.info(f"Triggered refund of {refund_amount} for Order {order.id} via signal.")
 
     except Order.DoesNotExist:
         logger.error(f"Order {order_id} not found during warehouse cancellation signal.")

@@ -1,12 +1,32 @@
 # apps/inventory/services.py
+from django.db import transaction
 from django.db.models import Sum
 from .models import InventoryStock
 from apps.warehouse.models import Warehouse
+from .exceptions import OutOfStockError # (Ensure this exception exists or use standard ValueError)
+
+def check_and_lock_inventory(warehouse_id, sku_id, qty_needed):
+    """
+    Warehouse is function ko call karega stock verify karne ke liye.
+    Yeh function InventoryStock table ko lock (select_for_update) karega.
+    """
+    try:
+        # Transaction lock
+        inv = InventoryStock.objects.select_for_update().get(
+            warehouse_id=warehouse_id, 
+            sku_id=sku_id
+        )
+    except InventoryStock.DoesNotExist:
+        raise ValueError(f"SKU {sku_id} not found in warehouse {warehouse_id}.")
+
+    if inv.available_qty < qty_needed:
+        raise ValueError(f"Insufficient stock for SKU {sku_id}. Need {qty_needed}, Have {inv.available_qty}")
+
+    return True
 
 def find_best_warehouse_for_items(order_items):
     """
-    Logic moved from warehouse app to here.
-    Inventory app knows best about stock levels.
+    Existing logic...
     """
     candidate_warehouses = Warehouse.objects.filter(is_active=True)
     sku_ids = [it["sku_id"] for it in order_items]
@@ -42,6 +62,6 @@ def find_best_warehouse_for_items(order_items):
             best_wh_id = wh.id
 
     if best_wh_id is None:
-        return None # Handle gracefully
+        return None
         
     return Warehouse.objects.get(id=best_wh_id)

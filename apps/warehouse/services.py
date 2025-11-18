@@ -26,16 +26,14 @@ def reserve_stock_for_order(order_id, warehouse_id, items):
         sku_id = it["sku_id"]
         qty_needed = int(it["qty"])
 
-        # 1. Check Aggregate Stock
+        # 1. Check Aggregate Stock (Via Service Call)
+        # Warehouse ab Inventory DB ko directly touch nahi karega
         try:
-            inv = InventoryStock.objects.select_for_update().get(warehouse=warehouse, sku_id=sku_id)
-        except InventoryStock.DoesNotExist:
-            raise OutOfStockError(f"SKU {sku_id} not found in warehouse.")
-            
-        if inv.available_qty < qty_needed:
-            raise OutOfStockError(f"Not enough stock for SKU {sku_id}. Need {qty_needed}, Have {inv.available_qty}")
+            check_and_lock_inventory(warehouse_id, sku_id, qty_needed)
+        except ValueError as e:
+            raise OutOfStockError(str(e))
 
-        # 2. Reserve from Bins
+        # 2. Reserve from Bins (Local WMS Logic)
         bin_qs = BinInventory.objects.select_for_update().filter(
             bin__shelf__aisle__zone__warehouse=warehouse, 
             sku_id=sku_id
@@ -188,10 +186,12 @@ def resolve_skip_as_shortpick(skip: PickSkip, resolved_by_user, note: str):
         short_picked_qty=qty_needed, notes=note
     )
 
+    # Local Bin Update
     bi = BinInventory.objects.get(bin=item.bin, sku=item.sku)
     bi.reserved_qty -= qty_needed
     bi.save(update_fields=['reserved_qty'])
     
+    # Inventory Signal
     inventory_change_required.send(
         sender=Warehouse, sku_id=item.sku_id, warehouse_id=item.task.warehouse.id,
         delta_available=qty_needed, delta_reserved=-qty_needed,
@@ -210,8 +210,8 @@ def resolve_skip_as_shortpick(skip: PickSkip, resolved_by_user, note: str):
 @transaction.atomic
 def admin_fulfillment_cancel(pick_item: PickItem, cancelled_by_user, reason: str):
     """
-    Item ko order se permanently cancel karta hai.
-    AB YEH REFUND CALCULATE NAHI KAREGA, SIRF SIGNAL BHEJEGA.
+    Completely Decoupled: No Order import, No Payment task call.
+    Just updates local WMS state and fires a signal.
     """
     if pick_item.qty == pick_item.picked_qty:
         raise ValueError("Cannot cancel fully picked item.")
@@ -223,7 +223,7 @@ def admin_fulfillment_cancel(pick_item: PickItem, cancelled_by_user, reason: str
         pick_item=pick_item,
         cancelled_by=cancelled_by_user,
         reason=reason,
-        refund_initiated=True # Ham maan ke chal rahe hain signal handle hoga
+        refund_initiated=True # Assumes listener will handle it
     )
     
     # 2. BinInventory Update
@@ -246,8 +246,7 @@ def admin_fulfillment_cancel(pick_item: PickItem, cancelled_by_user, reason: str
     pick_item.qty = pick_item.picked_qty
     pick_item.save(update_fields=['qty'])
 
-    # 5. Send Cancellation Signal (Decoupled)
-    # Ab Orders app isko sunega aur paise ka hisaab karega
+    # 5. Fire Signal - Orders App will listen to this!
     item_fulfillment_cancelled.send(
         sender=FulfillmentCancel,
         order_id=pick_item.task.order_id,
