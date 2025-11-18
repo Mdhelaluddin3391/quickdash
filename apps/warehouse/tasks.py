@@ -2,30 +2,24 @@
 from celery import shared_task
 from celery.utils.log import get_task_logger 
 # ... (existing imports, ensure obsolete imports removed)
+from apps.inventory.services import find_best_warehouse_for_items
+
 
 logger = get_task_logger(__name__) 
 
 
 @shared_task
 def orchestrate_order_fulfilment_from_order_payload(payload):
-    """
-    payload example:
-    {
-      "order_id": "O123",
-      "warehouse_id": "<uuid optional>",
-      "items": [
-        {"sku_id": "<uuid>", "qty": 2},
-        ...
-      ],
-      "metadata": {...}
-    }
-    """
     order_id = payload["order_id"]
     items = payload["items"]
     warehouse_id = payload.get("warehouse_id")
 
+    # Agar warehouse_id nahi diya, to Inventory App se poocho
     if warehouse_id is None:
-        wh = select_best_warehouse(items)
+        wh = find_best_warehouse_for_items(items)
+        if not wh:
+            logger.error(f"No warehouse found for Order {order_id}")
+            return "No Warehouse Found"
         warehouse_id = str(wh.id)
 
     allocations = reserve_stock_for_order(order_id, warehouse_id, items)

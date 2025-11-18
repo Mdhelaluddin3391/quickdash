@@ -1,17 +1,18 @@
-# apps/orders/receivers.py
 import logging
 from django.dispatch import receiver
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 
-# Imports from other apps (Signals ONLY)
+# Signals Imports
 from apps.payments.signals import payment_succeeded
 from apps.delivery.signals import delivery_completed, rider_assigned_to_dispatch
-from apps.warehouse.signals import send_order_created
+from apps.warehouse.signals import send_order_created, item_fulfillment_cancelled # <-- Import
+from .signals import order_refund_requested # <-- Import
 
-# Local Models
 from .models import Order, OrderTimeline
 
+User = get_user_model()
+logger = logging.getLogger(__name__)
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
@@ -94,3 +95,46 @@ def handle_rider_assigned(sender, order_id, rider_user_id, **kwargs):
             logger.info(f"Order {order.id} marked as dispatched.")
     except Exception as e:
         logger.error(f"Error updating Order {order_id} from rider assignment: {e}")
+
+
+@receiver(item_fulfillment_cancelled)
+def handle_warehouse_cancellation(sender, order_id, sku_id, qty, reason, **kwargs):
+    """
+    Jab warehouse se koi item cancel ho, to Order update karo aur refund trigger karo.
+    """
+    try:
+        order = Order.objects.get(id=order_id)
+        
+        # 1. Find the item price
+        # Note: OrderItem shayad delete nahi hoga, bas hum refund process karenge
+        order_item = order.items.filter(sku__id=sku_id).first()
+        
+        if not order_item:
+            logger.error(f"Item SKU {sku_id} not found in Order {order_id} during cancellation.")
+            return
+
+        # 2. Calculate Refund
+        refund_amount = order_item.unit_price * qty
+        
+        # 3. Update Order (Optional - Final amount kam kar sakte hain)
+        # order.final_amount -= refund_amount
+        # order.save()
+        
+        OrderTimeline.objects.create(
+            order=order,
+            status=order.status, # Status change nahi ho raha, bas note add kar rahe
+            notes=f"Item Cancelled by Warehouse: {qty} x {order_item.sku_name_snapshot}. Reason: {reason}"
+        )
+
+        # 4. Trigger Refund via Signal (to Payments App)
+        if order.payment_status == 'paid':
+            order_refund_requested.send(
+                sender=Order,
+                order_id=order.id,
+                amount=refund_amount,
+                reason=f"Warehouse Cancellation: {reason}"
+            )
+            logger.info(f"Refund of {refund_amount} requested for Order {order.id}")
+
+    except Order.DoesNotExist:
+        logger.error(f"Order {order_id} not found during warehouse cancellation signal.")
