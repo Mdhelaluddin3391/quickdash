@@ -1,108 +1,27 @@
-# apps/delivery/serializers.py
 from rest_framework import serializers
-from .models import DeliveryTask, RiderLocation
+from apps.orders.serializers import OrderDetailSerializer # Order ki details dikhane ke liye
+from .models import DeliveryTask, RiderProfile, RiderEarning
 
-
-# ===================================================================
-#                      RIDER LOCATION (Input/Output)
-# ===================================================================
-
-class UpdateRiderLocationSerializer(serializers.ModelSerializer):
-    """
-    Rider App yeh serializer istemaal karke apni location aur status update karega.
-    INPUT serializer.
-    """
-    lat = serializers.DecimalField(max_digits=9, decimal_places=6, required=True)
-    lng = serializers.DecimalField(max_digits=9, decimal_places=6, required=True)
-    on_duty = serializers.BooleanField(required=True)
-
+class RiderProfileSerializer(serializers.ModelSerializer):
     class Meta:
-        model = RiderLocation
-        fields = ('lat', 'lng', 'on_duty')
-
-
-class RiderLocationSerializer(serializers.ModelSerializer):
-    """
-    Admin ya doosre systems ko rider ki location dikhane ke liye.
-    OUTPUT serializer.
-    """
-    rider_code = serializers.CharField(source='rider.rider_code', read_only=True)
-    
-    class Meta:
-        model = RiderLocation
-        fields = ('rider', 'rider_code', 'on_duty', 'lat', 'lng', 'timestamp')
-
-
-# ===================================================================
-#                      DELIVERY TASK (Output)
-# ===================================================================
+        model = RiderProfile
+        fields = ['id', 'is_online', 'on_delivery', 'rating', 'cash_on_hand']
 
 class DeliveryTaskSerializer(serializers.ModelSerializer):
-    """
-    Admin ya internal use ke liye Delivery Task ki poori detail.
-    OUTPUT serializer.
-    """
-    rider_code = serializers.CharField(source='rider.rider_code', read_only=True, default=None)
-    order_id_str = serializers.CharField(source='order.id', read_only=True)
-    
-    warehouse_code = serializers.CharField(source='order.warehouse.code', read_only=True)
-    customer_phone = serializers.CharField(source='order.customer.phone', read_only=True)
+    # Order ki poori detail embedded (nested) dikhayenge
+    order_details = OrderDetailSerializer(source='order', read_only=True)
     
     class Meta:
         model = DeliveryTask
-        fields = (
-            'id',
-            'dispatch_record_id', 
-            'order_id_str',
-            'status',
-            'rider',
-            'rider_code',
-            'warehouse_code',
-            'customer_phone',
-            'pickup_otp',
-            'delivery_otp',
-            'created_at',
-            'assigned_at',
-            'picked_up_at',
-            'delivered_at',
-            'failed_reason',
-        )
+        fields = [
+            'id', 'status', 'order_details', 
+            'pickup_otp', 'delivery_otp', # Security ke liye inhe production mein hide kar sakte hain
+            'created_at', 'accepted_at', 'picked_up_at', 'delivered_at'
+        ]
 
-
-class RiderDeliveryTaskSerializer(serializers.ModelSerializer):
-    """
-    Rider App ko uski current task ki detail dikhane ke liye.
-    """
-    order_id_str = serializers.CharField(source='order.id', read_only=True)
-    customer_address = serializers.JSONField(source='order.delivery_address_json', read_only=True)
-    customer_lat = serializers.DecimalField(source='order.delivery_lat', max_digits=9, decimal_places=6, read_only=True)
-    customer_lng = serializers.DecimalField(source='order.delivery_lng', max_digits=9, decimal_places=6, read_only=True)
+class RiderEarningSerializer(serializers.ModelSerializer):
+    date = serializers.DateTimeField(source='created_at', format="%Y-%m-%d")
     
-    # Warehouse ki details order ke warehouse foreign key se
-    warehouse_address = serializers.CharField(source='order.warehouse.address', read_only=True)
-    warehouse_lat = serializers.DecimalField(source='order.warehouse.lat', max_digits=9, decimal_places=6, read_only=True)
-    warehouse_lng = serializers.DecimalField(source='order.warehouse.lng', max_digits=9, decimal_places=6, read_only=True)
-
     class Meta:
-        model = DeliveryTask
-        fields = (
-            'id',
-            'order_id_str',
-            'status',
-            'pickup_otp',     # Warehouse par dene ke liye
-            'delivery_otp',   # Customer se lene ke liye
-            
-            # Warehouse ki details
-            'warehouse_address',
-            'warehouse_lat',
-            'warehouse_lng',
-            
-            # Customer ki details
-            'customer_address',
-            'customer_lat',
-            'customer_lng',
-
-            # Timestamps
-            'assigned_at',
-            'picked_up_at',
-        )
+        model = RiderEarning
+        fields = ['id', 'order_id_str', 'base_fee', 'tip', 'total_earning', 'status', 'date']

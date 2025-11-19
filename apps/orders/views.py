@@ -1,263 +1,235 @@
-# apps/orders/views.py
-from django.db import transaction
-from django.shortcuts import get_object_or_404
-from rest_framework import status, generics
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from apps.accounts.permissions import IsCustomer
-from apps.catalog.models import SKU
-from .models import Order, OrderItem, OrderTimeline
-from .serializers import (
-    CreateOrderSerializer,
-    OrderSerializer,
-    OrderListSerializer
-)
-from apps.inventory.services import check_and_lock_inventory
-from .serializers import CartSerializer, AddToCartSerializer # <-- Import new serializers
-from .models import Cart, CartItem
-from .signals import order_refund_requested  # <-- Decoupled Signal Import
-
 import logging
+from decimal import Decimal
+import razorpay
+import json
+from django.db import transaction
+from django.db.models import F, Avg
+from django.utils import timezone
+from django.conf import settings
+from django.contrib.gis.measure import Distance
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+
+from rest_framework import generics, status
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.views import APIView
+
+# --- App Imports (Adjusted for 'apps.' structure) ---
+from apps.accounts.permissions import IsCustomer
+from apps.catalog.models import SKU  # Using SKU instead of generic Product if needed
+from apps.inventory.models import StoreInventory
+from apps.delivery.models import Delivery
+from apps.delivery.serializers import RiderDeliverySerializer
+from apps.cart.models import Cart, CartItem
+from apps.cart.serializers import CartSerializer
+
+# Models
+from .models import Order, OrderItem, Payment, Address, Coupon
+from .serializers import (
+    CheckoutSerializer,
+    OrderDetailSerializer,
+    OrderHistorySerializer,
+    PaymentVerificationSerializer,
+    RiderRatingSerializer
+)
+
+# Tasks (Ensure tasks.py exists in apps/orders)
+# from .tasks import process_razorpay_refund_task 
+
 logger = logging.getLogger(__name__)
 
-
-class CreateOrderAPIView(APIView):
+def process_successful_payment(order_id):
     """
-    Naya order create karne ke liye main API.
-    Yeh sirf order ko "pending" state mein banayega.
-    POST /api/v1/orders/create/
+    Logic: Order CONFIRM karna aur WMS Tasks create karna.
+    Yeh function 'Best' project ka core heart hai.
+    """
+    # Guarded imports to avoid circular error
+    from apps.warehouse.models import BinInventory, PickingTask, PickItem # Check your warehouse models!
+    from apps.accounts.models import User # Assuming staff are Users
+
+    try:
+        order = Order.objects.prefetch_related('items').get(
+            pk=order_id, # Using pk or order_id field
+            status="pending" # Ensure status string matches your model choices
+        )
+    except Order.DoesNotExist:
+        logger.warning(f"Order {order_id} not found or already processed.")
+        return False, "Order not found."
+
+    try:
+        with transaction.atomic():
+            order_lock = Order.objects.select_for_update().get(pk=order.pk)
+            order_items = order_lock.items.all()
+
+            if not order_items.exists():
+                raise Exception("Order has no items.")
+
+            # 1. Update Order Status
+            order_lock.status = "confirmed"
+            order_lock.payment_status = "successful"
+            order_lock.save()
+            
+            # 2. Payment Update
+            payment = order_lock.payments.first()
+            if payment:
+                payment.status = "successful"
+                payment.save()
+
+            # 3. Create Delivery Task
+            Delivery.objects.create(order=order_lock, status="pending")
+
+            # 4. Clear Cart
+            Cart.objects.filter(customer=order.customer).delete()
+
+            # --- WMS LOGIC (Simplified for your structure) ---
+            # 'Best' project used complex Greedy logic here.
+            # Hum yahan basic warehouse task create karenge.
+            
+            warehouse = order_lock.warehouse # Ensure order has warehouse link
+            if warehouse:
+                # Create a Master Picking Task
+                picking_task = PickingTask.objects.create(
+                    order_id=str(order_lock.id),
+                    warehouse=warehouse,
+                    status='PENDING'
+                )
+                
+                # Create Items for the task
+                for item in order_items:
+                    PickItem.objects.create(
+                        task=picking_task,
+                        sku=item.sku, # Ensure OrderItem has SKU link
+                        qty_to_pick=item.quantity
+                    )
+                logger.info(f"WMS Task created for Order {order_id}")
+
+            return True, "Success"
+
+    except Exception as e:
+        logger.error(f"Payment processing failed: {e}")
+        return False, str(e)
+
+
+class CheckoutView(generics.GenericAPIView):
+    """
+    Checkout: Calculates total, creates Pending Order, handles Razorpay/COD.
     """
     permission_classes = [IsAuthenticated, IsCustomer]
+    serializer_class = CheckoutSerializer
 
     def post(self, request, *args, **kwargs):
-        serializer = CreateOrderSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        validated_data = serializer.validated_data
-        items_data = validated_data.pop('items')
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         
+        user = request.user
+        data = serializer.validated_data
+        payment_method = data.get('payment_method', 'RAZORPAY')
+        
+        # 1. Get Cart
         try:
-            # Step 1: Database transaction shuru karein
+            cart = Cart.objects.get(customer=user)
+            if not cart.items.exists():
+                return Response({"error": "Cart empty"}, status=400)
+        except Cart.DoesNotExist:
+             return Response({"error": "Cart not found"}, status=404)
+
+        # 2. Calculate Totals (Simplified)
+        # 'Best' project uses logic from settings
+        item_subtotal = cart.total_price # Assuming property exists
+        delivery_fee = settings.MIN_DELIVERY_FEE # Use settings!
+        final_total = item_subtotal + delivery_fee
+        
+        # 3. Create Pending Order
+        try:
             with transaction.atomic():
-                
-                # Step 2: Order ki keemat (Pricing) calculate karein
-                total_amount = 0
-                order_items_to_create = []
-                warehouse_id = validated_data['warehouse_id']
-
-                for item_data in items_data:
-                    sku_id = item_data['sku_id']
-                    quantity = item_data['quantity']
-                    
-                    # --- FIX: Stock Check & Lock (Race Condition Prevention) ---
-                    # Order create karne se pehle check karo ki maal hai ya nahi
-                    check_and_lock_inventory(
-                        warehouse_id=warehouse_id,
-                        sku_id=sku_id,
-                        qty_needed=quantity
-                    )
-                    # -----------------------------------------------------------
-                    
-                    # SKU se asli price fetch karein
-                    sku = SKU.objects.get(id=sku_id)
-                    unit_price = sku.sale_price 
-                    
-                    item_total = unit_price * quantity
-                    total_amount += item_total
-                    
-                    # OrderItem object ko create list mein add karein
-                    order_items_to_create.append(
-                        OrderItem(
-                            sku_id=sku_id,
-                            quantity=quantity,
-                            unit_price=unit_price,
-                        )
-                    )
-
-                # Step 3: Order object banayein (Pending state mein)
                 order = Order.objects.create(
-                    customer=request.user,
-                    warehouse_id=warehouse_id,
-                    delivery_address_json=validated_data['delivery_address_json'],
-                    delivery_lat=validated_data.get('delivery_lat'),
-                    delivery_lng=validated_data.get('delivery_lng'),
+                    customer=user,
+                    warehouse_id=data.get('warehouse_id'), # Frontend should send this
+                    delivery_address_json=data.get('delivery_address_json'), # Or ID
+                    total_amount=item_subtotal,
+                    final_amount=final_total,
                     status="pending",
-                    payment_status="pending",
-                    total_amount=total_amount,
-                    discount_amount=0, 
-                    final_amount=total_amount
+                    payment_status="pending"
                 )
                 
-                # Step 4: Order items ko Order se link karke bulk create karein
-                for item in order_items_to_create:
-                    item.order = order
-                OrderItem.objects.bulk_create(order_items_to_create)
-                
-                # Step 5: Order ki history (timeline) mein pehli entry daalein
-                OrderTimeline.objects.create(
-                    order=order,
-                    status="pending",
-                    notes="Order created and awaiting payment."
-                )
-
-            # Step 6: Customer ko Order ID aur Amount waapas bhejein
-            response = Response({
-                "order_id": order.id,
-                "final_amount": order.final_amount,
-                "status": order.status,
-                "payment_status": order.payment_status,
-            }, status=status.HTTP_201_CREATED)
-
-            # --- FIX: Idempotency Middleware ke liye Header ---
-            # Yeh header batata hai ki is response ko cache/save karna hai
-            response['X-STORE-IDEMPOTENCY'] = '1'
-            return response
+                # Move items from Cart to Order
+                items_to_create = []
+                for c_item in cart.items.all():
+                    items_to_create.append(OrderItem(
+                        order=order,
+                        sku=c_item.sku,
+                        quantity=c_item.quantity,
+                        unit_price=c_item.sku.sale_price
+                    ))
+                OrderItem.objects.bulk_create(items_to_create)
 
         except Exception as e:
-            logger.exception(f"Order creation failed for user {request.user.id}: {e}")
-            # Agar Out of stock error aata hai inventory service se, toh wahi message dikhao
-            error_message = str(e)
-            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+            return Response({"error": str(e)}, status=400)
+
+        # 4. Handle Payment
+        final_amount_paise = int(final_total * 100)
+
+        if payment_method == 'COD':
+            Payment.objects.create(order=order, payment_method='COD', amount=final_total)
+            success, msg = process_successful_payment(order.id)
+            if success:
+                return Response({"message": "Order Confirmed (COD)", "order_id": order.id})
+            return Response({"error": msg}, status=400)
+
+        elif payment_method == 'RAZORPAY':
+            client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+            rzp_order = client.order.create({
+                'amount': final_amount_paise,
+                'currency': 'INR',
+                'receipt': str(order.id)
+            })
             
-            if "Insufficient stock" in error_message:
-                status_code = status.HTTP_400_BAD_REQUEST
-
-            return Response(
-                {"detail": f"Order creation failed: {error_message}"}, 
-                status=status_code
-            )
-
-class OrderHistoryAPIView(generics.ListAPIView):
-    """
-    Customer ke puraane orders ki list.
-    GET /api/v1/orders/
-    """
-    permission_classes = [IsAuthenticated, IsCustomer]
-    serializer_class = OrderListSerializer
-
-    def get_queryset(self):
-        return Order.objects.filter(customer=self.request.user)
-
-
-class OrderDetailAPIView(generics.RetrieveAPIView):
-    """
-    Ek specific order ki poori detail.
-    GET /api/v1/orders/<uuid:id>/
-    """
-    permission_classes = [IsAuthenticated, IsCustomer]
-    serializer_class = OrderSerializer
-    lookup_field = 'id'
-
-    def get_queryset(self):
-        return Order.objects.filter(customer=self.request.user).prefetch_related(
-            'items__sku', 'timeline'
-        )
-
-
-class CancelOrderAPIView(APIView):
-    """
-    Customer khud order cancel kar sake.
-    POST /api/v1/orders/<id>/cancel/
-    """
-    permission_classes = [IsAuthenticated, IsCustomer]
-
-    def post(self, request, id):
-        order = get_object_or_404(Order, id=id, customer=request.user)
-        
-        if order.status not in ['pending', 'confirmed']:
-            return Response(
-                {"detail": "Cannot cancel order at this stage (already processing)."}, 
-                status=status.HTTP_400_BAD_REQUEST
+            Payment.objects.create(
+                order=order, 
+                payment_method='RAZORPAY',
+                amount=final_total,
+                razorpay_order_id=rzp_order['id']
             )
             
-        try:
-            with transaction.atomic():
-                order.status = 'cancelled'
-                order.save(update_fields=['status'])
-                
-                OrderTimeline.objects.create(
-                    order=order, 
-                    status='cancelled', 
-                    notes="Cancelled by customer."
-                )
-                
-                # --- AUTO REFUND LOGIC (Via Signal) ---
-                if order.payment_status == 'paid':
-                    order_refund_requested.send(
-                        sender=Order, 
-                        order_id=order.id, 
-                        amount=order.final_amount, 
-                        reason="Cancelled by customer."
-                    )
-                    logger.info(f"Refund request signal sent for cancelled order {order.id}.")
-                # --------------------------------------
+            return Response({
+                "razorpay_order_id": rzp_order['id'],
+                "razorpay_key": settings.RAZORPAY_KEY_ID,
+                "amount": final_amount_paise,
+                "order_id": order.id
+            })
 
-            return Response({"status": "Order cancelled and refund initiated if applicable."}, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            logger.error(f"Error cancelling order {order.id}: {e}")
-            return Response({"detail": "Failed to cancel order."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"error": "Invalid Method"}, status=400)
 
 
-
-class ManageCartAPIView(APIView):
+class PaymentVerificationView(APIView):
     """
-    Single endpoint to Get, Add, Update, or Clear Cart.
-    GET  /api/v1/orders/cart/       -> View Cart
-    POST /api/v1/orders/cart/       -> Add/Update Item {sku_id, quantity}
-    DELETE /api/v1/orders/cart/     -> Clear entire Cart
+    Verifies Razorpay signature and confirms order.
     """
-    permission_classes = [IsAuthenticated, IsCustomer]
-
-    def get_cart(self, user):
-        cart, _ = Cart.objects.get_or_create(customer=user)
-        return cart
-
-    def get(self, request):
-        cart = self.get_cart(request.user)
-        serializer = CartSerializer(cart)
-        return Response(serializer.data)
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        """
-        Item Add ya Update karne ke liye. 
-        Agar quantity 0 bheji, toh item remove ho jayega.
-        """
-        serializer = AddToCartSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        sku_id = serializer.validated_data['sku_id']
-        quantity = serializer.validated_data['quantity']
-        cart = self.get_cart(request.user)
-
-        # Check SKU valid hai ya nahi
+        data = request.data
         try:
-            sku = SKU.objects.get(id=sku_id, is_active=True)
-        except SKU.DoesNotExist:
-            return Response({"detail": "Product not found or inactive."}, status=status.HTTP_404_NOT_FOUND)
-
-        # Logic: Add, Update or Remove
-        try:
-            item = CartItem.objects.get(cart=cart, sku=sku)
-            if quantity == 0:
-                item.delete()
+            client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+            client.utility.verify_payment_signature({
+                'razorpay_order_id': data['razorpay_order_id'],
+                'razorpay_payment_id': data['razorpay_payment_id'],
+                'razorpay_signature': data['razorpay_signature']
+            })
+            
+            # Find Payment object
+            payment = Payment.objects.get(razorpay_order_id=data['razorpay_order_id'])
+            payment.transaction_id = data['razorpay_payment_id']
+            payment.save()
+            
+            # Process Order
+            success, msg = process_successful_payment(payment.order.id)
+            if success:
+                return Response({"status": "Payment Successful, Order Confirmed"})
             else:
-                item.quantity = quantity
-                item.save()
-        except CartItem.DoesNotExist:
-            if quantity > 0:
-                CartItem.objects.create(cart=cart, sku=sku, quantity=quantity)
+                return Response({"error": msg}, status=400)
 
-        # Return updated cart
-        return Response(CartSerializer(cart).data, status=status.HTTP_200_OK)
-
-    def delete(self, request):
-        """
-        Poora cart khali karne ke liye.
-        """
-        cart = self.get_cart(request.user)
-        cart.items.all().delete()
-        return Response(CartSerializer(cart).data, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Verification failed: {e}")
+            return Response({"error": "Invalid Signature or Payment Failed"}, status=400)

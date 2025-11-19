@@ -1,191 +1,98 @@
-# apps/delivery/views.py
-from django.utils import timezone
-from rest_framework import status, generics
-from rest_framework.views import APIView
+from rest_framework import viewsets, status, views
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.shortcuts import get_object_or_404
-from django.db import transaction 
+from django.utils import timezone
+from django.db import transaction
 
-from apps.accounts.permissions import IsRider
-from apps.accounts.models import RiderProfile
-from .models import RiderLocation, DeliveryTask
-from .serializers import (
-    UpdateRiderLocationSerializer,
-    RiderLocationSerializer,
-    RiderDeliveryTaskSerializer,
-)
-from .signals import delivery_completed
+# Permissions (Niche Step 8 mein banayenge)
+from apps.accounts.permissions import IsRider 
 
-import logging
-logger = logging.getLogger(__name__)
+from .models import DeliveryTask, RiderProfile, RiderEarning
+from .serializers import DeliveryTaskSerializer, RiderEarningSerializer, RiderProfileSerializer
 
-# ===================================================================
-#                      RIDER LOCATION VIEWS
-# ===================================================================
-
-class UpdateRiderLocationAPIView(APIView):
+class RiderDashboardView(views.APIView):
     """
-    Rider App is API ko har 10-30 seconds mein call karega.
-    POST /api/v1/delivery/location/update/
+    Rider ka Home Screen API.
+    Status (Online/Offline) toggle karne aur Profile dekhne ke liye.
     """
     permission_classes = [IsAuthenticated, IsRider]
 
-    def post(self, request, *args, **kwargs):
-        rider_profile = request.user.rider_profile
-        
-        serializer = UpdateRiderLocationSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    def get(self, request):
+        profile = request.user.rider_profile
+        serializer = RiderProfileSerializer(profile)
+        return Response(serializer.data)
 
-        data = serializer.validated_data
+    def post(self, request):
+        # Toggle Online/Offline
+        profile = request.user.rider_profile
+        profile.is_online = not profile.is_online
+        profile.save()
+        return Response({"status": "Online" if profile.is_online else "Offline"})
+
+class DeliveryTaskViewSet(viewsets.ModelViewSet):
+    """
+    Rider ke Orders manage karne ke liye APIs.
+    """
+    serializer_class = DeliveryTaskSerializer
+    permission_classes = [IsAuthenticated, IsRider]
+    http_method_names = ['get', 'post', 'patch']
+
+    def get_queryset(self):
+        # Sirf is rider ke tasks dikhao
+        return DeliveryTask.objects.filter(rider__user=self.request.user).order_by('-created_at')
+
+    @action(detail=True, methods=['post'])
+    def accept_order(self, request, pk=None):
+        task = self.get_object()
+        if task.status != 'PENDING_ASSIGNMENT':
+            return Response({"error": "Order already accepted or unavailable"}, status=400)
         
-        # RiderLocation model mein update ya create karein
-        location, created = RiderLocation.objects.update_or_create(
-            rider=rider_profile,
-            defaults={
-                'lat': data['lat'],
-                'lng': data['lng'],
-                'on_duty': data['on_duty'],
-            }
-        )
-        
-        # RiderProfile par bhi 'on_duty' status update karein
-        if rider_profile.on_duty != data['on_duty']:
-            rider_profile.on_duty = data['on_duty']
-            rider_profile.save(update_fields=['on_duty'])
+        task.status = 'ACCEPTED'
+        task.accepted_at = timezone.now()
+        task.save()
+        return Response({"status": "Order Accepted! Go to Store."})
+
+    @action(detail=True, methods=['post'])
+    def pickup_order(self, request, pk=None):
+        task = self.get_object()
+        # OTP Verification Logic (Optional)
+        # if task.pickup_otp != request.data.get('otp'):
+        #     return Response({"error": "Invalid Pickup OTP"}, status=400)
+
+        task.status = 'PICKED_UP'
+        task.picked_up_at = timezone.now()
+        task.save()
+        return Response({"status": "Order Picked Up! Go to Customer."})
+
+    @action(detail=True, methods=['post'])
+    def complete_delivery(self, request, pk=None):
+        task = self.get_object()
+        # Delivery OTP Verification
+        entered_otp = request.data.get('otp')
+        if task.delivery_otp and task.delivery_otp != entered_otp:
+            return Response({"error": "Invalid Delivery OTP"}, status=400)
+
+        with transaction.atomic():
+            task.status = 'DELIVERED'
+            task.delivered_at = timezone.now()
+            task.save()
+            # Earning logic model ke save() method mein handle ho jayegi
             
-        return Response(
-            {"status": "location_updated", "on_duty": location.on_duty},
-            status=status.HTTP_200_OK
-        )
+        return Response({"status": "Order Delivered Successfully! Money added to wallet."})
 
-
-class GetRiderLocationAPIView(generics.RetrieveAPIView):
+class RiderEarningsView(views.APIView):
     """
-    (Optional) Admin ya internal service ke liye rider ki location dekhne hetu.
-    GET /api/v1/delivery/location/<rider_id>/
-    """
-    permission_classes = [IsAuthenticated] 
-    serializer_class = RiderLocationSerializer
-    queryset = RiderLocation.objects.all()
-    lookup_field = 'rider__id'
-
-
-# ===================================================================
-#                      RIDER TASK MANAGEMENT VIEWS
-# ===================================================================
-
-class GetMyCurrentTaskAPIView(APIView):
-    """
-    Rider App yeh call karke apna current active task fetch karega.
-    GET /api/v1/delivery/task/current/
+    Rider apni kamai ki history dekh sake.
     """
     permission_classes = [IsAuthenticated, IsRider]
 
-    def get(self, request, *args, **kwargs):
-        rider_profile = request.user.rider_profile
+    def get(self, request):
+        earnings = RiderEarning.objects.filter(rider__user=request.user).order_by('-created_at')
+        serializer = RiderEarningSerializer(earnings, many=True)
         
-        # Rider ka active task dhoondein (jo delivered ya failed na ho)
-        active_task = DeliveryTask.objects.filter(
-            rider=rider_profile
-        ).exclude(
-            status__in=['delivered', 'failed']
-        ).select_related(
-            'order__warehouse' 
-        ).first() # Ek rider ke paas ek hi active task hoga
-
-        if not active_task:
-            return Response(
-                {"detail": "No active delivery task found."},
-                status=status.HTTP_204_NO_CONTENT
-            )
-            
-        serializer = RiderDeliveryTaskSerializer(active_task)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-
-class UpdateTaskStatusAPIView(APIView):
-    """
-    Rider App isko call karke task ka status update karega.
-    POST /api/v1/delivery/task/update_status/
-    Body: {"task_id": "...", "status": "...", "otp": "..." (optional)}
-    """
-    permission_classes = [IsAuthenticated, IsRider]
-
-    def post(self, request, *args, **kwargs):
-        task_id = request.data.get('task_id')
-        new_status = request.data.get('status')
-        otp = request.data.get('otp')
-        
-        if not task_id or not new_status:
-            return Response(
-                {"detail": "task_id and status are required."}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            task = get_object_or_404(
-                DeliveryTask.objects.select_related('order__rider'), 
-                id=task_id, 
-                rider=request.user.rider_profile
-            )
-        except DeliveryTask.DoesNotExist:
-            return Response({"detail": "Task not found or not assigned to you."}, status=status.HTTP_404_NOT_FOUND)
-
-        # Basic Status transition logic
-        current_status = task.status
-        
-        if new_status == "at_warehouse":
-            if current_status != "assigned":
-                return Response({"detail": f"Cannot move from {current_status} to at_warehouse."}, status=status.HTTP_400_BAD_REQUEST)
-            task.status = "at_warehouse"
-        
-        elif new_status == "picked_up":
-            if current_status != "at_warehouse":
-                return Response({"detail": "Must be 'at_warehouse' to 'pick_up'."}, status=status.HTTP_400_BAD_REQUEST)
-            # Pickup OTP check karein
-            if task.pickup_otp != otp:
-                return Response({"detail": "Invalid Pickup OTP."}, status=status.HTTP_400_BAD_REQUEST)
-            task.status = "picked_up"
-            task.picked_up_at = timezone.now()
-        
-        elif new_status == "at_customer":
-            if current_status != "picked_up":
-                return Response({"detail": "Must be 'picked_up' to 'at_customer'."}, status=status.HTTP_400_BAD_REQUEST)
-            task.status = "at_customer"
-
-        elif new_status == "delivered":
-            if current_status != "at_customer":
-                return Response({"detail": "Must be 'at_customer' to 'deliver'."}, status=status.HTTP_400_BAD_REQUEST)
-            # Delivery OTP check karein
-            if task.delivery_otp != otp:
-                return Response({"detail": "Invalid Delivery OTP."}, status=status.HTTP_400_BAD_REQUEST)
-            
-            with transaction.atomic():
-                task.status = "delivered"
-                task.delivered_at = timezone.now()
-                task.save() # Task ko save karein
-            
-            # Ab hum 'orders' app ko batane ke liye signal bhejenge
-            if task.order:
-                try:
-                    delivery_completed.send(
-                        sender=DeliveryTask, 
-                        order=task.order, 
-                        rider_code=request.user.rider_profile.rider_code
-                    )
-                    logger.info(f"Sent delivery_completed signal for order {task.order.id}")
-                except Exception as e:
-                    logger.error(f"Error sending delivery_completed signal for order {task.order.id}: {e}")
-
-        else:
-            return Response({"detail": f"Invalid target status: {new_status}"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Status change (at_warehouse, picked_up, at_customer) ke liye
-        if not new_status == "delivered":
-             task.save()
-        
-        # Customer ko update hue task ki detail waapas bhejein
-        serializer = RiderDeliveryTaskSerializer(task)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        total_today = 0 # Yahan calculation logic laga sakte hain
+        return Response({
+            "history": serializer.data,
+            "summary": "Total earned logic goes here"
+        })

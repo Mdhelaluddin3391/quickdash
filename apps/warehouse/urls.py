@@ -53,4 +53,5 @@ urlpatterns = [
     # Cycle Count (Manager/Auditor)
     # POST /api/v1/wms/cycle-count/record/
     path('cycle-count/record/', record_cycle_count_view, name='wms-cc-record'),
+    path('', include(router.urls)),
 ]

@@ -27,3 +27,52 @@ def send_order_notification(user_id, title, message):
             
     except User.DoesNotExist:
         pass
+
+
+
+from celery import shared_task
+import firebase_admin
+from firebase_admin import credentials, messaging
+from django.conf import settings
+import logging
+
+# Firebase Initialize (Sirf ek baar hona chahiye)
+if not firebase_admin._apps:
+    cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH) # Settings mein path hona chahiye
+    firebase_admin.initialize_app(cred)
+
+logger = logging.getLogger(__name__)
+
+@shared_task(name="send_fcm_push_notification")
+def send_fcm_push_notification_task(user_id, title, body, data=None):
+    """
+    User ke saare logged-in devices par notification bhejta hai.
+    """
+    from apps.accounts.models import User # User model import karein
+    
+    try:
+        user = User.objects.get(id=user_id)
+        # Maan rahe hain User model mein 'fcm_tokens' ya related model hai
+        # Agar nahi hai, toh aapko User model mein tokens store karne honge via API
+        # Example: FCMToken model
+        tokens = user.fcm_tokens.values_list('token', flat=True) # List of tokens
+        
+        if not tokens:
+            return "No FCM tokens found for user."
+
+        message = messaging.MulticastMessage(
+            notification=messaging.Notification(
+                title=title,
+                body=body,
+            ),
+            data=data or {},
+            tokens=list(tokens),
+        )
+        
+        response = messaging.send_multicast(message)
+        logger.info(f"Sent {response.success_count} messages successfully.")
+        return f"Success: {response.success_count}, Failed: {response.failure_count}"
+
+    except Exception as e:
+        logger.error(f"FCM Failed: {e}")
+        return str(e)

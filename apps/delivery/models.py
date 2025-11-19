@@ -1,83 +1,181 @@
-# apps/delivery/models.py
 import uuid
+import logging
+from decimal import Decimal
 from django.db import models
+from django.conf import settings
+from django.utils import timezone
+from django.contrib.gis.db import models as gis_models
+from django.core.validators import MinValueValidator, MaxValueValidator
 
-# Delivery Task ka status
-DELIVERY_STATUS_CHOICES = [
-    ("pending_assignment", "Pending Assignment"), 
-    ("assigned", "Assigned to Rider"),
-    ("at_warehouse", "Rider at Warehouse"),
-    ("picked_up", "Picked Up"),
-    ("at_customer", "Rider at Customer"),
-    ("delivered", "Delivered"),
-    ("failed", "Failed Delivery"),
-]
+# Apps Imports (Aapke structure ke hisaab se)
+from apps.orders.models import Order
+from apps.utils.models import TimestampedModel # Agar utils mein hai, nahi toh niche TimestampedModel define karein
+# from apps.accounts.tasks import send_fcm_push_notification_task # Task import (baad mein banayenge)
 
+logger = logging.getLogger(__name__)
 
-class DeliveryTask(models.Model):
+# --- Base Model (Agar aapke paas common model nahi hai) ---
+class TimestampedModel(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    class Meta:
+        abstract = True
+
+# ==========================================
+# 1. RIDER PROFILE & AUTH
+# ==========================================
+class RiderProfile(TimestampedModel):
+    """
+    Rider ki details, location, aur status.
+    """
+    class ApprovalStatus(models.TextChoices):
+        PENDING = 'PENDING', 'Pending'
+        APPROVED = 'APPROVED', 'Approved'
+        REJECTED = 'REJECTED', 'Rejected'
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='rider_profile')
+    approval_status = models.CharField(max_length=10, choices=ApprovalStatus.choices, default=ApprovalStatus.PENDING)
+    
+    # GeoDjango Location
+    current_location = gis_models.PointField(srid=4326, null=True, blank=True)
+    
+    is_online = models.BooleanField(default=False, db_index=True)
+    on_delivery = models.BooleanField(default=False, db_index=True)
+    vehicle_details = models.CharField(max_length=100, blank=True)
+    rating = models.DecimalField(max_digits=3, decimal_places=2, default=5.0)
+    cash_on_hand = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+
+    def __str__(self):
+        return f"Rider: {self.user.username} ({'Online' if self.is_online else 'Offline'})"
+
+# ==========================================
+# 2. DELIVERY TASK (Main Logic)
+# ==========================================
+class DeliveryTask(TimestampedModel):
+    """
+    Order delivery process track karta hai.
+    'Best' project mein ise 'Delivery' kaha gaya tha.
+    """
+    class DeliveryStatus(models.TextChoices):
+        PENDING_ASSIGNMENT = 'PENDING_ASSIGNMENT', 'Pending Assignment'
+        ACCEPTED = 'ACCEPTED', 'Accepted by Rider'
+        AT_STORE = 'AT_STORE', 'Rider at Store'
+        PICKED_UP = 'PICKED_UP', 'Picked Up'
+        DELIVERED = 'DELIVERED', 'Delivered'
+        CANCELLED = 'CANCELLED', 'Cancelled'
+        FAILED = 'FAILED', 'Failed'
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
-    # WMS se aane wala Dispatch ID
-    dispatch_record_id = models.UUIDField(unique=True, db_index=True)
+    # Link to Order (Primary)
+    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name='delivery_task')
     
-    # Order link (string reference)
-    order = models.ForeignKey(
-        "orders.Order",
-        on_delete=models.SET_NULL,
-        null=True,
-        related_name="delivery_tasks"
-    )
+    # Link to Rider
+    rider = models.ForeignKey(RiderProfile, on_delete=models.SET_NULL, null=True, blank=True, related_name='tasks')
     
-    # Rider link (string reference)
-    rider = models.ForeignKey(
-        "accounts.RiderProfile",
-        on_delete=models.SET_NULL,
-        null=True, blank=True, 
-        related_name="delivery_tasks"
-    )
+    # WMS Link (Optional ab)
+    dispatch_record_id = models.CharField(max_length=100, null=True, blank=True)
+
+    status = models.CharField(max_length=30, choices=DeliveryStatus.choices, default=DeliveryStatus.PENDING_ASSIGNMENT, db_index=True)
     
-    status = models.CharField(
-        max_length=30,
-        choices=DELIVERY_STATUS_CHOICES,
-        default="pending_assignment",
-        db_index=True
-    )
-    
+    # OTPs
     pickup_otp = models.CharField(max_length=10, blank=True)
     delivery_otp = models.CharField(max_length=10, blank=True)
 
-    created_at = models.DateTimeField(auto_now_add=True)
-    assigned_at = models.DateTimeField(null=True, blank=True)
+    # Timestamps
+    accepted_at = models.DateTimeField(null=True, blank=True)
     picked_up_at = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
+
+    # Ratings
+    rider_rating = models.PositiveIntegerField(null=True, blank=True, validators=[MinValueValidator(1), MaxValueValidator(5)])
+    rider_rating_comment = models.TextField(blank=True)
+
+    def save(self, *args, **kwargs):
+        # 1. Status Change Detection
+        is_new = self._state.adding
+        old_status = None
+        if not is_new:
+            old_status = DeliveryTask.objects.get(pk=self.pk).status
+
+        # 2. Auto Update Order Status
+        if self.status == self.DeliveryStatus.PICKED_UP:
+            self.order.status = 'out_for_delivery' # Ensure match Order model choices
+            self.order.save()
+        elif self.status == self.DeliveryStatus.DELIVERED:
+            self.order.status = 'delivered'
+            self.order.payment_status = 'successful' # COD confirm
+            self.order.save()
+
+        # 3. Update Rider State
+        if self.rider:
+            if self.status in [self.DeliveryStatus.ACCEPTED, self.DeliveryStatus.PICKED_UP]:
+                self.rider.on_delivery = True
+            elif self.status in [self.DeliveryStatus.DELIVERED, self.DeliveryStatus.CANCELLED, self.DeliveryStatus.FAILED]:
+                self.rider.on_delivery = False
+            self.rider.save()
+
+        super().save(*args, **kwargs)
+
+        # 4. Post-Save Logic: Create Earning Record on Delivery
+        if not is_new and old_status != self.DeliveryStatus.DELIVERED and self.status == self.DeliveryStatus.DELIVERED:
+            self.create_rider_earning()
+
+    def create_rider_earning(self):
+        if not self.rider: return
+        try:
+            # Simple calculation (Settings se value le sakte hain)
+            base_fee = Decimal('30.00') 
+            tip = self.order.rider_tip if hasattr(self.order, 'rider_tip') else Decimal('0.00')
+            
+            RiderEarning.objects.create(
+                rider=self.rider,
+                delivery_task=self,
+                order_id_str=str(self.order.id),
+                base_fee=base_fee,
+                tip=tip,
+                total_earning=base_fee + tip
+            )
+            logger.info(f"Earning created for Rider {self.rider.user.username}")
+        except Exception as e:
+            logger.error(f"Failed to create earning: {e}")
+
+# ==========================================
+# 3. RIDER FINANCIALS (Earnings & Payouts)
+# ==========================================
+class RiderEarning(TimestampedModel):
+    class EarningStatus(models.TextChoices):
+        UNPAID = 'UNPAID', 'Unpaid'
+        PAID = 'PAID', 'Paid'
+
+    rider = models.ForeignKey(RiderProfile, on_delete=models.CASCADE, related_name='earnings')
+    delivery_task = models.OneToOneField(DeliveryTask, on_delete=models.SET_NULL, null=True)
+    order_id_str = models.CharField(max_length=50)
     
-    failed_reason = models.TextField(blank=True, default="")
-
-    def __str__(self):
-        return f"Delivery for Dispatch {self.dispatch_record_id} ({self.status})"
-
-    class Meta:
-        ordering = ['-created_at']
-
-
-class RiderLocation(models.Model):
-    # Rider link (string reference)
-    rider = models.OneToOneField(
-        "accounts.RiderProfile",
-        primary_key=True,
-        on_delete=models.CASCADE,
-        related_name="location"
-    )
+    base_fee = models.DecimalField(max_digits=10, decimal_places=2)
+    tip = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    total_earning = models.DecimalField(max_digits=10, decimal_places=2)
     
-    on_duty = models.BooleanField(default=False)
-    lat = models.DecimalField(max_digits=9, decimal_places=6)
-    lng = models.DecimalField(max_digits=9, decimal_places=6)
-    timestamp = models.DateTimeField(auto_now=True)
+    status = models.CharField(max_length=10, choices=EarningStatus.choices, default=EarningStatus.UNPAID)
 
-    def __str__(self):
-        return f"Location for {self.rider.rider_code} (On Duty: {self.on_duty})"
+class RiderPayout(TimestampedModel):
+    rider = models.ForeignKey(RiderProfile, on_delete=models.PROTECT, related_name='payouts')
+    amount_paid = models.DecimalField(max_digits=10, decimal_places=2)
+    transaction_ref = models.CharField(max_length=100, blank=True)
+    earnings_covered = models.ManyToManyField(RiderEarning, related_name='payouts')
 
-    class Meta:
-        indexes = [
-            models.Index(fields=['on_duty', 'timestamp']),
-        ]  
+class RiderCashDeposit(TimestampedModel):
+    """Rider depositing COD cash back to company"""
+    rider = models.ForeignKey(RiderProfile, on_delete=models.PROTECT)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=20, default='PENDING')
+    proof_image = models.ImageField(upload_to='deposits/', null=True, blank=True)
+
+# ==========================================
+# 4. APPLICATION & DOCS
+# ==========================================
+class RiderApplication(TimestampedModel):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    full_name = models.CharField(max_length=100)
+    phone = models.CharField(max_length=15)
+    status = models.CharField(max_length=20, default='PENDING')

@@ -1,86 +1,88 @@
-import logging
-from channels.generic.websocket import AsyncJsonWebsocketConsumer
-from channels.db import database_sync_to_async
+import json
+from channels.generic.websocket import AsyncWebsocketConsumer
 from django.contrib.gis.geos import Point
-from django.utils import timezone
+from channels.db import database_sync_to_async
+from .models import RiderProfile, DeliveryTask
 
-# Logger setup (Production debugging ke liye zaroori)
-logger = logging.getLogger(__name__)
-
-class RiderLocationConsumer(AsyncJsonWebsocketConsumer):
+class RiderLocationConsumer(AsyncWebsocketConsumer):
     """
-    Yeh Consumer Real-time Rider Tracking handle karega.
-    Rider yahan connect karega aur location updates bhejega.
+    Rider App isse connect karega aur har 5-10 second mein location bhejega.
+    URL: ws://domain/ws/rider/location/
     """
-
     async def connect(self):
-        """
-        Jab Rider WebSocket connect karega.
-        """
         self.user = self.scope["user"]
+        if not self.user.is_authenticated:
+            await self.close()
+        else:
+            await self.accept()
 
-        # 1. Auth Check: Kya user logged in hai aur Rider hai?
-        if self.user.is_anonymous or not self.user.is_rider:
-            logger.warning(f"Unauthorized connection attempt: {self.user}")
-            await self.close() # Connection reject kar do
-            return
-
-        # 2. Connection Accept karo
-        await self.accept()
-        
-        # 3. Group mein add karo (Optional: Agar manager ko track karna ho)
-        self.group_name = f"rider_{self.user.id}"
-        await self.channel_layer.group_add(self.group_name, self.channel_name)
-        
-        logger.info(f"Rider {self.user.phone} connected to Location Stream.")
-
-    async def disconnect(self, close_code):
+    async def receive(self, text_data):
         """
-        Jab connection toot jaye (Network issue ya app close).
+        Rider se location aayi -> DB mein save karo -> Order group mein broadcast karo.
+        Data format: {"lat": 12.9716, "lng": 77.5946}
         """
-        if hasattr(self, 'group_name'):
-            await self.channel_layer.group_discard(self.group_name, self.channel_name)
-        logger.info(f"Rider disconnected: {close_code}")
+        data = json.loads(text_data)
+        lat = data.get('lat')
+        lng = data.get('lng')
 
-    async def receive_json(self, content):
-        """
-        Jab Rider App se data aayega: {"lat": 12.9716, "lng": 77.5946}
-        """
-        try:
-            latitude = content.get("lat")
-            longitude = content.get("lng")
-
-            if latitude is not None and longitude is not None:
-                # DB Update ko Async function ke through call karein
-                await self.update_rider_location(latitude, longitude)
-            else:
-                await self.send_json({"error": "Invalid coordinates"})
-
-        except Exception as e:
-            logger.error(f"Error processing location: {e}")
-
-    # --- Helper Methods (Database Interactions) ---
-    # Note: Django ORM sync hota hai, isliye 'database_sync_to_async' use karna padta hai.
+        if lat and lng:
+            # 1. Rider ki location DB mein update karo
+            await self.update_rider_location(lat, lng)
+            
+            # 2. Agar Rider kisi active delivery par hai, toh Customer ko update bhejo
+            active_order_id = await self.get_active_order_id()
+            if active_order_id:
+                # Order specific room mein message bhejo
+                await self.channel_layer.group_send(
+                    f"order_{active_order_id}",
+                    {
+                        "type": "location_update",
+                        "lat": lat,
+                        "lng": lng
+                    }
+                )
 
     @database_sync_to_async
     def update_rider_location(self, lat, lng):
-        """
-        RiderProfile ko update karta hai.
-        """
-        from apps.accounts.models import RiderProfile
-        
         try:
             profile = self.user.rider_profile
-            
-            # GeoDjango Magic: Point create karo
-            location_point = Point(float(lng), float(lat), srid=4326)
-            
-            profile.current_location = location_point
-            profile.last_location_update = timezone.now()
-            profile.save(update_fields=['current_location', 'last_location_update'])
-            
-            # (Optional) Yahan hum check kar sakte hain ki kya Rider 
-            # Warehouse ya Customer ke paas pahunch gaya? (Geofencing)
-            
-        except RiderProfile.DoesNotExist:
-            logger.error(f"RiderProfile missing for user {self.user.id}")
+            profile.current_location = Point(float(lng), float(lat)) # GeoDjango Point (Lng, Lat)
+            profile.save()
+        except:
+            pass
+
+    @database_sync_to_async
+    def get_active_order_id(self):
+        # Check karo agar rider ke paas koi 'PICKED_UP' task hai
+        try:
+            task = DeliveryTask.objects.filter(
+                rider__user=self.user, 
+                status='PICKED_UP'
+            ).first()
+            return str(task.order.id) if task else None
+        except:
+            return None
+
+
+class OrderTrackingConsumer(AsyncWebsocketConsumer):
+    """
+    Customer/Frontend isse connect karega order track karne ke liye.
+    URL: ws://domain/ws/order/track/<order_id>/
+    """
+    async def connect(self):
+        self.order_id = self.scope['url_route']['kwargs']['order_id']
+        self.group_name = f"order_{self.order_id}"
+
+        # Join group
+        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        await self.channel_layer.group_discard(self.group_name, self.channel_name)
+
+    async def location_update(self, event):
+        # RiderLocationConsumer se jo data aaya, use Customer ko bhejo
+        await self.send(text_data=json.dumps({
+            "lat": event["lat"],
+            "lng": event["lng"]
+        }))
