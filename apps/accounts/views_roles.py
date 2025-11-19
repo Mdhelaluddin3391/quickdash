@@ -11,7 +11,7 @@ class ChangeUserRole(APIView):
         role = request.data["role"]
 
         user = User.objects.get(id=user_id)
-        user.role = role
+        user.app_role = role
         user.save()
 
         return Response({"message": "Role updated", "role": role})

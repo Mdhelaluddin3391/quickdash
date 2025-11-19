@@ -2,118 +2,86 @@ import logging
 from decimal import Decimal
 import razorpay
 import json
+
 from django.db import transaction
-from django.db.models import F, Avg
 from django.utils import timezone
 from django.conf import settings
-from django.contrib.gis.measure import Distance
-from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
+from django.shortcuts import get_object_or_404
 
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
 
-# --- App Imports (Adjusted for 'apps.' structure) ---
 from apps.accounts.permissions import IsCustomer
-from apps.catalog.models import SKU  # Using SKU instead of generic Product if needed
-from apps.inventory.models import StoreInventory
+from apps.catalog.models import SKU
 from apps.delivery.models import Delivery
-from apps.delivery.serializers import RiderDeliverySerializer
 from apps.cart.models import Cart, CartItem
 from apps.cart.serializers import CartSerializer
+from apps.warehouse.models import PickingTask, PickItem
 
-# Models
-from .models import Order, OrderItem, Payment, Address, Coupon
+from .models import Order, OrderItem, Payment
 from .serializers import (
     CheckoutSerializer,
     OrderDetailSerializer,
     OrderHistorySerializer,
     PaymentVerificationSerializer,
-    RiderRatingSerializer
 )
-
-# Tasks (Ensure tasks.py exists in apps/orders)
-# from .tasks import process_razorpay_refund_task 
+from .signals import payment_succeeded
 
 logger = logging.getLogger(__name__)
 
+
 def process_successful_payment(order_id):
     """
-    Logic: Order CONFIRM karna aur WMS Tasks create karna.
-    Yeh function 'Best' project ka core heart hai.
+    Confirms an order and triggers the warehouse process.
     """
-    # Guarded imports to avoid circular error
-    from apps.warehouse.models import BinInventory, PickingTask, PickItem # Check your warehouse models!
-    from apps.accounts.models import User # Assuming staff are Users
-
-    try:
-        order = Order.objects.prefetch_related('items').get(
-            pk=order_id, # Using pk or order_id field
-            status="pending" # Ensure status string matches your model choices
-        )
-    except Order.DoesNotExist:
-        logger.warning(f"Order {order_id} not found or already processed.")
-        return False, "Order not found."
-
     try:
         with transaction.atomic():
-            order_lock = Order.objects.select_for_update().get(pk=order.pk)
-            order_items = order_lock.items.all()
-
-            if not order_items.exists():
-                raise Exception("Order has no items.")
-
-            # 1. Update Order Status
-            order_lock.status = "confirmed"
-            order_lock.payment_status = "successful"
-            order_lock.save()
+            order = Order.objects.select_for_update().get(pk=order_id, status="pending")
             
-            # 2. Payment Update
-            payment = order_lock.payments.first()
+            order.status = "confirmed"
+            order.payment_status = "paid"
+            order.save()
+
+            payment = order.payments.first()
             if payment:
                 payment.status = "successful"
                 payment.save()
 
-            # 3. Create Delivery Task
-            Delivery.objects.create(order=order_lock, status="pending")
-
-            # 4. Clear Cart
+            Delivery.objects.create(order=order, status="pending")
             Cart.objects.filter(customer=order.customer).delete()
 
-            # --- WMS LOGIC (Simplified for your structure) ---
-            # 'Best' project used complex Greedy logic here.
-            # Hum yahan basic warehouse task create karenge.
-            
-            warehouse = order_lock.warehouse # Ensure order has warehouse link
-            if warehouse:
-                # Create a Master Picking Task
+            if order.warehouse:
                 picking_task = PickingTask.objects.create(
-                    order_id=str(order_lock.id),
-                    warehouse=warehouse,
+                    order_id=str(order.id),
+                    warehouse=order.warehouse,
                     status='PENDING'
                 )
-                
-                # Create Items for the task
-                for item in order_items:
+                for item in order.items.all():
                     PickItem.objects.create(
                         task=picking_task,
-                        sku=item.sku, # Ensure OrderItem has SKU link
+                        sku=item.sku,
                         qty_to_pick=item.quantity
                     )
                 logger.info(f"WMS Task created for Order {order_id}")
-
+            
+            # Trigger signal for other apps
+            payment_succeeded.send(sender=Order, order=order)
+            
             return True, "Success"
 
+    except Order.DoesNotExist:
+        logger.warning(f"Order {order_id} not found or already processed.")
+        return False, "Order not found."
     except Exception as e:
-        logger.error(f"Payment processing failed: {e}")
+        logger.error(f"Payment processing failed for order {order_id}: {e}")
         return False, str(e)
 
 
 class CheckoutView(generics.GenericAPIView):
     """
-    Checkout: Calculates total, creates Pending Order, handles Razorpay/COD.
+    Handles the checkout process, creates a pending order, and initiates payment.
     """
     permission_classes = [IsAuthenticated, IsCustomer]
     serializer_class = CheckoutSerializer
@@ -126,110 +94,108 @@ class CheckoutView(generics.GenericAPIView):
         data = serializer.validated_data
         payment_method = data.get('payment_method', 'RAZORPAY')
         
-        # 1. Get Cart
         try:
             cart = Cart.objects.get(customer=user)
             if not cart.items.exists():
-                return Response({"error": "Cart empty"}, status=400)
+                return Response({"error": "Cart is empty"}, status=status.HTTP_400_BAD_REQUEST)
         except Cart.DoesNotExist:
-             return Response({"error": "Cart not found"}, status=404)
+             return Response({"error": "Cart not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # 2. Calculate Totals (Simplified)
-        # 'Best' project uses logic from settings
-        item_subtotal = cart.total_price # Assuming property exists
-        delivery_fee = settings.MIN_DELIVERY_FEE # Use settings!
+        item_subtotal = cart.total_price
+        delivery_fee = settings.BASE_DELIVERY_FEE
         final_total = item_subtotal + delivery_fee
         
-        # 3. Create Pending Order
         try:
             with transaction.atomic():
                 order = Order.objects.create(
                     customer=user,
-                    warehouse_id=data.get('warehouse_id'), # Frontend should send this
-                    delivery_address_json=data.get('delivery_address_json'), # Or ID
+                    warehouse_id=data.get('warehouse_id'),
+                    delivery_address_json=data.get('delivery_address_json'),
                     total_amount=item_subtotal,
                     final_amount=final_total,
                     status="pending",
                     payment_status="pending"
                 )
                 
-                # Move items from Cart to Order
-                items_to_create = []
-                for c_item in cart.items.all():
-                    items_to_create.append(OrderItem(
+                items_to_create = [
+                    OrderItem(
                         order=order,
                         sku=c_item.sku,
                         quantity=c_item.quantity,
                         unit_price=c_item.sku.sale_price
-                    ))
+                    ) for c_item in cart.items.all()
+                ]
                 OrderItem.objects.bulk_create(items_to_create)
 
         except Exception as e:
-            return Response({"error": str(e)}, status=400)
-
-        # 4. Handle Payment
-        final_amount_paise = int(final_total * 100)
+            logger.error(f"Error creating order: {e}")
+            return Response({"error": "Could not create order."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         if payment_method == 'COD':
             Payment.objects.create(order=order, payment_method='COD', amount=final_total)
             success, msg = process_successful_payment(order.id)
             if success:
-                return Response({"message": "Order Confirmed (COD)", "order_id": order.id})
-            return Response({"error": msg}, status=400)
+                return Response({"message": "Order Confirmed (COD)", "order_id": order.id}, status=status.HTTP_201_CREATED)
+            return Response({"error": msg}, status=status.HTTP_400_BAD_REQUEST)
 
         elif payment_method == 'RAZORPAY':
-            client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-            rzp_order = client.order.create({
-                'amount': final_amount_paise,
-                'currency': 'INR',
-                'receipt': str(order.id)
-            })
-            
-            Payment.objects.create(
-                order=order, 
-                payment_method='RAZORPAY',
-                amount=final_total,
-                razorpay_order_id=rzp_order['id']
-            )
-            
-            return Response({
-                "razorpay_order_id": rzp_order['id'],
-                "razorpay_key": settings.RAZORPAY_KEY_ID,
-                "amount": final_amount_paise,
-                "order_id": order.id
-            })
+            try:
+                client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+                rzp_order = client.order.create({
+                    'amount': int(final_total * 100),
+                    'currency': 'INR',
+                    'receipt': str(order.id)
+                })
+                
+                Payment.objects.create(
+                    order=order, 
+                    payment_method='RAZORPAY',
+                    amount=final_total,
+                    gateway_order_id=rzp_order['id']
+                )
+                
+                return Response({
+                    "razorpay_order_id": rzp_order['id'],
+                    "razorpay_key": settings.RAZORPAY_KEY_ID,
+                    "amount": int(final_total * 100),
+                    "order_id": order.id
+                })
+            except Exception as e:
+                logger.error(f"Razorpay client error: {e}")
+                return Response({"error": "Payment gateway error."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        return Response({"error": "Invalid Method"}, status=400)
+        return Response({"error": "Invalid payment method"}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class PaymentVerificationView(APIView):
     """
-    Verifies Razorpay signature and confirms order.
+    Verifies the Razorpay payment signature and confirms the order.
     """
     permission_classes = [IsAuthenticated]
+    serializer_class = PaymentVerificationSerializer
 
     def post(self, request):
-        data = request.data
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
         try:
             client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-            client.utility.verify_payment_signature({
-                'razorpay_order_id': data['razorpay_order_id'],
-                'razorpay_payment_id': data['razorpay_payment_id'],
-                'razorpay_signature': data['razorpay_signature']
-            })
+            client.utility.verify_payment_signature(data)
             
-            # Find Payment object
-            payment = Payment.objects.get(razorpay_order_id=data['razorpay_order_id'])
+            payment = get_object_or_404(Payment, gateway_order_id=data['razorpay_order_id'])
             payment.transaction_id = data['razorpay_payment_id']
             payment.save()
             
-            # Process Order
             success, msg = process_successful_payment(payment.order.id)
             if success:
-                return Response({"status": "Payment Successful, Order Confirmed"})
+                return Response({"status": "Payment Successful, Order Confirmed"}, status=status.HTTP_200_OK)
             else:
-                return Response({"error": msg}, status=400)
+                return Response({"error": msg}, status=status.HTTP_400_BAD_REQUEST)
 
+        except razorpay.errors.SignatureVerificationError:
+            logger.warning(f"Razorpay signature verification failed for order {data.get('razorpay_order_id')}")
+            return Response({"error": "Invalid payment signature"}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error(f"Verification failed: {e}")
-            return Response({"error": "Invalid Signature or Payment Failed"}, status=400)
+            logger.error(f"Payment verification failed: {e}")
+            return Response({"error": "An unexpected error occurred"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

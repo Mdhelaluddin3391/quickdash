@@ -3,7 +3,7 @@ from django.db import transaction
 from django.db.models import Sum, F, Q
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-from apps.accounts.models import StoreStaffProfile
+from apps.accounts.models import EmployeeProfile
 from .models import (
     Warehouse, Bin, BinInventory, StockMovement, 
     PickingTask, PickItem, PackingTask, DispatchRecord,
@@ -32,7 +32,7 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
         qty_needed = int(item['qty'])
         
         # 1. Find bins with stock, prioritize largest piles (Greedy)
-        available_bins = BinInventory.objects.select_for_update().filter(
+        available_bins = BinInventory.objects.select_for_update().select_related('bin__zone__warehouse').filter(
             bin__zone__warehouse=warehouse,
             sku_id=sku_id,
             qty__gt=F('reserved_qty')
@@ -74,11 +74,17 @@ def scan_pick(task_id, pick_item_id, qty_scanned, user):
     """
     item = PickItem.objects.select_for_update().get(id=pick_item_id, task_id=task_id)
     
+    if item.picked_qty >= item.qty_to_pick:
+        raise ValueError("Item already fully picked.")
+
     if item.skips.filter(is_resolved=False).exists():
         raise ValueError("Item is currently skipped and cannot be picked.")
 
     if item.picked_qty + int(qty_scanned) > item.qty_to_pick:
-        raise ValueError("Scanning more than required!")
+        raise ValueError(f"Scanning more than required. Already picked {item.picked_qty}, need {item.qty_to_pick}.")
+
+    if int(qty_scanned) <= 0:
+        raise ValueError("Scanned quantity must be positive.")
 
     item.picked_qty += int(qty_scanned)
     item.save()
@@ -116,7 +122,7 @@ def complete_packing(packing_task_id, packer_user):
     
     # Deduct physical stock (qty) now that it's leaving
     for pitem in picking_task.items.all():
-        bi = BinInventory.objects.get(bin=pitem.bin, sku=pitem.sku)
+        bi = BinInventory.objects.select_for_update().get(bin=pitem.bin, sku=pitem.sku)
         bi.qty -= pitem.picked_qty
         bi.reserved_qty -= pitem.picked_qty # Remove reservation lock
         bi.save()
@@ -407,7 +413,7 @@ def assign_task_to_picker(picking_task):
     """
     Round-Robin Assignment logic.
     """
-    available_pickers = StoreStaffProfile.objects.filter(
+    available_pickers = EmployeeProfile.objects.filter(
         role='PICKER',
         is_active_employee=True,
         warehouse_code=picking_task.warehouse.code

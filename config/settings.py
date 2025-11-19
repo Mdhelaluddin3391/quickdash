@@ -191,6 +191,8 @@ TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', default=None)
 TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN', default=None)
 TWILIO_FROM_NUMBER = config('TWILIO_FROM_NUMBER', default=None)
 
+FIREBASE_CREDENTIALS_PATH = config('FIREBASE_CREDENTIALS_PATH', default=None)
+
 # --- Business Logic Constants (Best Project Logic) ---
 BASE_DELIVERY_FEE = config('BASE_DELIVERY_FEE', default='20.00', cast=Decimal)
 FEE_PER_KM = config('FEE_PER_KM', default='5.00', cast=Decimal)

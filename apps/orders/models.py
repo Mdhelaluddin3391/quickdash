@@ -25,8 +25,8 @@ PAYMENT_STATUS_CHOICES = [
 class Coupon(models.Model):
     """Discount Coupon Model"""
     code = models.CharField(max_length=50, unique=True)
-    discount_value = models.DecimalField(max_digits=10, decimal_places=2) # e.g., 10.00
-    is_percentage = models.BooleanField(default=False) # True = 10%, False = Flat 10 Rs
+    discount_value = models.DecimalField(max_digits=10, decimal_places=2)
+    is_percentage = models.BooleanField(default=False)
     min_purchase_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     valid_from = models.DateTimeField(default=timezone.now)
     valid_to = models.DateTimeField()
@@ -35,10 +35,11 @@ class Coupon(models.Model):
 
     def is_valid(self, cart_amount):
         now = timezone.now()
-        if not self.active: return False
-        if now < self.valid_from or now > self.valid_to: return False
-        if cart_amount < self.min_purchase_amount: return False
-        return True
+        return (
+            self.active and
+            self.valid_from <= now <= self.valid_to and
+            cart_amount >= self.min_purchase_amount
+        )
 
     def calculate_discount(self, cart_amount):
         if self.is_percentage:
@@ -53,44 +54,27 @@ class Order(models.Model):
     customer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="orders")
     warehouse = models.ForeignKey("warehouse.Warehouse", on_delete=models.SET_NULL, null=True, related_name="orders")
     status = models.CharField(max_length=30, choices=ORDER_STATUS_CHOICES, default="pending", db_index=True)
-
-    # Added Coupon Field
     coupon = models.ForeignKey(Coupon, on_delete=models.SET_NULL, null=True, blank=True)
-
-    # Financials
-    total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00) # Added default
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    final_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00) # Added default
-    
-    # Payment
+    final_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     payment_status = models.CharField(max_length=30, choices=PAYMENT_STATUS_CHOICES, default="pending")
     payment_gateway_order_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
-
-    # Logistics
     packer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="packed_orders")
     rider = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="delivered_orders")
-
-    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     promised_eta = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
-    
-    # Address Snapshot
     delivery_address_json = models.JSONField(null=True, blank=True)
     delivery_lat = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     delivery_lng = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-
-    # Extra fields
     rider_tip = models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
     taxes_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
     delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
-
-    # Internal logic for subtotal
     item_subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
 
     def recalculate_totals(self, save=True):
-        # Calculate items subtotal
         self.item_subtotal = sum(item.total_price for item in self.items.all()) or Decimal('0.00')
         self.total_amount = self.item_subtotal
         
@@ -105,17 +89,10 @@ class Order(models.Model):
         tax_rate = getattr(settings, 'TAX_RATE', Decimal('0.05'))
         self.taxes_amount = (taxable_amount * tax_rate).quantize(Decimal('0.01'))
 
-        self.final_total = (
-            taxable_amount + 
-            self.delivery_fee + 
-            self.taxes_amount + 
-            self.rider_tip
+        self.final_amount = max(
+            Decimal('0.00'),
+            taxable_amount + self.delivery_fee + self.taxes_amount + self.rider_tip
         ).quantize(Decimal('0.01'))
-        
-        if self.final_total < 0: 
-            self.final_total = Decimal('0.00')
-        
-        self.final_amount = self.final_total
         
         if save:
             self.save()
@@ -131,7 +108,7 @@ class OrderItem(models.Model):
     sku = models.ForeignKey("catalog.SKU", on_delete=models.SET_NULL, null=True)
     quantity = models.PositiveIntegerField() 
     unit_price = models.DecimalField(max_digits=10, decimal_places=2) 
-    total_price = models.DecimalField(max_digits=10, decimal_places=2) 
+    total_price = models.DecimalField(max_digits=10, decimal_places=2, editable=False) 
     sku_name_snapshot = models.CharField(max_length=255, blank=True)
 
     def __str__(self):
@@ -142,6 +119,8 @@ class OrderItem(models.Model):
             self.sku_name_snapshot = self.sku.name
         self.total_price = self.unit_price * self.quantity
         super().save(*args, **kwargs)
+        if self.order:
+            self.order.recalculate_totals(save=True)
 
     class Meta:
         unique_together = ('order', 'sku')
