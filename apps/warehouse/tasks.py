@@ -3,10 +3,9 @@ from celery import shared_task
 from celery.utils.log import get_task_logger 
 from apps.inventory.services import find_best_warehouse_for_items
 
-# --- MISSING IMPORTS ADDED ---
-from .services import reserve_stock_for_order, create_picking_task_from_reservation
+# Corrected Imports
+from .services import reserve_stock_for_order  # create_picking_task_from_reservation HATA DIYA GAYA HAI
 from .notifications import notify_picker_new_task
-# -----------------------------
 
 logger = get_task_logger(__name__) 
 
@@ -24,9 +23,17 @@ def orchestrate_order_fulfilment_from_order_payload(payload):
             return "No Warehouse Found"
         warehouse_id = str(wh.id)
 
-    # Ab ye functions chalenge kyunki imports add kar diye hain
-    allocations = reserve_stock_for_order(order_id, warehouse_id, items)
-    pick_task = create_picking_task_from_reservation(order_id, warehouse_id, allocations)
-
-    notify_picker_new_task(pick_task)
-    return str(pick_task.id)
+    try:
+        # FIX: reserve_stock_for_order ab PickingTask object return karega
+        pick_task = reserve_stock_for_order(order_id, warehouse_id, items)
+        
+        # Picker ko notify karo
+        notify_picker_new_task(pick_task)
+        
+        logger.info(f"Orchestration successful for Order {order_id}. Task: {pick_task.id}")
+        return str(pick_task.id)
+        
+    except Exception as e:
+        logger.error(f"Orchestration Error for Order {order_id}: {e}")
+        # Error ko propagate karein taaki Celery retry kar sake (agar chahein)
+        raise e

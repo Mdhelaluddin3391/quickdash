@@ -9,4 +9,4 @@ class OrdersConfig(AppConfig):
         try:
             import apps.orders.receivers  # noqa: F401
         except ImportError as e:
-            logging.error(f"Failed to load orders receivers: {e}")
+            logging.error(f"Failed to load orders receivers: {e}")   

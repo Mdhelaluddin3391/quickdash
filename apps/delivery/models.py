@@ -80,4 +80,4 @@ class RiderLocation(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=['on_duty', 'timestamp']),
-        ]
+        ]  

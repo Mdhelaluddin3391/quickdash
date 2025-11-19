@@ -13,6 +13,7 @@ from .serializers import (
     OrderSerializer,
     OrderListSerializer
 )
+from apps.inventory.services import check_and_lock_inventory
 from .serializers import CartSerializer, AddToCartSerializer # <-- Import new serializers
 from .models import Cart, CartItem
 from .signals import order_refund_requested  # <-- Decoupled Signal Import
@@ -44,10 +45,20 @@ class CreateOrderAPIView(APIView):
                 # Step 2: Order ki keemat (Pricing) calculate karein
                 total_amount = 0
                 order_items_to_create = []
+                warehouse_id = validated_data['warehouse_id']
 
                 for item_data in items_data:
                     sku_id = item_data['sku_id']
                     quantity = item_data['quantity']
+                    
+                    # --- FIX: Stock Check & Lock (Race Condition Prevention) ---
+                    # Order create karne se pehle check karo ki maal hai ya nahi
+                    check_and_lock_inventory(
+                        warehouse_id=warehouse_id,
+                        sku_id=sku_id,
+                        qty_needed=quantity
+                    )
+                    # -----------------------------------------------------------
                     
                     # SKU se asli price fetch karein
                     sku = SKU.objects.get(id=sku_id)
@@ -68,7 +79,7 @@ class CreateOrderAPIView(APIView):
                 # Step 3: Order object banayein (Pending state mein)
                 order = Order.objects.create(
                     customer=request.user,
-                    warehouse_id=validated_data['warehouse_id'],
+                    warehouse_id=warehouse_id,
                     delivery_address_json=validated_data['delivery_address_json'],
                     delivery_lat=validated_data.get('delivery_lat'),
                     delivery_lng=validated_data.get('delivery_lng'),
@@ -92,20 +103,31 @@ class CreateOrderAPIView(APIView):
                 )
 
             # Step 6: Customer ko Order ID aur Amount waapas bhejein
-            return Response({
+            response = Response({
                 "order_id": order.id,
                 "final_amount": order.final_amount,
                 "status": order.status,
                 "payment_status": order.payment_status,
             }, status=status.HTTP_201_CREATED)
 
+            # --- FIX: Idempotency Middleware ke liye Header ---
+            # Yeh header batata hai ki is response ko cache/save karna hai
+            response['X-STORE-IDEMPOTENCY'] = '1'
+            return response
+
         except Exception as e:
             logger.exception(f"Order creation failed for user {request.user.id}: {e}")
-            return Response(
-                {"detail": f"An error occurred while creating the order: {str(e)}"}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            # Agar Out of stock error aata hai inventory service se, toh wahi message dikhao
+            error_message = str(e)
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+            
+            if "Insufficient stock" in error_message:
+                status_code = status.HTTP_400_BAD_REQUEST
 
+            return Response(
+                {"detail": f"Order creation failed: {error_message}"}, 
+                status=status_code
+            )
 
 class OrderHistoryAPIView(generics.ListAPIView):
     """
