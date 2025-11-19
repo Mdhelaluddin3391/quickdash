@@ -156,3 +156,62 @@ class VerifyPaymentAPIView(APIView):
                 {"detail": f"An error occurred: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# apps/payments/views.py
+import json
+import logging
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+from django.http import JsonResponse
+from django.views import View
+from django.conf import settings
+import razorpay
+from .models import Payment
+
+logger = logging.getLogger(__name__)
+
+@method_decorator(csrf_exempt, name='dispatch')
+class RazorpayWebhookView(View):
+    def post(self, request, *args, **kwargs):
+        webhook_secret = getattr(settings, 'RAZORPAY_WEBHOOK_SECRET', '')
+        webhook_signature = request.headers.get('X-Razorpay-Signature')
+        
+        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+
+        try:
+            # 1. Signature Verify
+            client.utility.verify_webhook_signature(
+                request.body.decode('utf-8'),
+                webhook_signature,
+                webhook_secret
+            )
+            
+            # 2. Event Process
+            payload = json.loads(request.body)
+            event = payload.get('event')
+            
+            if event == 'payment.captured':
+                payment_entity = payload['payload']['payment']['entity']
+                order_id = payment_entity['order_id'] # Razorpay Order ID
+                
+                # DB mein Payment dhundo
+                try:
+                    payment = Payment.objects.get(gateway_order_id=order_id)
+                    if payment.status != 'SUCCESSFUL':
+                        payment.status = 'SUCCESSFUL'
+                        payment.transaction_id = payment_entity['id']
+                        payment.save()
+                        
+                        # Yahan par aap Order Status bhi 'CONFIRMED' kar sakte hain
+                        # aur 'reserve_stock_for_order' call kar sakte hain.
+                        logger.info(f"Webhook: Payment Successful for Order {order_id}")
+                        
+                except Payment.DoesNotExist:
+                    logger.error(f"Webhook: Payment not found for order {order_id}")
+
+            return JsonResponse({'status': 'ok'})
+
+        except Exception as e:
+            logger.error(f"Webhook Error: {e}")
+            return JsonResponse({'error': str(e)}, status=400)

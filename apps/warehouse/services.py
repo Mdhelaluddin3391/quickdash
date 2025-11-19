@@ -1,80 +1,78 @@
-# apps/warehouse/services.py
-import random
-from django.db import transaction, models
+from django.db import transaction
+from .models import Warehouse, BinInventory, StockMovement, PickingTask, PickItem
+from django.core.exceptions import ValidationError
+# apps/warehouse/services.py (Append this code at the bottom)
+
+from django.db.models import Q
+from apps.accounts.models import StoreStaffProfile
 from django.utils import timezone
-from django.db.models import Sum
 
-from .models import (
-    Warehouse, Bin, BinInventory, StockMovement, 
-    PickingTask, PickItem, PackingTask, DispatchRecord,
-    PickSkip, ShortPickIncident, FulfillmentCancel,
-    GRN, GRNItem, PutawayTask, PutawayItem, CycleCountItem
-)
-from .exceptions import OutOfStockError, ReservationFailedError
-from .notifications import notify_packer_new_task 
-
-# Decoupled Service Call
-from apps.inventory.services import check_and_lock_inventory 
-
-# Signals
-from .signals import (
-    dispatch_ready_for_delivery, 
-    inventory_change_required, 
-    item_fulfillment_cancelled
-)
 
 @transaction.atomic
-def reserve_stock_for_order(order_id, warehouse_id, items):
-    allocations = {}
-    warehouse = Warehouse.objects.select_for_update().get(id=warehouse_id)
+def reserve_stock_for_order(order_id, warehouse_id, items_needed):
+    """
+    GREEDY ALLOCATION LOGIC:
+    Agar user ko 10 items chahiye:
+    - Bin A mein 4 hain -> Lock 4
+    - Bin B mein 6 hain -> Lock 6
+    - Total 10 reserved.
+    """
+    allocations = []
+    warehouse = Warehouse.objects.get(id=warehouse_id)
+    
+    # Picking Task Create karo (Staff ke liye)
+    task = PickingTask.objects.create(order_id=order_id, warehouse=warehouse, status='PENDING')
 
-    for it in items:
-        sku_id = it["sku_id"]
-        qty_needed = int(it["qty"])
+    for item in items_needed:
+        sku_id = item['sku_id']
+        qty_needed = item['qty']
+        
+        # 1. Sabhi Bins dhoondo jahan ye SKU hai, zyada stock wale pehle (Optimization)
+        available_bins = BinInventory.objects.select_for_update().filter(
+            bin__zone__warehouse=warehouse,
+            sku_id=sku_id,
+            qty__gt=models.F('reserved_qty') # Sirf wahan jahan Available > 0 hai
+        ).order_by('-qty') # Greedy approach (pick from largest pile first)
 
-        try:
-            check_and_lock_inventory(warehouse_id, sku_id, qty_needed)
-        except ValueError as e:
-            raise OutOfStockError(str(e))
+        qty_remaining = qty_needed
 
-        bin_qs = BinInventory.objects.select_for_update().filter(
-            bin__shelf__aisle__zone__warehouse=warehouse, 
-            sku_id=sku_id
-        ).order_by("-qty")
-
-        allocations[sku_id] = []
-        remaining = qty_needed
-
-        for bi in bin_qs:
-            if remaining <= 0: break
-            available_in_bin = bi.qty - bi.reserved_qty
-            take = min(remaining, available_in_bin)
-            if take <= 0: continue
-
-            bi.reserved_qty += take
-            bi.save()
-            allocations[sku_id].append({"bin_id": str(bi.bin_id), "qty": take})
+        for bin_inv in available_bins:
+            if qty_remaining <= 0:
+                break
             
-            StockMovement.objects.create(
-                sku_id=sku_id, warehouse=warehouse, bin=bi.bin,
-                change_type="reserve", delta_qty=-take, reference_id=str(order_id)
+            # Kitna le sakte hain is bin se?
+            available = bin_inv.available_qty
+            to_take = min(available, qty_remaining)
+            
+            # 2. Reserve karo (Lock Logic)
+            bin_inv.reserved_qty += to_take
+            bin_inv.save()
+            
+            # 3. PickItem Task mein add karo
+            PickItem.objects.create(
+                task=task,
+                sku_id=sku_id,
+                bin=bin_inv.bin,
+                qty_to_pick=to_take
             )
-            remaining -= take
 
-        if remaining > 0:
-            raise ReservationFailedError(f"Bin integrity error for SKU {sku_id}.")
+            # 4. Movement Record karo
+            StockMovement.objects.create(
+                sku_id=sku_id,
+                warehouse=warehouse,
+                bin=bin_inv.bin,
+                qty_change=-to_take,
+                movement_type='RESERVE',
+                reference_id=str(order_id)
+            )
+            
+            qty_remaining -= to_take
 
-        inventory_change_required.send(
-            sender=Warehouse,
-            sku_id=str(sku_id),
-            warehouse_id=str(warehouse_id),
-            delta_available=-qty_needed,
-            delta_reserved=qty_needed,
-            reference=str(order_id),
-            change_type='reserve'
-        )
+        if qty_remaining > 0:
+            # Agar abhi bhi stock kam pad raha hai
+            raise ValidationError(f"Not enough stock for SKU {sku_id}. Missing {qty_remaining}")
 
-    return allocations
+    return task
 
 @transaction.atomic
 def create_picking_task_from_reservation(order_id, warehouse_id, allocations):
@@ -346,3 +344,39 @@ def record_cycle_count_item(task_id, bin_id, sku_id, counted_qty, user):
         cc_item.task.save(update_fields=['status'])
 
     return cc_item
+
+
+
+
+
+def assign_task_to_picker(picking_task):
+    """
+    ROUND-ROBIN ASSIGNMENT LOGIC:
+    1. Sirf unhe dhundo jo 'PICKER' hain aur 'Active' hain.
+    2. Unhe sort karo 'last_task_assigned_at' se (jisko sabse pehle kaam mila tha).
+    3. Sabse pehle wale ko naya kaam do.
+    """
+    
+    # Available Pickers dhundo (Jo warehouse mein hain)
+    available_pickers = StoreStaffProfile.objects.filter(
+        role='PICKER',
+        is_active_employee=True,
+        warehouse_code=picking_task.warehouse.code # Warehouse match hona chahiye
+    ).order_by('last_task_assigned_at') # NULL values pehle aayengi (Fresh staff)
+
+    # Agar koi picker mila
+    picker_profile = available_pickers.first()
+    
+    if picker_profile:
+        # Task assign karo
+        picking_task.picker = picker_profile.user
+        picking_task.status = 'PENDING' # Ya 'ASSIGNED'
+        picking_task.save()
+        
+        # Picker ka time update karo taaki agla task kisi aur ko mile (Round Robin)
+        picker_profile.last_task_assigned_at = timezone.now()
+        picker_profile.save()
+        
+        return True, f"Assigned to {picker_profile.user.full_name}"
+    
+    return False, "No available pickers found."

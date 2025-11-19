@@ -1,32 +1,37 @@
-# apps/payments/tasks.py (NEW FILE)
+# apps/payments/tasks.py
 from celery import shared_task
-from celery.utils.log import get_task_logger
-from apps.orders.models import Order 
-from .services import process_order_refund # Service function ko reuse karein
+from django.core.mail import send_mail
+from .models import Payment
+from .services import initiate_refund
+import logging
 
-logger = get_task_logger(__name__)
+logger = logging.getLogger(__name__)
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def process_order_refund_task(self, order_id, amount=None, reason=""):
+@shared_task
+def process_refund_task(payment_id):
     """
-    Background task to process refund requests received via signal/API.
+    Background task jo refund process karega.
+    Agar fail hua, toh Celery automatic retry kar sakta hai (Advanced).
     """
     try:
-        order = Order.objects.get(id=order_id)
+        payment = Payment.objects.get(id=payment_id)
         
-        # Core business logic service ko call karein
-        success = process_order_refund(order, amount=amount, reason=reason)
+        # Service call karein
+        success, result = initiate_refund(payment)
         
-        if not success:
-            logger.warning(f"Refund processing returned False for order {order_id}. Retrying...")
-            raise self.retry() # Agar service fail ho to retry karein
+        if success:
+            logger.info(f"Refund Successful for Payment ID {payment_id}")
             
-        return f"Refund successfully processed for order {order_id}"
-        
-    except Order.DoesNotExist:
-        logger.error(f"Order {order_id} not found for refund.")
-        return f"Order {order_id} not found."
-    except Exception as exc:
-        logger.exception(f"Refund task failed for order {order_id}.")
-        # Retry logic Celery task mein hi hona chahiye
-        raise self.retry(exc=exc)
+            # Optional: User ko email bhejein
+            # send_mail(
+            #     'Refund Processed',
+            #     f'Your refund for order {payment.order.id} has been processed.',
+            #     'support@quickdash.com',
+            #     [payment.user.email],
+            #     fail_silently=True,
+            # )
+        else:
+            logger.error(f"Refund Failed for Payment ID {payment_id}: {result}")
+            
+    except Payment.DoesNotExist:
+        logger.error(f"Payment ID {payment_id} not found for refund.")

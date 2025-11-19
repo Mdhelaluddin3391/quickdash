@@ -93,6 +93,42 @@ class Order(models.Model):
     delivery_lat = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     delivery_lng = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
 
+    def recalculate_totals(self, save=True):
+        """
+        Centralized Logic for Money:
+        Subtotal -> Discount -> Delivery -> Tax -> Final
+        """
+        # 1. Subtotal (Items ka total)
+        self.item_subtotal = sum(item.total_price for item in self.items.all()) or Decimal('0.00')
+
+        # 2. Delivery Fee (Logic: Base + Distance based)
+        # (Yahan aap GeoDjango logic laga sakte hain distance calculate karne ke liye)
+        self.delivery_fee = getattr(settings, 'BASE_DELIVERY_FEE', Decimal('20.00'))
+
+        # 3. Discount (Coupon Logic)
+        if self.coupon and self.coupon.is_valid(self.item_subtotal):
+            self.discount_amount = self.coupon.calculate_discount(self.item_subtotal)
+        else:
+            self.discount_amount = Decimal('0.00')
+
+        # 4. Tax Calculation (Post-Discount Value par)
+        taxable_amount = self.item_subtotal - self.discount_amount
+        tax_rate = getattr(settings, 'TAX_RATE', Decimal('0.05')) # 5%
+        self.taxes_amount = (taxable_amount * tax_rate).quantize(Decimal('0.01'))
+
+        # 5. Final Total
+        self.final_total = (
+            taxable_amount + 
+            self.delivery_fee + 
+            self.taxes_amount + 
+            self.rider_tip
+        ).quantize(Decimal('0.01'))
+        
+        # Negative protection
+        if self.final_total < 0: self.final_total = Decimal('0.00')
+
+        if save:
+            self.save()
 
     def __str__(self):
         return f"Order {self.id} ({self.status})"

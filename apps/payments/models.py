@@ -1,91 +1,33 @@
 # apps/payments/models.py
-import uuid
 from django.db import models
+from django.conf import settings
 
-PAYMENT_STATUS_CHOICES = [
-    ("pending", "Pending"),
-    ("paid", "Paid"),
-    ("failed", "Failed"),
-]
+class Payment(models.Model):
+    class PaymentMethod(models.TextChoices):
+        COD = 'COD', 'Cash on Delivery'
+        RAZORPAY = 'RAZORPAY', 'Razorpay'
+        
+    class PaymentStatus(models.TextChoices):
+        PENDING = 'PENDING', 'Pending'
+        SUCCESSFUL = 'SUCCESSFUL', 'Successful'
+        FAILED = 'FAILED', 'Failed'
+        REFUND_INITIATED = 'REFUND_INITIATED', 'Refund Initiated'
+        REFUNDED = 'REFUNDED', 'Refunded'
 
-REFUND_STATUS_CHOICES = [
-    ("pending", "Pending"),
-    ("processed", "Processed"),
-    ("failed", "Failed"),
-]
-
-class PaymentIntent(models.Model):
-    """
-    Har order ke liye ek payment attempt ko track karta hai.
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.ForeignKey('orders.Order', on_delete=models.CASCADE, related_name='payments')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     
-    # Hamara internal Order ID
-    order = models.ForeignKey("orders.Order", on_delete=models.CASCADE, related_name="payment_intents")
-    
-    # Payment Gateway (Razorpay) ka Order ID
-    gateway_order_id = models.CharField(max_length=100, unique=True, db_index=True)
-    
-    # Payment Gateway ka Payment ID (jab payment ho jaaye)
-    gateway_payment_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
-    
-    # Payment ki rakam
+    payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, default=PaymentMethod.COD)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=20, choices=PaymentStatus.choices, default=PaymentStatus.PENDING)
     
-    # Payment ka status
-    status = models.CharField(
-        max_length=20, 
-        choices=PAYMENT_STATUS_CHOICES, 
-        default="pending"
-    )
+    # Important IDs
+    transaction_id = models.CharField(max_length=100, unique=True, null=True, blank=True, help_text="Payment Gateway ID (e.g. pay_Hj8...)")
+    gateway_order_id = models.CharField(max_length=100, null=True, blank=True, help_text="Razorpay Order ID")
     
+    # Debugging ke liye
+    gateway_response = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Payment {self.gateway_order_id} for Order {self.order.id} ({self.status})"
-
-    class Meta:
-        ordering = ['-created_at']
-
-
-class Refund(models.Model):
-    """
-    WMS se aane waale refund requests ko track karta hai.
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    
-    # Kis payment ke against refund hai
-    payment = models.ForeignKey(
-        "payments.PaymentIntent", 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        related_name="refunds"
-    )
-    
-    # Order jiska refund ho raha hai
-    order = models.ForeignKey("orders.Order", on_delete=models.CASCADE, related_name="refunds")
-    pick_item_id = models.CharField(max_length=100, null=True, blank=True)
-    reason = models.TextField(blank=True)
-    
-    # Refund ki rakam
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
-    
-    # Refund ka status
-    status = models.CharField(
-        max_length=20, 
-        choices=REFUND_STATUS_CHOICES, 
-        default="pending"
-    )
-    
-    # Gateway ka Refund ID
-    gateway_refund_id = models.CharField(max_length=100, blank=True, null=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    processed_at = models.DateTimeField(null=True, blank=True)
-
-    def __str__(self):
-        return f"Refund {self.id} for Order {self.order.id} ({self.status})"
-
-    class Meta:
-        ordering = ['-created_at']
+        return f"{self.order.id} - {self.status}"

@@ -1,11 +1,14 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
+from django.contrib.gis.db import models as gis_models  # <-- GeoDjango Magic
 from django.utils import timezone
 from datetime import timedelta
 import uuid
 from .managers import UserManager
 from django.db import transaction
+from django.conf import settings
 
+# --- Roles ---
 USER_ROLE_CHOICES = [
     ("CUSTOMER", "Customer"),
     ("RIDER", "Rider"),
@@ -14,9 +17,19 @@ USER_ROLE_CHOICES = [
 ]
 
 class User(AbstractBaseUser, PermissionsMixin):
-    phone = models.CharField(max_length=15, unique=True)
+    """
+    Advanced User Model:
+    - Phone Number Login (Repo A style)
+    - FCM Token for Push Notifications (Repo B Feature)
+    - Profile Picture (Repo B Feature)
+    """
+    phone = models.CharField(max_length=15, unique=True, db_index=True)
     email = models.EmailField(null=True, blank=True)
     full_name = models.CharField(max_length=255, blank=True)
+    
+    # New Fields (From Repo B)
+    profile_picture = models.ImageField(upload_to='profile_pics/', null=True, blank=True)
+    fcm_token = models.CharField(max_length=255, null=True, blank=True, help_text="For Push Notifications")
 
     # Flags
     is_customer = models.BooleanField(default=False)
@@ -39,9 +52,42 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
         return self.phone
 
+
+class Address(gis_models.Model):
+    """
+    --- NEW FEATURE (From Repo B) ---
+    GeoDjango Address Model.
+    Yeh 'PointField' use karta hai taaki hum exact location track kar sakein.
+    """
+    class AddressType(models.TextChoices):
+        HOME = 'HOME', 'Home'
+        WORK = 'WORK', 'Work'
+        OTHER = 'OTHER', 'Other'
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='addresses')
+    address_type = models.CharField(max_length=10, choices=AddressType.choices, default=AddressType.HOME)
+    
+    full_address = models.TextField()
+    landmark = models.CharField(max_length=255, null=True, blank=True)
+    city = models.CharField(max_length=100)
+    pincode = models.CharField(max_length=10, db_index=True)
+    
+    # The Magic Field (Latitude/Longitude store karega)
+    location = gis_models.PointField(srid=4326, null=True, blank=True)
+    
+    is_default = models.BooleanField(default=False)
+
+    def save(self, *args, **kwargs):
+        # Agar ye default hai, toh baaki sabko non-default kar do
+        if self.is_default:
+            with transaction.atomic():
+                Address.objects.filter(user=self.user, is_default=True).exclude(pk=self.pk).update(is_default=False)
+        super().save(*args, **kwargs)
+
+
 class CustomerProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="customer_profile")
-    default_address = models.CharField(max_length=255, blank=True)
+    # default_address ko humne 'Address' model mein move kar diya hai (Better Design)
 
     def __str__(self):
         return f"Customer({self.user.phone})"
@@ -52,24 +98,41 @@ class RiderProfile(models.Model):
     rider_code = models.CharField(max_length=50, unique=True)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="PENDING")
     vehicle_type = models.CharField(max_length=32, null=True, blank=True)
+    
+    # Real-time Tracking ke liye (Repo B Feature)
+    current_location = gis_models.PointField(srid=4326, null=True, blank=True)
+    last_location_update = models.DateTimeField(null=True, blank=True)
+    
     on_duty = models.BooleanField(default=False)
+    rating = models.DecimalField(max_digits=3, decimal_places=2, default=5.00) # New Field
 
     def __str__(self):
         return f"Rider({self.rider_code})"
 
 class EmployeeProfile(models.Model):
     ROLE_CHOICES = [
-        ("PICKER", "Picker"), ("PACKER", "Packer"), ("AUDITOR", "Auditor"),
-        ("SUPERVISOR", "Supervisor"), ("MANAGER", "Manager"), ("ADMIN", "Admin")
+        ("PICKER", "Picker"), ("PACKER", "Packer"), 
+        ("MANAGER", "Manager"), ("ADMIN", "Admin")
     ]
+    
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="employee_profile")
     employee_code = models.CharField(max_length=50, unique=True)
     role = models.CharField(max_length=32, choices=ROLE_CHOICES)
+    
+    # Store link (Future mein 'Store' model banayenge tab uncomment karenge)
+    # store = models.ForeignKey('store.Store', on_delete=models.SET_NULL, null=True)
+    
     warehouse_code = models.CharField(max_length=50)
     is_active_employee = models.BooleanField(default=True)
+    
+    # Intelligent Task Assignment ke liye
+    last_task_assigned_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"Employee({self.employee_code} - {self.role})"
+
+
+
 
 class PhoneOTP(models.Model):
     LOGIN_CHOICES = [("CUSTOMER", "Customer"), ("RIDER", "Rider"), ("EMPLOYEE", "Employee")]
@@ -89,6 +152,7 @@ class PhoneOTP(models.Model):
             cls.objects.filter(phone=phone, login_type=login_type, is_used=False).update(is_used=True)
             return cls.objects.create(phone=phone, login_type=login_type, otp_code=code, expires_at=expires_at)
 
+            
     def is_valid(self, otp_code):
         now = timezone.now()
         if self.is_used: return False, "OTP already used"

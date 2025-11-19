@@ -12,39 +12,55 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 from datetime import timedelta
-import datetime
 import os
-
-
+from decouple import config  # <-- YEH ADD KIYA HAI
+import dj_database_url       # Optional: Future mein Postgres ke liye kaam aayega
+from celery import Celery
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+# ==========================================
+# SECURITY & CONFIGURATION (Updated)
+# ==========================================
 
+# Secret Key ab .env se aayegi (Secure)
+SECRET_KEY = config('SECRET_KEY')
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
+# Debug mode bhi .env se control hoga (Default: False for safety)
+DEBUG = config('DEBUG', default=False, cast=bool)
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-fozrjd47d9hh(!jqfwi!(ewm4!p0=kz&*#7sm1d#lbkfbo2%o2'
+# Allowed Hosts (Comma separated string ko list mein badal rahe hain)
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='127.0.0.1,localhost').split(',')
+app = Celery('quickdash')
+app.config_from_object('django.conf:settings', namespace='CELERY')
 
-TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
-TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
-TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER')
+app.autodiscover_tasks()
 
-RAZORPAY_KEY_ID = os.environ.get('RAZORPAY_KEY_ID')
-RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET')
+@app.task(bind=True)
+def debug_task(self):
+    print(f'Request: {self.request!r}')
+# ==========================================
+# THIRD PARTY KEYS
+# ==========================================
 
+TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', default=None)
+TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN', default=None)
+TWILIO_FROM_NUMBER = config('TWILIO_FROM_NUMBER', default=None)
+
+RAZORPAY_KEY_ID = config('RAZORPAY_KEY_ID', default=None)
+RAZORPAY_KEY_SECRET = config('RAZORPAY_KEY_SECRET', default=None)
+
+# Firebase Config Path
 FIREBASE_CREDENTIALS_PATH = os.path.join(BASE_DIR, 'firebase-adminsdk.json')
 if not os.path.exists(FIREBASE_CREDENTIALS_PATH):
     print("WARNING: Firebase credentials file not found. Push notifications will fail.")
 
+# Frontend URL
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = ["*"]
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
-
-# Application definition
+# ==========================================
+# APPLICATION DEFINITION
+# ==========================================
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -54,12 +70,15 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
+    # Third Party
     'rest_framework',
     'rest_framework_simplejwt',
     "rest_framework_simplejwt.token_blacklist",
-
+    "corsheaders", # <-- RECOMMENDATION: CORS add kar lein agar frontend alag hai
     "channels",
+    'django.contrib.gis',
 
+    # My Apps
     'apps.accounts',
     'apps.orders',
     'apps.inventory',
@@ -70,50 +89,14 @@ INSTALLED_APPS = [
     'apps.analytics',
     'apps.catalog',
     'apps.utils',
-
 ]
 
-
-# AUTH_USER_MODEL = 'apps.accounts.User'
 AUTH_USER_MODEL = 'accounts.User'
-
-
-
-
-REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
-    ),
-    # Auth endpoints ko public rakhne ke liye:
-    "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.AllowAny",
-    ),
-}
-
-
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": "redis://localhost:6379/1", # DB 1 for Cache (0 is for Celery)
-    }
-}
-
-SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
-    "ROTATE_REFRESH_TOKENS": False,
-    "BLACKLIST_AFTER_ROTATION": True,
-    "ALGORITHM": "HS256",
-    "SIGNING_KEY": SECRET_KEY,
-    "AUTH_HEADER_TYPES": ("Bearer",),
-    "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
-}
-
-
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware', # <-- CORS Middleware sabse upar hona chahiye
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -141,8 +124,6 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-
-
 # --- Channels Configuration (WebSockets) ---
 ASGI_APPLICATION = 'config.asgi.application'
 
@@ -150,83 +131,118 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
+            # Redis Host bhi hum config se le sakte hain future mein
             "hosts": [("127.0.0.1", 6379)],
         },
     },
 }
 
-# Database
-# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+import os
+if os.name == 'posix':  # Linux/Mac
+    SPATIALITE_LIBRARY_PATH = 'mod_spatialite'
+
+
+# Database
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
+        # Pehle ye 'django.db.backends.sqlite3' tha, ab hum isse change kar rahe hain
+        'ENGINE': 'django.contrib.gis.db.backends.spatialite', 
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
 
-
-
-
 # Password validation
-# https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
-
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
-
 # Internationalization
-# https://docs.djangoproject.com/en/5.2/topics/i18n/
-
 LANGUAGE_CODE = 'en-us'
-
 TIME_ZONE = 'UTC'
-
 USE_I18N = True
-
 USE_TZ = True
 
-
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.2/howto/static-files/
-
+# Static files
 STATIC_URL = 'static/'
-
 STATIC_ROOT = BASE_DIR / "staticfiles"
-# Default primary key field type
-# https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# My Custom Settings
+# REST Framework
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
+    "DEFAULT_PERMISSION_CLASSES": (
+        "rest_framework.permissions.AllowAny",
+    ),
+}
 
-IDEMPOTENCY_KEY_TTL = datetime.timedelta(minutes=30)  # import datetime
-WMS_REFUND_WEBHOOK_URL = 'https://payments.example.com/api/refund/'  # your payments endpoint
+# JWT Settings
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": False,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "ALGORITHM": "HS256",
+    "SIGNING_KEY": SECRET_KEY, # Ab yeh upar define kiye gaye variable se aayega
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
+}
 
+# Caching
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": "redis://localhost:6379/1",
+    }
+}
 
-
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-DEFAULT_FROM_EMAIL = 'support@quickdash.com'
-
-
-
-
-# --- Celery Configuration ---
+# Celery
 CELERY_BROKER_URL = 'redis://localhost:6379/0'
 CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
+
+# Custom Settings
+IDEMPOTENCY_KEY_TTL = timedelta(minutes=30)
+WMS_REFUND_WEBHOOK_URL = 'https://payments.example.com/api/refund/'
+
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = 'support@quickdash.com'
+
+
+import os
+import django
+
+# Pehle settings load karein
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+django.setup()
+
+from django.core.asgi import get_asgi_application
+from channels.routing import ProtocolTypeRouter, URLRouter
+from channels.auth import AuthMiddlewareStack
+from channels.security.websocket import AllowedHostsOriginValidator
+
+# Humare routing files (Jo hum abhi banayenge)
+import apps.delivery.routing 
+
+application = ProtocolTypeRouter({
+    # Normal HTTP requests ke liye
+    "http": get_asgi_application(),
+    
+    # WebSocket requests ke liye
+    "websocket": AllowedHostsOriginValidator(
+        AuthMiddlewareStack(
+            URLRouter(
+                apps.delivery.routing.websocket_urlpatterns
+            )
+        )
+    ),
+})
