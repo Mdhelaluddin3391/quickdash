@@ -1,3 +1,4 @@
+# apps/orders/receivers.py
 import logging
 from django.dispatch import receiver
 from django.utils import timezone
@@ -6,13 +7,11 @@ from django.contrib.auth import get_user_model
 # Signals Imports
 from apps.payments.signals import payment_succeeded
 from apps.delivery.signals import delivery_completed, rider_assigned_to_dispatch
-from apps.warehouse.signals import send_order_created, item_fulfillment_cancelled # <-- Import
-from .signals import order_refund_requested # <-- Import
+from apps.warehouse.signals import send_order_created, item_fulfillment_cancelled 
+from .signals import order_refund_requested
 
 from .models import Order, OrderTimeline
 
-User = get_user_model()
-logger = logging.getLogger(__name__)
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
@@ -109,7 +108,6 @@ def handle_warehouse_cancellation(sender, order_id, sku_id, qty, reason, **kwarg
         order = Order.objects.get(id=order_id)
         
         # 1. Item ki price pata karo (Order ke context mein)
-        # Note: Hum assume kar rahe hain OrderItem abhi bhi exist karta hai
         order_item = order.items.filter(sku__id=sku_id).first()
         
         if not order_item:
@@ -117,7 +115,6 @@ def handle_warehouse_cancellation(sender, order_id, sku_id, qty, reason, **kwarg
             return
 
         # 2. Refund Amount Calculate karo
-        # (Unit Price * Cancelled Qty)
         refund_amount = order_item.unit_price * qty
         
         # 3. Order Timeline Update karo
@@ -126,10 +123,6 @@ def handle_warehouse_cancellation(sender, order_id, sku_id, qty, reason, **kwarg
             status=order.status, 
             notes=f"Item Cancelled by Warehouse: {qty} x {order_item.sku_name_snapshot}. Reason: {reason}"
         )
-        
-        # Optional: Aap chahein to Order ka total_amount bhi update kar sakte hain
-        # order.final_amount -= refund_amount
-        # order.save()
 
         # 4. Payments App ko signal bhejo
         if order.payment_status == 'paid':

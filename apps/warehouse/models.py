@@ -1,8 +1,9 @@
+# apps/warehouse/models.py
 import uuid
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
-from apps.catalog.models import SKU # Correctly importing SKU
+from apps.catalog.models import SKU
 
 # =========================================================
 # 1. PHYSICAL STRUCTURE
@@ -12,6 +13,8 @@ class Warehouse(models.Model):
     name = models.CharField(max_length=255)
     code = models.CharField(max_length=50, unique=True)
     address = models.TextField()
+    lat = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    lng = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     
     def __str__(self):
         return f"{self.name} ({self.code})"

@@ -1,34 +1,25 @@
+# apps/accounts/views.py
 from django.contrib.auth import get_user_model
-from django.db import transaction
 from django.utils import timezone
 from rest_framework import generics, status, views
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.views import TokenRefreshView
-from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
-
-from rest_framework import status, views
-from rest_framework.response import Response
-from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth import get_user_model
-from django.utils import timezone
-from .models import PhoneOTP, UserSession
-from .serializers import RequestOTPSerializer, VerifyOTPSerializer, UserProfileSerializer
+from django.conf import settings # <-- Added for DEBUG check
 import random
 
-User = get_user_model()
+from .models import PhoneOTP, RiderProfile, EmployeeProfile, UserSession
 from .serializers import (
+    RequestOTPSerializer, 
+    VerifyOTPSerializer, 
     UserRegistrationSerializer, 
     UserLoginSerializer, 
     UserProfileSerializer,
     ChangePasswordSerializer,
     RiderProfileSerializer
 )
-from .models import PhoneOTP, RiderProfile, StoreStaffProfile, UserSession, EmployeeProfile
 from .permissions import IsCustomer, IsRider, IsEmployee
 
-# Use get_user_model() to get the custom User model
 User = get_user_model()
 
 class UserRegistrationView(generics.CreateAPIView):
@@ -53,14 +44,18 @@ class UserLoginView(views.APIView):
         phone = serializer.validated_data['phone']
         otp = serializer.validated_data['otp']
         
-        # Verify OTP (Development bypass: 123456)
-        if otp != "123456":
+        # --- SECURITY FIX START ---
+        # Verify OTP (Development bypass: 123456 only if DEBUG is True)
+        bypass_otp = getattr(settings, 'DEBUG', False) and otp == "123456"
+        
+        if not bypass_otp:
             otp_record = PhoneOTP.objects.filter(phone=phone).first()
             if not otp_record or not otp_record.is_valid(otp):
                 return Response({"error": "Invalid or expired OTP"}, status=status.HTTP_400_BAD_REQUEST)
             # Mark OTP as used
             otp_record.is_used = True
             otp_record.save()
+        # --- SECURITY FIX END ---
         
         user = User.objects.filter(phone=phone).first()
         if not user:
@@ -69,7 +64,7 @@ class UserLoginView(views.APIView):
         # Generate Tokens
         refresh = RefreshToken.for_user(user)
         
-        # Create UserSession (Optional but good for tracking)
+        # Create UserSession
         UserSession.objects.create(
             user=user,
             role=user.app_role,
@@ -85,9 +80,6 @@ class UserLoginView(views.APIView):
         })
 
 class UserProfileView(generics.RetrieveUpdateAPIView):
-    """
-    API view to retrieve and update the logged-in user's profile.
-    """
     permission_classes = [IsAuthenticated]
     serializer_class = UserProfileSerializer
 
@@ -95,9 +87,6 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
         return self.request.user
 
 class ChangePasswordView(generics.UpdateAPIView):
-    """
-    API view to change the user's password.
-    """
     permission_classes = [IsAuthenticated]
     serializer_class = ChangePasswordSerializer
 
@@ -119,9 +108,6 @@ class ChangePasswordView(generics.UpdateAPIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class LogoutView(views.APIView):
-    """
-    API view to logout the user by blacklisting the refresh token.
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -140,18 +126,11 @@ class LogoutView(views.APIView):
 # --- Role Based Views ---
 
 class CustomerMeView(views.APIView):
-    """
-    API view for customers to get their profile details.
-    """
     permission_classes = [IsAuthenticated, IsCustomer]
-
     def get(self, request):
         return Response(UserProfileSerializer(request.user).data)
 
 class RiderMeView(views.APIView):
-    """
-    API view for riders to get and update their profile.
-    """
     permission_classes = [IsAuthenticated, IsRider]
 
     def get(self, request):
@@ -174,9 +153,6 @@ class RiderMeView(views.APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class EmployeeMeView(views.APIView):
-    """
-    API view for employees to get their profile details.
-    """
     permission_classes = [IsAuthenticated, IsEmployee]
 
     def get(self, request):
@@ -192,35 +168,25 @@ class EmployeeMeView(views.APIView):
             return Response({"error": "Employee profile not found."}, status=status.HTTP_404_NOT_FOUND)
 
 
-
 class RequestOTPView(views.APIView):
-    """
-    Step 1: User phone number bhejega -> OTP Generate hoga -> Signal SMS bhejega.
-    """
     def post(self, request):
         serializer = RequestOTPSerializer(data=request.data)
         if serializer.is_valid():
             phone = serializer.validated_data['phone']
             login_type = serializer.validated_data['login_type']
             
-            # 1. Generate Random OTP
             otp_code = str(random.randint(100000, 999999))
-            
-            # 2. Save to DB (Yeh Signal trigger karega aur SMS chala jayega)
             PhoneOTP.create_otp(phone, login_type, otp_code)
             
             return Response({
                 "message": "OTP sent successfully.", 
-                "dev_hint": otp_code  # Development mode mein aasani ke liye return kar rahe hain
+                "dev_hint": otp_code if settings.DEBUG else None
             }, status=status.HTTP_200_OK)
             
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class VerifyOTPView(views.APIView):
-    """
-    Step 2: OTP Validate -> User Get/Create -> JWT Tokens Generate -> Session Create.
-    """
     def post(self, request):
         serializer = VerifyOTPSerializer(data=request.data)
         if serializer.is_valid():
@@ -228,7 +194,6 @@ class VerifyOTPView(views.APIView):
             otp_input = serializer.validated_data['otp']
             login_type = serializer.validated_data['login_type']
 
-            # 1. OTP Validate karein (DB se check)
             otp_record = PhoneOTP.objects.filter(phone=phone, login_type=login_type, is_used=False).last()
             
             if not otp_record:
@@ -238,22 +203,17 @@ class VerifyOTPView(views.APIView):
             if not is_valid:
                 return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
 
-            # 2. OTP sahi hai, ab User Get ya Create karein
             user, created = User.objects.get_or_create(phone=phone)
             
-            # Agar user naya hai, toh role set karein
             if created:
                 user.app_role = login_type
                 if login_type == 'RIDER': user.is_rider = True
                 elif login_type == 'EMPLOYEE': user.is_employee = True
                 else: user.is_customer = True
                 user.save()
-                # Note: User.save() par 'post_save' signal chalega aur automatic Profile ban jayegi!
             
-            # 3. JWT Tokens Generate karein
             refresh = RefreshToken.for_user(user)
             
-            # 4. User Session Track karein (Security ke liye)
             UserSession.objects.create(
                 user=user,
                 role=user.app_role,
@@ -262,7 +222,6 @@ class VerifyOTPView(views.APIView):
                 ip_address=request.META.get('REMOTE_ADDR')
             )
             
-            # 5. Final Response
             return Response({
                 "refresh": str(refresh),
                 "access": str(refresh.access_token),
