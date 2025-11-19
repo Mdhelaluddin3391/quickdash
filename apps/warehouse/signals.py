@@ -1,14 +1,13 @@
-# apps/warehouse/signals.py
 from django.dispatch import Signal
 
-# Jab Dispatch ready ho jaye
-dispatch_ready_for_delivery = Signal()
-
-# Jab order create ho
-send_order_created = Signal()
-
-# Inventory stock changes
+# Signal fired when inventory levels physically change (for analytics or notifications)
+# args: sender, sku_id, warehouse_id, delta_available, delta_reserved, reference, change_type
 inventory_change_required = Signal()
 
-# Jab koi item warehouse se cancel ho jaye (Naya Signal)
+# Signal fired when a dispatch is ready for pickup
+# args: sender, order_id, warehouse_id
+dispatch_ready_for_delivery = Signal()
+
+# Signal fired when an item is cancelled during fulfillment
+# args: sender, order_id, sku_id, qty, reason
 item_fulfillment_cancelled = Signal()

@@ -2,6 +2,7 @@ import uuid
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
+from apps.catalog.models import SKU # Correctly importing SKU
 
 # =========================================================
 # 1. PHYSICAL STRUCTURE
@@ -31,7 +32,7 @@ class Bin(models.Model):
 
 class BinInventory(models.Model):
     bin = models.ForeignKey(Bin, on_delete=models.CASCADE, related_name="inventory")
-    sku = models.ForeignKey('catalog.SKU', on_delete=models.CASCADE)
+    sku = models.ForeignKey(SKU, on_delete=models.CASCADE)
     qty = models.PositiveIntegerField(default=0)
     reserved_qty = models.PositiveIntegerField(default=0)
 
@@ -47,8 +48,10 @@ class StockMovement(models.Model):
         ('ADJUSTMENT', 'Adjustment (Lost/Found)'),
         ('RESERVE', 'Order Reservation'),
         ('PUTAWAY', 'Putaway'),
+        ('ROLLBACK', 'Rollback'),
+        ('CYCLE_COUNT', 'Cycle Count'),
     ]
-    sku = models.ForeignKey('catalog.SKU', on_delete=models.CASCADE)
+    sku = models.ForeignKey(SKU, on_delete=models.CASCADE)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
     bin = models.ForeignKey(Bin, on_delete=models.CASCADE, null=True)
     qty_change = models.IntegerField()
@@ -72,7 +75,7 @@ class PickingTask(models.Model):
 
 class PickItem(models.Model):
     task = models.ForeignKey(PickingTask, on_delete=models.CASCADE, related_name="items")
-    sku = models.ForeignKey('catalog.SKU', on_delete=models.CASCADE)
+    sku = models.ForeignKey(SKU, on_delete=models.CASCADE)
     bin = models.ForeignKey(Bin, on_delete=models.CASCADE)
     qty_to_pick = models.PositiveIntegerField()
     picked_qty = models.PositiveIntegerField(default=0)
@@ -92,50 +95,40 @@ class DispatchRecord(models.Model):
     status = models.CharField(max_length=30, default="ready")
     created_at = models.DateTimeField(auto_now_add=True)
 
-# Others (GRN, Putaway, CycleCount) removed for brevity but should be clean like above.
-
 # =========================================================
-# 4. PICKING ERROR RESOLUTION & CANCELLATION
+# ERROR RESOLUTION
 # =========================================================
 
 class PickSkip(models.Model):
-    """
-    Picker dwara item skip karne ka record.
-    """
     task = models.ForeignKey(PickingTask, on_delete=models.CASCADE, related_name="skips")
     pick_item = models.ForeignKey(PickItem, on_delete=models.CASCADE, related_name="skips")
     skipped_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
-    reason = models.CharField(max_length=255) # 'Not found', 'Damaged', etc.
+    reason = models.CharField(max_length=255)
     is_resolved = models.BooleanField(default=False)
-    reopen_after_scan = models.BooleanField(default=False) # Skip ke baad dobara dikhana hai kya?
+    reopen_after_scan = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class ShortPickIncident(models.Model):
-    """
-    Jab PickSkip ko inventory check ke baad 'Short Pick' declare kiya jata hai.
-    """
     skip = models.OneToOneField(PickSkip, on_delete=models.CASCADE)
     resolved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
-    short_picked_qty = models.IntegerField() # Kitna stock kam tha
+    short_picked_qty = models.IntegerField()
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class FulfillmentCancel(models.Model):
-    """
-    Jab koi item order se permanently cancel hota hai (refund ke liye).
-    """
     pick_item = models.ForeignKey(PickItem, on_delete=models.CASCADE, related_name="fc_records")
     cancelled_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     reason = models.CharField(max_length=255)
     refund_initiated = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
-
+# =========================================================
+# INBOUND (GRN & PUTAWAY)
+# =========================================================
 
 GRN_STATUS_CHOICES = [("pending", "Pending"), ("received", "Received"), ("putaway_complete", "Putaway Complete")]
 
 class GRN(models.Model):
-    """Goods Receipt Note (GRN)"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE, related_name="grns")
     grn_number = models.CharField(max_length=100, unique=True, db_index=True)
@@ -153,26 +146,22 @@ class PutawayTask(models.Model):
     grn = models.OneToOneField(GRN, on_delete=models.CASCADE, related_name="putaway_task")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
     putaway_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="putaway_tasks")
-    status = models.CharField(max_length=30, default="pending") # 'pending', 'in_progress', 'completed'
+    status = models.CharField(max_length=30, default="pending")
     created_at = models.DateTimeField(auto_now_add=True)
 
 class PutawayItem(models.Model):
     task = models.ForeignKey(PutawayTask, on_delete=models.CASCADE, related_name="items")
     grn_item = models.ForeignKey(GRNItem, on_delete=models.CASCADE)
     placed_qty = models.IntegerField(default=0)
-    
-    # Kahan rakha gaya hai
     placed_bin = models.ForeignKey(Bin, on_delete=models.SET_NULL, null=True, blank=True)
 
-
-# --- Cycle Count ---
+# =========================================================
+# CYCLE COUNT
+# =========================================================
 
 CC_STATUS_CHOICES = [("pending", "Pending"), ("in_progress", "In Progress"), ("completed", "Completed")]
 
 class CycleCountTask(models.Model):
-    """
-    Inventory accuracy check ke liye.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE, related_name="cc_tasks")
     task_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="cc_tasks")
@@ -183,18 +172,11 @@ class CycleCountItem(models.Model):
     task = models.ForeignKey(CycleCountTask, on_delete=models.CASCADE, related_name="items")
     bin = models.ForeignKey(Bin, on_delete=models.CASCADE)
     sku = models.ForeignKey(SKU, on_delete=models.CASCADE)
-    expected_qty = models.IntegerField() # DB se uthaya gaya qty
+    expected_qty = models.IntegerField()
     counted_qty = models.IntegerField(null=True, blank=True)
     adjusted = models.BooleanField(default=False)
 
-
-
-
 class IdempotencyKey(models.Model):
-    """
-    Middleware dwara istemaal kiya jata hai taaki ek hi request do baar process na ho.
-    Jaisa ki system design mein bataya gaya hai, yeh external integrations ke liye hai.
-    """
     key = models.CharField(max_length=255, unique=True, db_index=True)
     route = models.CharField(max_length=255)
     request_hash = models.CharField(max_length=64, blank=True)
@@ -203,9 +185,6 @@ class IdempotencyKey(models.Model):
     expires_at = models.DateTimeField(db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
-        return self.key
-    
     def is_expired(self):
         return self.expires_at < timezone.now()
 
