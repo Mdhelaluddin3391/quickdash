@@ -7,6 +7,8 @@ from django.core.exceptions import ValidationError
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from .models import PhoneOTP, UserSession, User
+from django.core.cache import cache # <-- Redis Cache Import
+
 
 def normalize_phone(phone: str) -> str:
     phone = phone.strip().replace(" ", "")
@@ -33,18 +35,30 @@ def get_client_ip(request):
 
 def check_otp_rate_limit(phone: str, login_type: str, ip=None):
     """
-    Temporary simple rate limiting logic: Check if user already has a pending OTP.
-    TODO: Production mein Redis based rate limiter use karein (e.g., django-ratelimit).
+    Redis-based Rate Limiter.
+    Rules:
+    1. 1 Minute mein sirf 1 OTP request allowed.
+    2. (Optional) 1 Hour mein max 10 OTPs allowed.
     """
-    last_otp = PhoneOTP.objects.filter(
-        phone=phone, 
-        login_type=login_type
-    ).order_by('-created_at').first()
+    # Keys generate karein
+    rate_limit_key = f"otp_limit:{login_type}:{phone}"
     
-    # Last OTP 60 seconds se pehle nahi aana chahiye
-    if last_otp and last_otp.created_at > timezone.now() - timedelta(seconds=60):
-        raise ValidationError("OTP request limit reached. Please wait one minute.")
+    # Check karein agar key exist karti hai (matlab user ne abhi request ki thi)
+    if cache.get(rate_limit_key):
+        # Calculate remaining time
+        ttl = cache.ttl(rate_limit_key) if hasattr(cache, 'ttl') else 60
+        raise ValidationError(f"Please wait {ttl} seconds before requesting another OTP.")
 
+    # Agar key nahi hai, toh set karein (60 seconds expiry)
+    cache.set(rate_limit_key, "locked", timeout=60)
+    
+    # Optional: IP based blocking bhi add kar sakte hain agar spam ho raha ho
+    if ip:
+        ip_key = f"otp_spam_ip:{ip}"
+        request_count = cache.get(ip_key, 0)
+        if request_count > 20: # 20 requests per hour limit
+             raise ValidationError("Too many requests from this IP. Try again later.")
+        cache.set(ip_key, request_count + 1, timeout=3600)
 
 def create_tokens_with_session(user, role, client, extra_claims=None, request=None, single_session_for_client=False):
     extra_claims = extra_claims or {}

@@ -33,12 +33,16 @@ TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER')
 RAZORPAY_KEY_ID = os.environ.get('RAZORPAY_KEY_ID')
 RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET')
 
+FIREBASE_CREDENTIALS_PATH = os.path.join(BASE_DIR, 'firebase-adminsdk.json')
+if not os.path.exists(FIREBASE_CREDENTIALS_PATH):
+    print("WARNING: Firebase credentials file not found. Push notifications will fail.")
+
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
 ALLOWED_HOSTS = ["*"]
-
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 # Application definition
 
@@ -86,6 +90,13 @@ REST_FRAMEWORK = {
     ),
 }
 
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": "redis://localhost:6379/1", # DB 1 for Cache (0 is for Celery)
+    }
+}
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),

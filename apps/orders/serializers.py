@@ -1,7 +1,7 @@
 # apps/orders/serializers.py
 from rest_framework import serializers
-from .models import Order, OrderItem, OrderTimeline
-from .models import Order, OrderItem, OrderTimeline, Cart, CartItem  # <-- Cart, CartItem add karofrom apps.catalog.models import SKU
+from .models import Order, OrderItem, OrderTimeline, Cart, CartItem # Sab ek line mein
+from apps.catalog.models import SKU
 from apps.warehouse.models import Warehouse
 import uuid
 # ===================================================================

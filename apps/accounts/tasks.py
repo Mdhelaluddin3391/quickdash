@@ -63,7 +63,7 @@ def send_sms_task(self, phone: str, otp_code: str, login_type: str):
 
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=180) # 3 retries, 3 min delay
+@shared_task(bind=True, max_retries=3, default_retry_delay=180)
 def send_admin_password_reset_email_task(self, user_email: str, user_name: str, reset_token: str):
     """
     Celery task to send Admin Password Reset email.
@@ -73,17 +73,12 @@ def send_admin_password_reset_email_task(self, user_email: str, user_name: str, 
         return "No email provided."
 
     try:
-        # TODO: Production mein, 'reset_url' ko frontend URL se replace karein
-        # Example: f"https.admin.quickdash.com/reset-password?token={reset_token}"
-        reset_url = f"http://localhost:8000/api/v1/auth/admin/reset-password/?token={reset_token}" # Temporary link
+        # FIXED: Use settings.FRONTEND_URL instead of hardcoded localhost
+        # Example Result: https://quickdash.com/reset-password?token=xyz...
+        base_url = settings.FRONTEND_URL.rstrip('/')
+        reset_url = f"{base_url}/reset-password?token={reset_token}"
         
-        context = {
-            "user_name": user_name,
-            "reset_url": reset_url,
-            "token": reset_token
-        }
-        
-        # Simple text email (aap isko HTML template se bhi render kar sakte hain)
+        # Simple text email
         subject = "Your Password Reset Request for QuickDash"
         body = (
             f"Hi {user_name},\n\n"
