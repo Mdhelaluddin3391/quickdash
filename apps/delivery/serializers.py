@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from apps.orders.serializers import OrderDetailSerializer # Order ki details dikhane ke liye
+from apps.orders.serializers import OrderSerializer # Order ki details dikhane ke liye
 from .models import DeliveryTask, RiderProfile, RiderEarning
 
 class RiderProfileSerializer(serializers.ModelSerializer):
@@ -9,7 +9,7 @@ class RiderProfileSerializer(serializers.ModelSerializer):
 
 class DeliveryTaskSerializer(serializers.ModelSerializer):
     # Order ki poori detail embedded (nested) dikhayenge
-    order_details = OrderDetailSerializer(source='order', read_only=True)
+    order_details = OrderSerializer(source='order', read_only=True)
     
     class Meta:
         model = DeliveryTask

@@ -45,10 +45,10 @@ class DeliveryTaskViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def accept_order(self, request, pk=None):
         task = self.get_object()
-        if task.status != 'PENDING_ASSIGNMENT':
+        if task.status != DeliveryTask.DeliveryStatus.PENDING_ASSIGNMENT:
             return Response({"error": "Order already accepted or unavailable"}, status=400)
         
-        task.status = 'ACCEPTED'
+        task.status = DeliveryTask.DeliveryStatus.ACCEPTED
         task.accepted_at = timezone.now()
         task.save()
         return Response({"status": "Order Accepted! Go to Store."})
@@ -60,7 +60,7 @@ class DeliveryTaskViewSet(viewsets.ModelViewSet):
         # if task.pickup_otp != request.data.get('otp'):
         #     return Response({"error": "Invalid Pickup OTP"}, status=400)
 
-        task.status = 'PICKED_UP'
+        task.status = DeliveryTask.DeliveryStatus.PICKED_UP
         task.picked_up_at = timezone.now()
         task.save()
         return Response({"status": "Order Picked Up! Go to Customer."})
@@ -74,7 +74,7 @@ class DeliveryTaskViewSet(viewsets.ModelViewSet):
             return Response({"error": "Invalid Delivery OTP"}, status=400)
 
         with transaction.atomic():
-            task.status = 'DELIVERED'
+            task.status = DeliveryTask.DeliveryStatus.DELIVERED
             task.delivered_at = timezone.now()
             task.save()
             # Earning logic model ke save() method mein handle ho jayegi

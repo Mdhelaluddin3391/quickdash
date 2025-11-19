@@ -9,17 +9,9 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 
 # Apps Imports (Aapke structure ke hisaab se)
 from apps.orders.models import Order
-from apps.utils.models import TimestampedModel # Agar utils mein hai, nahi toh niche TimestampedModel define karein
-# from apps.accounts.tasks import send_fcm_push_notification_task # Task import (baad mein banayenge)
+from apps.utils.models import TimestampedModel
 
 logger = logging.getLogger(__name__)
-
-# --- Base Model (Agar aapke paas common model nahi hai) ---
-class TimestampedModel(models.Model):
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    class Meta:
-        abstract = True
 
 # ==========================================
 # 1. RIDER PROFILE & AUTH
@@ -33,20 +25,28 @@ class RiderProfile(TimestampedModel):
         APPROVED = 'APPROVED', 'Approved'
         REJECTED = 'REJECTED', 'Rejected'
 
+    class RiderStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        ACTIVE = "ACTIVE", "Active"
+        SUSPENDED = "SUSPENDED", "Suspended"
+
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='rider_profile')
+    rider_code = models.CharField(max_length=50, unique=True)
     approval_status = models.CharField(max_length=10, choices=ApprovalStatus.choices, default=ApprovalStatus.PENDING)
+    status = models.CharField(max_length=16, choices=RiderStatus.choices, default=RiderStatus.PENDING)
     
     # GeoDjango Location
     current_location = gis_models.PointField(srid=4326, null=True, blank=True)
+    last_location_update = models.DateTimeField(null=True, blank=True)
     
-    is_online = models.BooleanField(default=False, db_index=True)
+    on_duty = models.BooleanField(default=False, db_index=True)
     on_delivery = models.BooleanField(default=False, db_index=True)
-    vehicle_details = models.CharField(max_length=100, blank=True)
+    vehicle_type = models.CharField(max_length=32, null=True, blank=True)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=5.0)
     cash_on_hand = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
 
     def __str__(self):
-        return f"Rider: {self.user.username} ({'Online' if self.is_online else 'Offline'})"
+        return f"Rider: {self.user.username} ({self.status})"
 
 # ==========================================
 # 2. DELIVERY TASK (Main Logic)
@@ -100,11 +100,11 @@ class DeliveryTask(TimestampedModel):
 
         # 2. Auto Update Order Status
         if self.status == self.DeliveryStatus.PICKED_UP:
-            self.order.status = 'out_for_delivery' # Ensure match Order model choices
+            self.order.status = 'dispatched' # Ensure match Order model choices
             self.order.save()
         elif self.status == self.DeliveryStatus.DELIVERED:
             self.order.status = 'delivered'
-            self.order.payment_status = 'successful' # COD confirm
+            self.order.payment_status = 'paid' # COD confirm
             self.order.save()
 
         # 3. Update Rider State
@@ -125,7 +125,7 @@ class DeliveryTask(TimestampedModel):
         if not self.rider: return
         try:
             # Simple calculation (Settings se value le sakte hain)
-            base_fee = Decimal('30.00') 
+            base_fee = settings.RIDER_BASE_FEE 
             tip = self.order.rider_tip if hasattr(self.order, 'rider_tip') else Decimal('0.00')
             
             RiderEarning.objects.create(

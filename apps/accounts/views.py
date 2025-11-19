@@ -7,8 +7,10 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.conf import settings
 import random
+import uuid
 
-from .models import PhoneOTP, UserSession
+from .models import PhoneOTP, UserSession, CustomerProfile, EmployeeProfile
+from apps.delivery.models import RiderProfile
 from .serializers import (
     RequestOTPSerializer, 
     VerifyOTPSerializer, 
@@ -63,10 +65,13 @@ class VerifyOTPView(views.APIView):
             user.app_role = login_type
             if login_type == 'RIDER':
                 user.is_rider = True
+                RiderProfile.objects.create(user=user, rider_code=f"RIDER-{uuid.uuid4().hex[:8].upper()}")
             elif login_type == 'EMPLOYEE':
                 user.is_employee = True
+                EmployeeProfile.objects.create(user=user, employee_code=f"EMP-{uuid.uuid4().hex[:8].upper()}", role='PICKER', warehouse_code='DEFAULT')
             else:
                 user.is_customer = True
+                CustomerProfile.objects.create(user=user)
             user.save()
         
         refresh = RefreshToken.for_user(user)

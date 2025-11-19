@@ -15,16 +15,12 @@ from rest_framework.views import APIView
 
 from apps.accounts.permissions import IsCustomer
 from apps.catalog.models import SKU
-from apps.delivery.models import Delivery
-from apps.cart.models import Cart, CartItem
-from apps.cart.serializers import CartSerializer
-from apps.warehouse.models import PickingTask, PickItem
-
-from .models import Order, OrderItem, Payment
+from apps.delivery.models import DeliveryTask
+from .models import Cart, CartItem, Order, OrderItem, Payment, ORDER_STATUS_CHOICES, PAYMENT_STATUS_CHOICES
 from .serializers import (
-    CheckoutSerializer,
-    OrderDetailSerializer,
-    OrderHistorySerializer,
+    CreateOrderSerializer,
+    OrderSerializer,
+    OrderListSerializer,
     PaymentVerificationSerializer,
 )
 from .signals import payment_succeeded
@@ -49,7 +45,7 @@ def process_successful_payment(order_id):
                 payment.status = "successful"
                 payment.save()
 
-            Delivery.objects.create(order=order, status="pending")
+            DeliveryTask.objects.create(order=order, status=DeliveryTask.DeliveryStatus.PENDING_ASSIGNMENT)
             Cart.objects.filter(customer=order.customer).delete()
 
             if order.warehouse:
@@ -79,12 +75,13 @@ def process_successful_payment(order_id):
         return False, str(e)
 
 
+
 class CheckoutView(generics.GenericAPIView):
     """
     Handles the checkout process, creates a pending order, and initiates payment.
     """
     permission_classes = [IsAuthenticated, IsCustomer]
-    serializer_class = CheckoutSerializer
+    serializer_class = CreateOrderSerializer
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -101,7 +98,7 @@ class CheckoutView(generics.GenericAPIView):
         except Cart.DoesNotExist:
              return Response({"error": "Cart not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        item_subtotal = cart.total_price
+        item_subtotal = cart.total_amount
         delivery_fee = settings.BASE_DELIVERY_FEE
         final_total = item_subtotal + delivery_fee
         

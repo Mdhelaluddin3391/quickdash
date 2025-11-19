@@ -30,7 +30,7 @@ ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='127.0.0.1,localhost').split(','
 # APPLICATION DEFINITION
 # ==========================================
 INSTALLED_APPS = [
-    'daphne', # WebSockets ke liye (ASGI)
+    # ASGI server (Daphne) is a runtime/deployment dependency and should not be in INSTALLED_APPS
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -104,6 +104,12 @@ DATABASES = {
         'PORT': config('DB_PORT', default='5432'),
     }
 }
+
+# Allow parsing DATABASE_URL (useful for Docker and 12-factor deployments)
+DATABASE_URL = os.getenv('DATABASE_URL') or config('DATABASE_URL', default=None)
+if DATABASE_URL:
+    # dj-database-url parses DATABASE_URL and returns a Django DATABASES config dict
+    DATABASES['default'] = dj_database_url.parse(DATABASE_URL, conn_max_age=600)
 
 # --- Redis Configuration (Cache, Celery, Channels) ---
 DEFAULT_REDIS_URL = config('REDIS_URL', default='redis://127.0.0.1:6379')
@@ -199,6 +205,7 @@ FEE_PER_KM = config('FEE_PER_KM', default='5.00', cast=Decimal)
 MIN_DELIVERY_FEE = config('MIN_DELIVERY_FEE', default='20.00', cast=Decimal)
 MAX_DELIVERY_FEE = config('MAX_DELIVERY_FEE', default='100.00', cast=Decimal)
 ORDER_CANCELLATION_WINDOW = config('ORDER_CANCELLATION_WINDOW', default=300, cast=int) # 5 mins
+RIDER_BASE_FEE = config('RIDER_BASE_FEE', default='30.00', cast=Decimal)
 
 # GeoDjango (Linux path fix)
 if os.name == 'posix':

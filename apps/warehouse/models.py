@@ -4,6 +4,13 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 from apps.catalog.models import SKU
+from django.db.models.signals import post_save, post_delete
+from django.dispatch import receiver
+from django.db.models import Sum
+from django.db import transaction
+import logging
+
+logger = logging.getLogger(__name__)
 
 # =========================================================
 # 1. PHYSICAL STRUCTURE
@@ -15,6 +22,9 @@ class Warehouse(models.Model):
     address = models.TextField()
     lat = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     lng = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
         return f"{self.name} ({self.code})"
@@ -45,20 +55,20 @@ class BinInventory(models.Model):
     def available_qty(self): return self.qty - self.reserved_qty
 
 class StockMovement(models.Model):
-    MOVEMENT_TYPES = [
-        ('INWARD', 'Inward (GRN)'),
-        ('OUTWARD', 'Outward (Dispatch)'),
-        ('ADJUSTMENT', 'Adjustment (Lost/Found)'),
-        ('RESERVE', 'Order Reservation'),
-        ('PUTAWAY', 'Putaway'),
-        ('ROLLBACK', 'Rollback'),
-        ('CYCLE_COUNT', 'Cycle Count'),
-    ]
+    class MovementType(models.TextChoices):
+        INWARD = 'INWARD', 'Inward (GRN)'
+        OUTWARD = 'OUTWARD', 'Outward (Dispatch)'
+        ADJUSTMENT = 'ADJUSTMENT', 'Adjustment (Lost/Found)'
+        RESERVE = 'RESERVE', 'Order Reservation'
+        PUTAWAY = 'PUTAWAY', 'Putaway'
+        ROLLBACK = 'ROLLBACK', 'Rollback'
+        CYCLE_COUNT = 'CYCLE_COUNT', 'Cycle Count'
+
     sku = models.ForeignKey(SKU, on_delete=models.CASCADE)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
     bin = models.ForeignKey(Bin, on_delete=models.CASCADE, null=True)
     qty_change = models.IntegerField()
-    movement_type = models.CharField(max_length=32, choices=MOVEMENT_TYPES)
+    movement_type = models.CharField(max_length=32, choices=MovementType.choices)
     reference_id = models.CharField(max_length=100, blank=True)
     timestamp = models.DateTimeField(auto_now_add=True)
     performed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
@@ -68,11 +78,15 @@ class StockMovement(models.Model):
 # =========================================================
 
 class PickingTask(models.Model):
-    TASK_STATUS = [('PENDING', 'Pending'), ('IN_PROGRESS', 'In Progress'), ('COMPLETED', 'Completed')]
+    class TaskStatus(models.TextChoices):
+        PENDING = 'PENDING', 'Pending'
+        IN_PROGRESS = 'IN_PROGRESS', 'In Progress'
+        COMPLETED = 'COMPLETED', 'Completed'
+
     order_id = models.CharField(max_length=50)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
     picker = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='picking_tasks')
-    status = models.CharField(max_length=20, choices=TASK_STATUS, default='PENDING')
+    status = models.CharField(max_length=20, choices=TaskStatus.choices, default=TaskStatus.PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
@@ -129,13 +143,16 @@ class FulfillmentCancel(models.Model):
 # INBOUND (GRN & PUTAWAY)
 # =========================================================
 
-GRN_STATUS_CHOICES = [("pending", "Pending"), ("received", "Received"), ("putaway_complete", "Putaway Complete")]
-
 class GRN(models.Model):
+    class GrnStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        RECEIVED = "received", "Received"
+        PUTAWAY_COMPLETE = "putaway_complete", "Putaway Complete"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE, related_name="grns")
     grn_number = models.CharField(max_length=100, unique=True, db_index=True)
-    status = models.CharField(max_length=30, choices=GRN_STATUS_CHOICES, default="pending")
+    status = models.CharField(max_length=30, choices=GrnStatus.choices, default=GrnStatus.PENDING)
     received_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
 
@@ -162,13 +179,16 @@ class PutawayItem(models.Model):
 # CYCLE COUNT
 # =========================================================
 
-CC_STATUS_CHOICES = [("pending", "Pending"), ("in_progress", "In Progress"), ("completed", "Completed")]
-
 class CycleCountTask(models.Model):
+    class CcStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        IN_PROGRESS = "in_progress", "In Progress"
+        COMPLETED = "completed", "Completed"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE, related_name="cc_tasks")
     task_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="cc_tasks")
-    status = models.CharField(max_length=30, choices=CC_STATUS_CHOICES, default="pending")
+    status = models.CharField(max_length=30, choices=CcStatus.choices, default=CcStatus.PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class CycleCountItem(models.Model):
@@ -193,32 +213,6 @@ class IdempotencyKey(models.Model):
 
     class Meta:
         verbose_name_plural = "Idempotency Keys"
-
-
-# ... (Aapke purane imports: models, settings, SKU etc.) ...
-# Add these imports at the top:
-from django.db.models.signals import post_save, post_delete
-from django.dispatch import receiver
-from django.db.models import Sum
-from django.db import transaction
-import logging
-
-logger = logging.getLogger(__name__)
-
-# ... (Aapke existing Warehouse, Zone, Bin models waise hi rahenge) ...
-
-class BinInventory(models.Model):
-    bin = models.ForeignKey(Bin, on_delete=models.CASCADE, related_name="inventory")
-    sku = models.ForeignKey(SKU, on_delete=models.CASCADE)
-    qty = models.PositiveIntegerField(default=0)
-    reserved_qty = models.PositiveIntegerField(default=0)
-
-    class Meta: unique_together = ('bin', 'sku')
-    
-    @property
-    def available_qty(self): return self.qty - self.reserved_qty
-
-# ... (PickingTask, StockMovement, etc. waise hi rahenge) ...
 
 
 # =========================================================

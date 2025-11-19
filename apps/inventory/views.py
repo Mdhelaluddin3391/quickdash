@@ -39,6 +39,9 @@ class AdjustStockAPIView(APIView):
     Direct manual adjustment (Emergency/Admin use).
     POST /api/v1/inventory/adjust/ 
     """
+    # WARNING: This view directly modifies the InventoryStock and can cause data inconsistency
+    # with the BinInventory. A better approach would be to create a StockMovement record
+    # with a movement type of 'ADJUSTMENT' and then trigger a sync.
     permission_classes = [IsAuthenticated, IsWarehouseManagerEmployee]
 
     def post(self, request):
