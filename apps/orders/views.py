@@ -13,6 +13,8 @@ from .serializers import (
     OrderSerializer,
     OrderListSerializer
 )
+from .serializers import CartSerializer, AddToCartSerializer # <-- Import new serializers
+from .models import Cart, CartItem
 from .signals import order_refund_requested  # <-- Decoupled Signal Import
 
 import logging
@@ -175,3 +177,65 @@ class CancelOrderAPIView(APIView):
         except Exception as e:
             logger.error(f"Error cancelling order {order.id}: {e}")
             return Response({"detail": "Failed to cancel order."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+class ManageCartAPIView(APIView):
+    """
+    Single endpoint to Get, Add, Update, or Clear Cart.
+    GET  /api/v1/orders/cart/       -> View Cart
+    POST /api/v1/orders/cart/       -> Add/Update Item {sku_id, quantity}
+    DELETE /api/v1/orders/cart/     -> Clear entire Cart
+    """
+    permission_classes = [IsAuthenticated, IsCustomer]
+
+    def get_cart(self, user):
+        cart, _ = Cart.objects.get_or_create(customer=user)
+        return cart
+
+    def get(self, request):
+        cart = self.get_cart(request.user)
+        serializer = CartSerializer(cart)
+        return Response(serializer.data)
+
+    def post(self, request):
+        """
+        Item Add ya Update karne ke liye. 
+        Agar quantity 0 bheji, toh item remove ho jayega.
+        """
+        serializer = AddToCartSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        sku_id = serializer.validated_data['sku_id']
+        quantity = serializer.validated_data['quantity']
+        cart = self.get_cart(request.user)
+
+        # Check SKU valid hai ya nahi
+        try:
+            sku = SKU.objects.get(id=sku_id, is_active=True)
+        except SKU.DoesNotExist:
+            return Response({"detail": "Product not found or inactive."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Logic: Add, Update or Remove
+        try:
+            item = CartItem.objects.get(cart=cart, sku=sku)
+            if quantity == 0:
+                item.delete()
+            else:
+                item.quantity = quantity
+                item.save()
+        except CartItem.DoesNotExist:
+            if quantity > 0:
+                CartItem.objects.create(cart=cart, sku=sku, quantity=quantity)
+
+        # Return updated cart
+        return Response(CartSerializer(cart).data, status=status.HTTP_200_OK)
+
+    def delete(self, request):
+        """
+        Poora cart khali karne ke liye.
+        """
+        cart = self.get_cart(request.user)
+        cart.items.all().delete()
+        return Response(CartSerializer(cart).data, status=status.HTTP_200_OK)

@@ -7,6 +7,8 @@ from rest_framework import status
 from django.shortcuts import get_object_or_404
 from .models import Notification
 from .serializers import NotificationSerializer
+from .models import Notification, FCMDevice # <-- FCMDevice import karein
+from rest_framework.views import APIView # <-- Import add karein
 
 class NotificationListView(generics.ListAPIView):
     """
@@ -41,3 +43,31 @@ class NotificationDetailView(generics.RetrieveAPIView):
             notification.save(update_fields=['is_read'])
             
         return Response({"status": "read"}, status=status.HTTP_200_OK)
+
+
+class RegisterFCMTokenView(APIView):
+    """
+    Frontend app is endpoint par apna FCM Token bhejega.
+    POST /api/v1/notifications/register-device/
+    Body: { "fcm_token": "...", "device_type": "android" }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        token = request.data.get("fcm_token")
+        device_type = request.data.get("device_type", "android")
+
+        if not token:
+            return Response({"detail": "Token required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Update or Create logic
+        device, created = FCMDevice.objects.update_or_create(
+            fcm_token=token,
+            defaults={
+                "user": request.user,
+                "device_type": device_type,
+                "is_active": True
+            }
+        )
+        
+        return Response({"status": "registered", "device_id": device.id}, status=status.HTTP_200_OK)

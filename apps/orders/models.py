@@ -148,3 +148,48 @@ class OrderTimeline(models.Model):
 
     class Meta:
         ordering = ['timestamp']
+
+
+
+class Cart(models.Model):
+    """
+    Har customer ka ek hi active cart hoga.
+    """
+    customer = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="cart"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Cart for {self.customer.phone}"
+
+    @property
+    def total_amount(self):
+        # Cart ka total amount dynamic calculate karein
+        return sum(item.total_price for item in self.items.all())
+
+
+class CartItem(models.Model):
+    """
+    Cart mein kya items hain.
+    """
+    cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name="items")
+    sku = models.ForeignKey("catalog.SKU", on_delete=models.CASCADE)
+    quantity = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        unique_together = ('cart', 'sku') # Ek SKU cart mein ek hi baar aayega (qty badhegi)
+
+    @property
+    def unit_price(self):
+        return self.sku.sale_price
+
+    @property
+    def total_price(self):
+        return self.sku.sale_price * self.quantity
+
+    def __str__(self):
+        return f"{self.quantity} x {self.sku.sku_code}"

@@ -21,4 +21,5 @@ class WMSConsumer(AsyncWebsocketConsumer):
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
     async def wms_event(self, event):
+        # Yeh 'type': 'wms_event' se match karega jo humne notifications.py mein bheja hai
         await self.send(text_data=json.dumps(event["data"]))

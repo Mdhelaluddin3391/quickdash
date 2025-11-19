@@ -129,3 +129,32 @@ class OrderListSerializer(serializers.ModelSerializer):
             'final_amount', 
             'created_at'
         )
+
+
+class CartItemSerializer(serializers.ModelSerializer):
+    sku_id = serializers.UUIDField(source='sku.id', read_only=True)
+    sku_code = serializers.CharField(source='sku.sku_code', read_only=True)
+    sku_name = serializers.CharField(source='sku.name', read_only=True)
+    sku_image = serializers.URLField(source='sku.image_url', read_only=True)
+    price = serializers.DecimalField(source='sku.sale_price', max_digits=10, decimal_places=2, read_only=True)
+    
+    class Meta:
+        model = CartItem
+        fields = ['id', 'sku_id', 'sku_code', 'sku_name', 'sku_image', 'price', 'quantity', 'total_price']
+
+
+class CartSerializer(serializers.ModelSerializer):
+    items = CartItemSerializer(many=True, read_only=True)
+    total_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = Cart
+        fields = ['id', 'items', 'total_amount', 'updated_at']
+
+
+class AddToCartSerializer(serializers.Serializer):
+    """
+    Cart mein item add/update karne ke liye input serializer.
+    """
+    sku_id = serializers.UUIDField()
+    quantity = serializers.IntegerField(min_value=0) # 0 bhejne par item delete hoga

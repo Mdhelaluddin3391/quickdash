@@ -13,18 +13,15 @@ from .models import (
 from .exceptions import OutOfStockError, ReservationFailedError
 from .notifications import notify_packer_new_task 
 
-# --- DECOUPLED IMPORTS (Corrected) ---
-# Inventory DB ko directly touch karne ki bajaye Service use karein
+# Decoupled Service Call
 from apps.inventory.services import check_and_lock_inventory 
 
-# Signals import karein (Order/Inventory ko notify karne ke liye)
+# Signals
 from .signals import (
     dispatch_ready_for_delivery, 
     inventory_change_required, 
     item_fulfillment_cancelled
 )
-
-# NOTE: Yahan se Order aur Payment tasks ke imports HATA DIYE GAYE HAIN.
 
 @transaction.atomic
 def reserve_stock_for_order(order_id, warehouse_id, items):
@@ -35,13 +32,11 @@ def reserve_stock_for_order(order_id, warehouse_id, items):
         sku_id = it["sku_id"]
         qty_needed = int(it["qty"])
 
-        # 1. Check Aggregate Stock (Via Service Call - Decoupled)
         try:
             check_and_lock_inventory(warehouse_id, sku_id, qty_needed)
         except ValueError as e:
             raise OutOfStockError(str(e))
 
-        # 2. Reserve from Bins (Local WMS Logic)
         bin_qs = BinInventory.objects.select_for_update().filter(
             bin__shelf__aisle__zone__warehouse=warehouse, 
             sku_id=sku_id
@@ -58,7 +53,7 @@ def reserve_stock_for_order(order_id, warehouse_id, items):
 
             bi.reserved_qty += take
             bi.save()
-            allocations[sku_id].append({"bin_id": bi.bin_id, "qty": take})
+            allocations[sku_id].append({"bin_id": str(bi.bin_id), "qty": take})
             
             StockMovement.objects.create(
                 sku_id=sku_id, warehouse=warehouse, bin=bi.bin,
@@ -69,11 +64,10 @@ def reserve_stock_for_order(order_id, warehouse_id, items):
         if remaining > 0:
             raise ReservationFailedError(f"Bin integrity error for SKU {sku_id}.")
 
-        # 3. Update Aggregate Inventory (Via Signal)
         inventory_change_required.send(
             sender=Warehouse,
-            sku_id=sku_id,
-            warehouse_id=warehouse_id,
+            sku_id=str(sku_id),
+            warehouse_id=str(warehouse_id),
             delta_available=-qty_needed,
             delta_reserved=qty_needed,
             reference=str(order_id),
@@ -141,11 +135,10 @@ def complete_packing(packing_task_id, packer_user):
         bi.reserved_qty -= pitem.qty
         bi.save()
         
-        # Inventory Update Signal
         inventory_change_required.send(
             sender=Warehouse,
-            sku_id=pitem.sku_id,
-            warehouse_id=warehouse.id,
+            sku_id=str(pitem.sku_id),
+            warehouse_id=str(warehouse.id),
             delta_available=0, 
             delta_reserved=-pitem.qty, 
             reference=str(picking_task.order_id),
@@ -163,7 +156,6 @@ def complete_packing(packing_task_id, packer_user):
         status="ready", pickup_otp=pickup_otp
     )
     
-    # Delivery Update Signal
     dispatch_ready_for_delivery.send(
         sender=DispatchRecord, dispatch_id=dispatch.id, order_id=dispatch.order_id,
         warehouse_id=warehouse.id, pickup_otp=pickup_otp
@@ -200,9 +192,8 @@ def resolve_skip_as_shortpick(skip: PickSkip, resolved_by_user, note: str):
     bi.reserved_qty -= qty_needed
     bi.save(update_fields=['reserved_qty'])
     
-    # Inventory Update Signal
     inventory_change_required.send(
-        sender=Warehouse, sku_id=item.sku_id, warehouse_id=item.task.warehouse.id,
+        sender=Warehouse, sku_id=str(item.sku_id), warehouse_id=str(item.task.warehouse.id),
         delta_available=qty_needed, delta_reserved=-qty_needed,
         reference=str(item.task.order_id), change_type='short_pick_rollback'
     )
@@ -219,25 +210,22 @@ def resolve_skip_as_shortpick(skip: PickSkip, resolved_by_user, note: str):
 @transaction.atomic
 def admin_fulfillment_cancel(pick_item: PickItem, cancelled_by_user, reason: str):
     """
-    Item cancel hone par ab Warehouse App khud refund process nahi karega.
-    Yeh sirf ek SIGNAL (Event) broadcast karega.
+    Corrected: UUIDs converted to string for robustness.
     """
     if pick_item.qty == pick_item.picked_qty: raise ValueError("Cannot cancel fully picked item.")
     qty_to_cancel = pick_item.qty - pick_item.picked_qty
     
     fc_record = FulfillmentCancel.objects.create(
         pick_item=pick_item, cancelled_by=cancelled_by_user,
-        reason=reason, refund_initiated=True # Signal bheja ja raha hai
+        reason=reason, refund_initiated=True 
     )
     
-    # Local Bin Update
     bi = BinInventory.objects.get(bin=pick_item.bin, sku=pick_item.sku)
     bi.reserved_qty -= qty_to_cancel
     bi.save(update_fields=['reserved_qty'])
     
-    # Inventory Update Signal
     inventory_change_required.send(
-        sender=Warehouse, sku_id=pick_item.sku_id, warehouse_id=pick_item.task.warehouse.id,
+        sender=Warehouse, sku_id=str(pick_item.sku_id), warehouse_id=str(pick_item.task.warehouse.id),
         delta_available=qty_to_cancel, delta_reserved=-qty_to_cancel,
         reference=str(pick_item.task.order_id), change_type='fulfillment_cancel_rollback'
     )
@@ -245,20 +233,18 @@ def admin_fulfillment_cancel(pick_item: PickItem, cancelled_by_user, reason: str
     pick_item.qty = pick_item.picked_qty
     pick_item.save(update_fields=['qty'])
 
-    # === MAIN DECOUPLING ===
-    # Yahan Order model import karke refund calculate karne ki jagah,
-    # hum sirf signal bhej rahe hain ki "Item Cancel Ho Gaya".
-    # Orders App is signal ko sunega aur refund process karega.
-    
+    # CRITICAL FIX: UUIDs to String conversion
     item_fulfillment_cancelled.send(
         sender=FulfillmentCancel,
-        order_id=pick_item.task.order_id,
-        sku_id=pick_item.sku_id,
+        order_id=str(pick_item.task.order_id),
+        sku_id=str(pick_item.sku_id),
         qty=qty_to_cancel,
         reason=reason
     )
 
     return fc_record
+
+# ... (create_grn_and_putaway, place_putaway_item etc. remain same but ensure string conversions if emitting signals)
 
 @transaction.atomic
 def create_grn_and_putaway(warehouse_id, grn_number, items, created_by):
@@ -291,9 +277,8 @@ def place_putaway_item(task_id, putaway_item_id, bin_id, qty_placed, user):
     bi.qty += qty_placed
     bi.save(update_fields=['qty'])
 
-    # Inventory Update Signal
     inventory_change_required.send(
-        sender=Warehouse, sku_id=sku.id, warehouse_id=warehouse.id,
+        sender=Warehouse, sku_id=str(sku.id), warehouse_id=str(warehouse.id),
         delta_available=qty_placed, delta_reserved=0,
         reference=grn_item.grn.grn_number, change_type='putaway'
     )
@@ -312,6 +297,7 @@ def place_putaway_item(task_id, putaway_item_id, bin_id, qty_placed, user):
     )
     return item
 
+# ... (create_cycle_count & record_cycle_count_item mein bhi signals mein str() use karein jahan zaroori ho)
 @transaction.atomic
 def create_cycle_count(warehouse_id, user, sample_bins=None):
     warehouse = Warehouse.objects.get(id=warehouse_id)
@@ -343,9 +329,8 @@ def record_cycle_count_item(task_id, bin_id, sku_id, counted_qty, user):
         bi.qty += delta
         bi.save(update_fields=['qty'])
         
-        # Inventory Update Signal
         inventory_change_required.send(
-            sender=Warehouse, sku_id=sku_id, warehouse_id=cc_item.task.warehouse.id,
+            sender=Warehouse, sku_id=str(sku_id), warehouse_id=str(cc_item.task.warehouse.id),
             delta_available=delta, delta_reserved=0,
             reference=str(cc_item.task.id), change_type='cycle_count_adjustment'
         )

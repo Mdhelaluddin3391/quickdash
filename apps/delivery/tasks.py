@@ -4,81 +4,121 @@ import random
 from celery import shared_task
 from django.db import transaction
 from django.utils import timezone
+from decimal import Decimal
 
-# Zaroori models ko import karein
+# Imports
 from apps.accounts.models import RiderProfile, User
 from apps.orders.models import Order
+from apps.warehouse.models import Warehouse # Warehouse model import kiya
 from .models import DeliveryTask, RiderLocation
 from .signals import rider_assigned_to_dispatch
-
+from .utils import haversine_distance # Math function import kiya
 
 logger = logging.getLogger(__name__)
 
 def _generate_otp(length=4):
-    """Helper function to generate a simple numeric OTP."""
     return "".join(str(random.randint(0, 9)) for _ in range(length))
 
 def _find_best_rider_for_warehouse(warehouse_id: str) -> RiderProfile | None:
     """
-    Sabse achha (available) rider dhoondhta hai.
+    PRO ALGORITHM:
+    1. Warehouse ki location nikalo.
+    2. Sirf 'Available' (On-Duty + No Active Task) riders ko filter karo.
+    3. Har rider ka Warehouse se distance calculate karo.
+    4. Sabse kam distance wale rider ko return karo.
     """
-    
-    # 1. Sabhi on-duty riders ko dhoondein
-    on_duty_locations = RiderLocation.objects.filter(on_duty=True).select_related('rider').order_by('-timestamp')
-    
-    if not on_duty_locations.exists():
-        logger.warning(f"No riders are on duty for warehouse {warehouse_id}.")
+    try:
+        warehouse = Warehouse.objects.get(id=warehouse_id)
+        if not warehouse.lat or not warehouse.lng:
+            logger.error(f"Warehouse {warehouse.code} has no coordinates!")
+            return None
+            
+        wh_lat = float(warehouse.lat)
+        wh_lng = float(warehouse.lng)
+        
+    except Warehouse.DoesNotExist:
         return None
 
-    # 2. Un riders ki IDs lein jinke paas pehle se active task hai
-    active_rider_ids = DeliveryTask.objects.filter(
+    # 1. Wo Riders jo On-Duty hain
+    # Note: select_related se DB queries kam hongi
+    candidate_locations = RiderLocation.objects.filter(
+        on_duty=True
+    ).select_related('rider')
+
+    if not candidate_locations.exists():
+        logger.warning(f"No riders are on duty for WH {warehouse_id}.")
+        return None
+
+    # 2. Wo Riders jo Busy hain (Jinka task active hai)
+    busy_rider_ids = DeliveryTask.objects.filter(
         status__in=["assigned", "at_warehouse", "picked_up", "at_customer"]
     ).values_list('rider_id', flat=True)
 
-    # 3. Pehla aisa rider dhoondein jo on_duty hai, lekin active task list mein nahi hai
-    for loc in on_duty_locations:
-        if str(loc.rider_id) not in [str(id) for id in active_rider_ids]: # Compare UUIDs as strings
-            logger.info(f"Found available rider: {loc.rider.rider_code}")
-            return loc.rider 
+    # 3. Best Rider Select Karo (Loop through candidates)
+    best_rider = None
+    min_distance = float('inf')
+    
+    # Configurable: Rider maximum kitni door ho sakta hai? (e.g., 10 km)
+    MAX_RADIUS_KM = 10.0 
 
-    logger.warning(f"All on-duty riders are busy for warehouse {warehouse_id}.")
-    return None 
+    for loc in candidate_locations:
+        # Agar rider busy hai to skip karo
+        if loc.rider_id in busy_rider_ids:
+            continue
+            
+        # Distance Calculate karo
+        # Decimal ko float mein convert karna zaroori hai math operations ke liye
+        rider_lat = float(loc.lat)
+        rider_lng = float(loc.lng)
+        
+        dist = haversine_distance(wh_lat, wh_lng, rider_lat, rider_lng)
+        
+        # Debug log (Development mein helpful)
+        # logger.debug(f"Rider {loc.rider.rider_code} distance: {dist:.2f} km")
+
+        if dist < min_distance and dist <= MAX_RADIUS_KM:
+            min_distance = dist
+            best_rider = loc.rider
+
+    if best_rider:
+        logger.info(f"Selected Rider {best_rider.rider_code} (Dist: {min_distance:.2f} km)")
+    else:
+        logger.warning("No available riders found within range.")
+
+    return best_rider 
 
 
-@shared_task(bind=True, max_retries=12, default_retry_delay=300) 
+@shared_task(bind=True, max_retries=12, default_retry_delay=60) # Retry har 1 min (total 12 mins)
 def find_and_assign_rider_for_task(self, delivery_task_id: str, warehouse_id: str):
     """
-    Ek specific delivery task ke liye rider dhoondhta hai aur assign karta hai.
+    Rider assignment task (Updated logic ke sath).
     """
     try:
         task = DeliveryTask.objects.select_related('order').get(id=delivery_task_id)
     except DeliveryTask.DoesNotExist:
-        logger.warning(f"DeliveryTask {delivery_task_id} not found for assignment.")
         return f"Task {delivery_task_id} not found."
         
     if task.status != "pending_assignment":
-        logger.info(f"Task {task.id} is already {task.status}. Skipping assignment.")
         return f"Task {task.id} already processed."
 
     try:
+        # Algorithm call karein
         best_rider = _find_best_rider_for_warehouse(warehouse_id)
         
         if not best_rider:
-            logger.info(f"No available riders found for task {task.id}. Retrying in 5 mins...")
+            logger.info(f"No rider found for task {task.id}. Retrying...")
+            # Retry karein
             raise self.retry()
 
         with transaction.atomic():
-            # Rider ki User ID (Order model mein save karne ke liye)
             rider_user = User.objects.get(id=best_rider.user_id)
 
-            # Task ko update karo
             task.rider = best_rider
             task.status = "assigned"
             task.assigned_at = timezone.now()
-            task.delivery_otp = _generate_otp(4) # Customer ke liye naya OTP
+            task.delivery_otp = _generate_otp(4)
             task.save()
             
-            # WMS (DispatchRecord) aur Orders app ko update karne ke liye signal bhejein
             rider_assigned_to_dispatch.send(
                 sender=DeliveryTask,
                 dispatch_id=task.dispatch_record_id,
@@ -87,26 +127,19 @@ def find_and_assign_rider_for_task(self, delivery_task_id: str, warehouse_id: st
                 rider_user_id=rider_user.id 
             )
 
-        logger.info(f"Task {task.id} assigned to Rider {best_rider.rider_code}")
-        
         return f"Task {task.id} assigned to {best_rider.rider_code}"
 
     except Exception as exc:
-        logger.error(f"Failed to assign rider for task {task.id}: {exc}")
-        # Next retry 60 seconds (1 minute) mein
-        raise self.retry(exc=exc, countdown=60)
+        logger.error(f"Assignment Logic Error: {exc}")
+        raise self.retry(exc=exc)
 
-
+# ... create_delivery_task_from_signal same rahega ...
 @shared_task
 def create_delivery_task_from_signal(dispatch_id, order_id, warehouse_id, pickup_otp):
-    """
-    Yeh task WMS ke signal se trigger hota hai.
-    Yeh DeliveryTask banata hai aur rider assignment ko trigger karta hai.
-    """
-    logger.info(f"Creating DeliveryTask for Dispatch {dispatch_id}...")
-    
     try:
         order = Order.objects.get(id=order_id)
+        # Warehouse ID ensure string ho
+        warehouse_id = str(warehouse_id) 
         
         with transaction.atomic():
             task, created = DeliveryTask.objects.get_or_create(
@@ -117,18 +150,10 @@ def create_delivery_task_from_signal(dispatch_id, order_id, warehouse_id, pickup
                     'pickup_otp': pickup_otp
                 }
             )
-            
             if created:
-                # Naya task ban gaya, ab iske liye rider dhoondhne ka task trigger karein
                 find_and_assign_rider_for_task.delay(
                     delivery_task_id=str(task.id),
-                    warehouse_id=str(warehouse_id)
+                    warehouse_id=warehouse_id
                 )
-                logger.info(f"DeliveryTask {task.id} created for Dispatch {dispatch_id}.")
-            else:
-                logger.warning(f"DeliveryTask for Dispatch {dispatch_id} already exists.")
-                
-    except Order.DoesNotExist:
-        logger.error(f"Order {order_id} not found. Cannot create DeliveryTask for Dispatch {dispatch_id}.")
     except Exception as e:
-        logger.error(f"Failed to create DeliveryTask for Dispatch {dispatch_id}: {e}")
+        logger.error(f"Error creating delivery task: {e}")
