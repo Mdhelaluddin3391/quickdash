@@ -19,7 +19,6 @@ def create_and_send_otp(phone: str, login_type: str):
     otp_code = "".join(str(random.randint(0, 9)) for _ in range(6))
     otp = PhoneOTP.create_otp(phone=phone, login_type=login_type, code=otp_code)
     # Production mein yahan SMS service call hogi. Abhi ke liye print kar rahe hain.
-    print(f"--- OTP for {phone}: {otp_code} ---")
     
     # Asynchronous SMS task ko call karein (optional for non-prod)
     # from .tasks import send_sms_task

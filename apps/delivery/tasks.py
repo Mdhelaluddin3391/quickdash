@@ -5,7 +5,7 @@ from celery import shared_task
 from django.db import transaction
 from django.utils import timezone
 from decimal import Decimal
-
+from apps.accounts.models import RiderProfile
 # Imports
 from apps.accounts.models import RiderProfile, User
 from apps.orders.models import Order
@@ -111,7 +111,7 @@ def find_and_assign_rider_for_task(self, delivery_task_id: str, warehouse_id: st
             raise self.retry()
 
         with transaction.atomic():
-            rider_user = User.objects.get(id=best_rider.user_id)
+            rider_user = best_rider.user
 
             task.rider = best_rider
             task.status = "assigned"

@@ -6,7 +6,9 @@ from rest_framework.permissions import IsAuthenticated
 from .models import User, CustomerProfile, PhoneOTP
 from .serializers import RequestOTPSerializer, VerifyOTPSerializer
 from .utils import create_and_send_otp, normalize_phone, create_tokens_with_session
-
+# apps/accounts/views.py top par add karein
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 
 
 # ========== Base OTP Views ==========
