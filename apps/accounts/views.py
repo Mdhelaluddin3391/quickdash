@@ -8,6 +8,16 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 
+from rest_framework import status, views
+from rest_framework.response import Response
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth import get_user_model
+from django.utils import timezone
+from .models import PhoneOTP, UserSession
+from .serializers import RequestOTPSerializer, VerifyOTPSerializer, UserProfileSerializer
+import random
+
+User = get_user_model()
 from .serializers import (
     UserRegistrationSerializer, 
     UserLoginSerializer, 
@@ -180,3 +190,84 @@ class EmployeeMeView(views.APIView):
             })
         except EmployeeProfile.DoesNotExist:
             return Response({"error": "Employee profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+
+
+class RequestOTPView(views.APIView):
+    """
+    Step 1: User phone number bhejega -> OTP Generate hoga -> Signal SMS bhejega.
+    """
+    def post(self, request):
+        serializer = RequestOTPSerializer(data=request.data)
+        if serializer.is_valid():
+            phone = serializer.validated_data['phone']
+            login_type = serializer.validated_data['login_type']
+            
+            # 1. Generate Random OTP
+            otp_code = str(random.randint(100000, 999999))
+            
+            # 2. Save to DB (Yeh Signal trigger karega aur SMS chala jayega)
+            PhoneOTP.create_otp(phone, login_type, otp_code)
+            
+            return Response({
+                "message": "OTP sent successfully.", 
+                "dev_hint": otp_code  # Development mode mein aasani ke liye return kar rahe hain
+            }, status=status.HTTP_200_OK)
+            
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class VerifyOTPView(views.APIView):
+    """
+    Step 2: OTP Validate -> User Get/Create -> JWT Tokens Generate -> Session Create.
+    """
+    def post(self, request):
+        serializer = VerifyOTPSerializer(data=request.data)
+        if serializer.is_valid():
+            phone = serializer.validated_data['phone']
+            otp_input = serializer.validated_data['otp']
+            login_type = serializer.validated_data['login_type']
+
+            # 1. OTP Validate karein (DB se check)
+            otp_record = PhoneOTP.objects.filter(phone=phone, login_type=login_type, is_used=False).last()
+            
+            if not otp_record:
+                return Response({"error": "OTP request not found or expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+            is_valid, message = otp_record.is_valid(otp_input)
+            if not is_valid:
+                return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
+
+            # 2. OTP sahi hai, ab User Get ya Create karein
+            user, created = User.objects.get_or_create(phone=phone)
+            
+            # Agar user naya hai, toh role set karein
+            if created:
+                user.app_role = login_type
+                if login_type == 'RIDER': user.is_rider = True
+                elif login_type == 'EMPLOYEE': user.is_employee = True
+                else: user.is_customer = True
+                user.save()
+                # Note: User.save() par 'post_save' signal chalega aur automatic Profile ban jayegi!
+            
+            # 3. JWT Tokens Generate karein
+            refresh = RefreshToken.for_user(user)
+            
+            # 4. User Session Track karein (Security ke liye)
+            UserSession.objects.create(
+                user=user,
+                role=user.app_role,
+                client=request.META.get('HTTP_USER_AGENT', 'Unknown'),
+                jti=refresh['jti'],
+                ip_address=request.META.get('REMOTE_ADDR')
+            )
+            
+            # 5. Final Response
+            return Response({
+                "refresh": str(refresh),
+                "access": str(refresh.access_token),
+                "user": UserProfileSerializer(user).data,
+                "is_new_user": created
+            }, status=status.HTTP_200_OK)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

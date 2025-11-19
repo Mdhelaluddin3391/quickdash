@@ -1,19 +1,31 @@
-# apps/accounts/serializers.py
 from rest_framework import serializers
-from rest_framework_simplejwt.exceptions import InvalidToken
-from .utils import normalize_phone
-from .models import EmployeeProfile, RiderProfile
+from django.contrib.auth import get_user_model
+from .models import PhoneOTP, RiderProfile, CustomerProfile, EmployeeProfile
 
+User = get_user_model()
 
 class RequestOTPSerializer(serializers.Serializer):
+    """
+    Phone number accept karne ke liye.
+    """
     phone = serializers.CharField(max_length=15)
-    def validate_phone(self, value): return normalize_phone(value)
+    login_type = serializers.ChoiceField(choices=[("CUSTOMER", "Customer"), ("RIDER", "Rider"), ("EMPLOYEE", "Employee")])
 
 class VerifyOTPSerializer(serializers.Serializer):
+    """
+    OTP Verify karne ke liye.
+    """
     phone = serializers.CharField(max_length=15)
     otp = serializers.CharField(max_length=6)
-    def validate_phone(self, value): return normalize_phone(value)
+    login_type = serializers.ChoiceField(choices=[("CUSTOMER", "Customer"), ("RIDER", "Rider"), ("EMPLOYEE", "Employee")])
 
+class UserProfileSerializer(serializers.ModelSerializer):
+    """
+    User ki basic details return karne ke liye.
+    """
+    class Meta:
+        model = User
+        fields = ['id', 'phone', 'full_name', 'email', 'profile_picture', 'app_role']
 # ===================================================================
 #                      ADMIN MANAGEMENT SERIALIZERS
 # ===================================================================

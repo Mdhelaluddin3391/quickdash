@@ -26,6 +26,9 @@ from .views import (
 from .views_roles import ChangeUserRole 
 
 urlpatterns = [
+
+    path('auth/request-otp/', RequestOTPView.as_view(), name='request-otp'),
+    path('auth/verify-otp/', VerifyOTPView.as_view(), name='verify-otp'),
     # Customer auth
     path("customer/request-otp/", CustomerRequestOTPView.as_view()),
     path("customer/verify-otp/", CustomerVerifyOTPView.as_view()),

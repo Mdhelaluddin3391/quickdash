@@ -1,8 +1,7 @@
-# apps/delivery/routing.py
-from django.urls import re_path
-from . import consumers
+from django.urls import path
+from .consumers import RiderLocationConsumer
 
 websocket_urlpatterns = [
-    # ws://domain.com/ws/track/ORDER_123/
-    re_path(r'ws/track/(?P<order_id>\w+)/$', consumers.OrderTrackingConsumer.as_asgi()),
+    # Rider is URL par connect karega: ws://localhost:8000/ws/delivery/tracker/
+    path("ws/delivery/tracker/", RiderLocationConsumer.as_asgi()),
 ]
