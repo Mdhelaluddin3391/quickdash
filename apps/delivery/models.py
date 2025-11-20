@@ -3,8 +3,6 @@ import logging
 from decimal import Decimal
 from django.db import models
 from django.conf import settings
-from django.utils import timezone
-from django.contrib.gis.db import models as gis_models
 from django.core.validators import MinValueValidator, MaxValueValidator
 
 # Apps Imports (Aapke structure ke hisaab se)
@@ -106,7 +104,7 @@ class DeliveryTask(TimestampedModel):
             )
             logger.info(f"Earning created for Rider {self.rider.user.username}")
         except Exception as e:
-            logger.error(f"Failed to create earning: {e}")
+            logger.exception(f"Failed to create earning for delivery task {self.id}: {e}")
 
 # ==========================================
 # 3. RIDER FINANCIALS (Earnings & Payouts)

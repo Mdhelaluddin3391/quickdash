@@ -34,4 +34,4 @@ def handle_rider_assigned_signal(sender, dispatch_id, rider_profile_id, **kwargs
     except DispatchRecord.DoesNotExist:
         logger.error(f"Received rider assignment for non-existent DispatchRecord {dispatch_id}.")
     except Exception as e:
-        logger.error(f"Error updating DispatchRecord {dispatch_id} from signal: {e}")
+        logger.exception(f"Error updating DispatchRecord {dispatch_id} from signal: {e}")

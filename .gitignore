@@ -5,6 +5,8 @@ __pycache__/
 *.pyd
 *.egg-info/
 .eggs/
+.github/
+.ruff_cache/
 
 # Env
 .env

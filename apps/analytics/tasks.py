@@ -1,7 +1,7 @@
 # apps/analytics/tasks.py
 from celery import shared_task
 from django.utils import timezone
-from django.db.models import Sum, Avg, Count, F, DurationField
+from django.db.models import Sum, Avg, F
 from django.db.models.functions import Coalesce
 from datetime import timedelta
 
@@ -88,6 +88,6 @@ def generate_daily_kpi_report():
             logger.info(f"KPI generated for {warehouse.code}: Orders={total_orders}, Rev={total_revenue}")
 
         except Exception as e:
-            logger.error(f"Failed to generate KPI for warehouse {warehouse.code}: {e}")
+            logger.exception(f"Failed to generate KPI for warehouse {warehouse.code}: {e}")
 
     return f"KPI Report generated for {yesterday}"

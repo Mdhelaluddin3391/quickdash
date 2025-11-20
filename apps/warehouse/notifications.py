@@ -28,7 +28,7 @@ def _send_ws_message(group_name, event_type, payload):
         )
         logger.info(f"WebSocket Sent: {event_type} -> {group_name}")
     except Exception as e:
-        logger.error(f"Failed to send WebSocket message: {e}")
+        logger.exception(f"Failed to send WebSocket message: {e}")
 
 
 def notify_picker_new_task(picking_task):

@@ -23,4 +23,4 @@ def process_order_refund_task(payment_id):
     except Payment.DoesNotExist:
         logger.error(f"Payment {payment_id} not found for refund.")
     except Exception as e:
-        logger.error(f"Error in refund task: {e}")
+        logger.exception(f"Error in refund task: {e}")

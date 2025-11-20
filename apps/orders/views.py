@@ -1,26 +1,22 @@
 import logging
-from decimal import Decimal
 import razorpay
-import json
 
 from django.db import transaction
-from django.utils import timezone
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 
 from rest_framework import generics, status
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from apps.accounts.permissions import IsCustomer
-from apps.catalog.models import SKU
 from apps.delivery.models import DeliveryTask
-from .models import Cart, CartItem, Order, OrderItem, Payment, ORDER_STATUS_CHOICES, PAYMENT_STATUS_CHOICES
+from .models import Cart, Order, OrderItem
+from apps.payments.models import Payment
+from apps.warehouse.models import PickingTask, PickItem
 from .serializers import (
     CreateOrderSerializer,
-    OrderSerializer,
-    OrderListSerializer,
     PaymentVerificationSerializer,
 )
 from .signals import payment_succeeded
@@ -71,7 +67,7 @@ def process_successful_payment(order_id):
         logger.warning(f"Order {order_id} not found or already processed.")
         return False, "Order not found."
     except Exception as e:
-        logger.error(f"Payment processing failed for order {order_id}: {e}")
+        logger.exception(f"Payment processing failed for order {order_id}: {e}")
         return False, str(e)
 
 
@@ -125,7 +121,7 @@ class CheckoutView(generics.GenericAPIView):
                 OrderItem.objects.bulk_create(items_to_create)
 
         except Exception as e:
-            logger.error(f"Error creating order: {e}")
+            logger.exception(f"Error creating order for user {user.id if user else 'unknown'}: {e}")
             return Response({"error": "Could not create order."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         if payment_method == 'COD':
@@ -158,7 +154,7 @@ class CheckoutView(generics.GenericAPIView):
                     "order_id": order.id
                 })
             except Exception as e:
-                logger.error(f"Razorpay client error: {e}")
+                logger.exception(f"Razorpay client error for order {order.id if 'order' in locals() else 'unknown'}: {e}")
                 return Response({"error": "Payment gateway error."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         return Response({"error": "Invalid payment method"}, status=status.HTTP_400_BAD_REQUEST)
@@ -194,5 +190,5 @@ class PaymentVerificationView(APIView):
             logger.warning(f"Razorpay signature verification failed for order {data.get('razorpay_order_id')}")
             return Response({"error": "Invalid payment signature"}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error(f"Payment verification failed: {e}")
+            logger.exception(f"Payment verification failed: {e}")
             return Response({"error": "An unexpected error occurred"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

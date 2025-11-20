@@ -2,8 +2,7 @@ from celery import shared_task
 import razorpay
 import logging
 from django.conf import settings
-from django.db import transaction
-from .models import Order, Payment
+from .models import Payment
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +42,6 @@ def process_razorpay_refund_task(payment_id, is_partial_refund=False, amount=Non
         return f"Refund Processed: {refund.get('id')}"
 
     except Exception as e:
-        logger.error(f"Refund Failed for Payment {payment_id}: {e}")
+        logger.exception(f"Refund Failed for Payment {payment_id}: {e}")
         # Retry logic can be added here (e.g., self.retry())
         return f"Refund Failed: {e}"

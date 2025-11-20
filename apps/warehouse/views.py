@@ -1,14 +1,17 @@
-from rest_framework import viewsets, status, views
+from rest_framework import viewsets, views
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
 from django.utils import timezone
-from django.shortcuts import get_object_or_404
 
 # Apps Imports
-from apps.accounts.permissions import IsStoreStaff # Ensure this exists or use IsAuthenticated
+# Note: `IsStoreStaff` not present in `apps.accounts.permissions`; use `IsAuthenticated` or
+# employee-level permissions instead.
 from .models import PickingTask, PickItem
 from .serializers import PickingTaskSerializer
+import logging
+
+logger = logging.getLogger(__name__)
 
 class PickerTaskViewSet(viewsets.ModelViewSet):
     """
@@ -65,4 +68,5 @@ class ScanItemView(views.APIView):
                 return Response({"message": "Item Scanned Successfully."})
 
         except Exception as e:
+            logger.exception("Error scanning item for task %s SKU %s: %s", task_id, sku_code, e)
             return Response({"error": str(e)}, status=400)

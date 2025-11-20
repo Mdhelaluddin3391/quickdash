@@ -2,6 +2,7 @@
 
 import os
 from celery import Celery
+import logging
 
 # Django settings module set karein
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
@@ -16,4 +17,5 @@ app.autodiscover_tasks()
 
 @app.task(bind=True)
 def debug_task(self):
-    print(f'Request: {self.request!r}')
+    logger = logging.getLogger(__name__)
+    logger.debug(f'Request: {self.request!r}')

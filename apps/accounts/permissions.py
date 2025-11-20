@@ -2,8 +2,6 @@ from rest_framework.permissions import BasePermission
 from .models import EmployeeProfile
 
 
-from rest_framework.permissions import BasePermission
-from .models import EmployeeProfile
 
 
 class IsCustomer(BasePermission):

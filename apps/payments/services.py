@@ -1,7 +1,6 @@
 # apps/payments/services.py
 import razorpay
 from django.conf import settings
-from decimal import Decimal
 
 # Client Initialize
 client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))

@@ -3,7 +3,6 @@ from rest_framework import serializers
 from .models import Order, OrderItem, OrderTimeline, Cart, CartItem # Sab ek line mein
 from apps.catalog.models import SKU
 from apps.warehouse.models import Warehouse
-import uuid
 # ===================================================================
 #                      WRITE Serializers (Input)
 # ===================================================================
@@ -157,3 +156,15 @@ class AddToCartSerializer(serializers.Serializer):
     """
     sku_id = serializers.UUIDField()
     quantity = serializers.IntegerField(min_value=0) # 0 bhejne par item delete hoga
+
+
+class PaymentVerificationSerializer(serializers.Serializer):
+    """Validates payment gateway signature data (Razorpay)."""
+    razorpay_order_id = serializers.CharField()
+    razorpay_payment_id = serializers.CharField()
+    razorpay_signature = serializers.CharField()
+
+    def validate(self, data):
+        # Basic presence checks already enforced by fields. Additional
+        # verification with the gateway is handled in the view.
+        return data

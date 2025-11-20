@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status, views
+from rest_framework import viewsets, views
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -7,7 +7,6 @@ from django.db import transaction
 
 # Permissions (Niche Step 8 mein banayenge)
 from apps.accounts.permissions import IsRider 
-from apps.accounts.models import RiderProfile
 from .models import DeliveryTask, RiderEarning
 from .serializers import DeliveryTaskSerializer, RiderEarningSerializer, RiderProfileSerializer
 

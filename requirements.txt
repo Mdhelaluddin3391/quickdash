@@ -45,3 +45,4 @@ channels-redis==4.1.0
 daphne==4.0.0
 django-redis==5.2.0
 dj-database-url==1.0.0
+Pillow==10.0.0

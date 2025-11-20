@@ -50,7 +50,7 @@ def handle_payment_success(sender, order, **kwargs):
             )
             logger.info(f"WMS signal sent for confirmed order {order.id}")
         except Exception as e:
-            logger.error(f"Failed to send WMS signal for order {order.id}: {e}")
+            logger.exception(f"Failed to send WMS signal for order {order.id}: {e}")
 
 @receiver(delivery_completed)
 def handle_delivery_success(sender, order, rider_code, **kwargs):

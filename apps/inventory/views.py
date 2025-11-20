@@ -6,8 +6,9 @@ from rest_framework.permissions import IsAuthenticated
 from apps.accounts.permissions import IsWarehouseManagerEmployee, IsEmployee
 from .models import InventoryStock
 from .serializers import InventoryStockSerializer
-from apps.catalog.models import SKU
-from apps.warehouse.models import Warehouse
+import logging
+
+logger = logging.getLogger(__name__)
 
 class InventoryListAPIView(generics.ListAPIView):
     """
@@ -75,6 +76,8 @@ class AdjustStockAPIView(APIView):
             }, status=status.HTTP_200_OK)
             
         except ValueError:
+            logger.warning("Invalid quantity provided for inventory adjustment: %s", quantity)
             return Response({"detail": "Quantity must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception:
+            logger.exception("Unexpected error adjusting stock for SKU %s in WH %s", sku_id, warehouse_id)
+            return Response({"detail": "Internal server error."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

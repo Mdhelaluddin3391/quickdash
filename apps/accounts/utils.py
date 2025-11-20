@@ -1,12 +1,10 @@
 # apps/accounts/utils.py
 import random
-from datetime import timedelta
 from django.utils import timezone
 from django.db import transaction
 from django.core.exceptions import ValidationError
-from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
-from .models import PhoneOTP, UserSession, User
+from .models import PhoneOTP, UserSession
 from django.core.cache import cache # <-- Redis Cache Import
 
 

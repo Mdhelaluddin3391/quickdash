@@ -256,7 +256,7 @@ def sync_inventory_stock(warehouse_id, sku_id):
             logger.info(f"SYNC: SKU {sku_id} in WH {warehouse_id} -> Avail: {available}")
 
     except Exception as e:
-        logger.error(f"Stock Sync Failed for SKU {sku_id}: {e}")
+        logger.exception(f"Stock Sync Failed for SKU {sku_id}: {e}")
 
 @receiver([post_save, post_delete], sender=BinInventory)
 def on_bin_inventory_change(sender, instance, **kwargs):

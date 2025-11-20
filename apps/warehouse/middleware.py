@@ -1,6 +1,8 @@
 # apps/warehouse/middleware.py
-import hashlib, json
+import hashlib
+import json
 from django.utils.deprecation import MiddlewareMixin
+import logging
 from django.http import HttpResponse
 from .models import IdempotencyKey
 from django.utils import timezone
@@ -27,6 +29,8 @@ class IdempotencyMiddleware(MiddlewareMixin):
             body = request.body or b''
             h = hashlib.sha256(body).hexdigest()
         except Exception:
+            logger = logging.getLogger(__name__)
+            logger.exception("Failed to hash request body for idempotency")
             h = ''
         try:
             rec = IdempotencyKey.objects.filter(key=key).first()
@@ -35,7 +39,9 @@ class IdempotencyMiddleware(MiddlewareMixin):
                 if rec.response_body is not None and rec.response_status is not None:
                     return HttpResponse(json.dumps(rec.response_body), status=rec.response_status, content_type='application/json')
         except Exception:
-            pass
+            logger = logging.getLogger(__name__)
+            logger.exception("Error checking idempotency key %s", key)
+            # proceed without failing the request
         # attach idempotency info to request for view to store result later
         request._idempotency_key = key
         request._idempotency_request_hash = h
@@ -67,6 +73,7 @@ class IdempotencyMiddleware(MiddlewareMixin):
                 )
                 # no further action
         except Exception:
-            pass
+            logger = logging.getLogger(__name__)
+            logger.exception("Error storing idempotency key %s", key)
         return response
    

@@ -34,6 +34,6 @@ def orchestrate_order_fulfilment_from_order_payload(payload):
         return str(pick_task.id)
         
     except Exception as e:
-        logger.error(f"Orchestration Error for Order {order_id}: {e}")
+        logger.exception(f"Orchestration Error for Order {order_id}: {e}")
         # Error ko propagate karein taaki Celery retry kar sake (agar chahein)
         raise e

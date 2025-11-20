@@ -28,8 +28,8 @@ class EmployeeProfileInline(admin.StackedInline):
 # Main User Admin Class
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    list_display = ('phone', 'full_name', 'app_role', 'is_active', 'is_staff', 'is_superuser')
-    list_filter = ('is_active', 'is_staff', 'is_superuser', 'app_role')
+    list_display = ('phone', 'full_name', 'is_active', 'is_staff', 'is_superuser')
+    list_filter = ('is_active', 'is_staff', 'is_superuser')
     search_fields = ('phone', 'email', 'full_name')
     ordering = ('phone',)
     fieldsets = (

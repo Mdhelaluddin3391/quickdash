@@ -9,4 +9,3 @@ class AccountsConfig(AppConfig):
         App initialization ke waqt signals ko import karna zaroori hai,
         varna receivers work nahi karenge.
         """
-        import apps.accounts.receivers

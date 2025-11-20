@@ -1,6 +1,6 @@
 # apps/delivery/admin.py
 from django.contrib import admin
-from .models import DeliveryTask, RiderLocation
+from .models import DeliveryTask, RiderEarning
 
 @admin.register(DeliveryTask)
 class DeliveryTaskAdmin(admin.ModelAdmin):
@@ -28,7 +28,7 @@ class DeliveryTaskAdmin(admin.ModelAdmin):
         'pickup_otp',
         'delivery_otp',
         'created_at',
-        'assigned_at',
+        'accepted_at',
         'picked_up_at',
         'delivered_at',
     )
@@ -37,20 +37,15 @@ class DeliveryTaskAdmin(admin.ModelAdmin):
         return False
 
 
-@admin.register(RiderLocation)
-class RiderLocationAdmin(admin.ModelAdmin):
+@admin.register(RiderEarning)
+class RiderEarningAdmin(admin.ModelAdmin):
     """
-    Rider Location ko Admin Panel mein dikhane ke liye.
+    Admin view for rider earnings.
     """
-    list_display = ('rider', 'on_duty', 'lat', 'lng', 'timestamp')
-    list_filter = ('on_duty',)
-    search_fields = ('rider__rider_code', 'rider__user__phone')
-    
-    # Location ko admin se edit nahi kar sakte
-    readonly_fields = ('rider', 'lat', 'lng', 'timestamp')
+    list_display = ('rider', 'delivery_task', 'total_earning', 'status', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('rider__rider_code', 'rider__user__username')
+    readonly_fields = ('rider', 'delivery_task', 'base_fee', 'tip', 'total_earning', 'created_at')
 
     def has_add_permission(self, request):
-        return False
-
-    def has_delete_permission(self, request, obj=None):
         return False

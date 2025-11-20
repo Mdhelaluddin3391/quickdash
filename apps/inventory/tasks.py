@@ -4,8 +4,6 @@ from celery.utils.log import get_task_logger
 from django.db import transaction
 from .models import InventoryStock
 # Warehouse/SKU models ko yahan import kiya gaya hai (Agar zaroori ho, ya IDs se kaam chalaya jaye)
-from apps.warehouse.models import Warehouse 
-from apps.catalog.models import SKU 
 
 logger = get_task_logger(__name__)
 
@@ -38,5 +36,5 @@ def update_inventory_stock_task(self, sku_id, warehouse_id, delta_available, del
         logger.info(f"InventoryStock updated for {sku_id}@{warehouse_id}: Avail Delta {delta_available}, Res Delta {delta_reserved}")
 
     except Exception as exc:
-        logger.error(f"Failed to update InventoryStock {sku_id}@{warehouse_id}: {exc}")
+        logger.exception(f"Failed to update InventoryStock {sku_id}@{warehouse_id}: {exc}")
         raise self.retry(exc=exc)

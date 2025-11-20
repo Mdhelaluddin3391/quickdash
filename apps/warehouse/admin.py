@@ -1,11 +1,9 @@
 from django.contrib import admin
 from .models import (
-    Warehouse, Zone, Bin, BinInventory, PickingTask, PickItem, DispatchRecord, 
+    Bin, BinInventory, PickingTask, DispatchRecord, 
     IdempotencyKey, # Existing
     # --- New Models Imported ---
-    PickSkip, FulfillmentCancel, ShortPickIncident, 
-    GRN, GRNItem, PutawayTask, PutawayItem,
-    CycleCountTask, CycleCountItem
+    PickSkip, FulfillmentCancel, GRN, GRNItem, PutawayTask, CycleCountTask
     # ---------------------------
 )
 
@@ -15,7 +13,7 @@ class BinInventoryInline(admin.TabularInline):
 
 @admin.register(Bin)
 class BinAdmin(admin.ModelAdmin):
-    list_display = ('code', 'shelf', 'bin_type')
+    list_display = ('bin_code', 'capacity')
     inlines = [BinInventoryInline]
 
 @admin.register(PickingTask)
@@ -24,7 +22,7 @@ class PickingTaskAdmin(admin.ModelAdmin):
 
 @admin.register(DispatchRecord)
 class DispatchRecordAdmin(admin.ModelAdmin):
-    list_display = ('order_id', 'status', 'rider_id', 'pickup_otp')
+    list_display = ('order_id', 'status', 'warehouse', 'pickup_otp')
 
 
 @admin.register(IdempotencyKey) # <-- Naya Admin Register kiya

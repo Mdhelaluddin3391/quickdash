@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import PickingTask, PickItem, Bin
+from .models import PickingTask, PickItem
 
 class PickItemSerializer(serializers.ModelSerializer):
     sku_code = serializers.CharField(source='sku.sku_code', read_only=True)

@@ -7,7 +7,7 @@ from rest_framework import status
 from django.shortcuts import get_object_or_404
 from .models import Notification
 from .serializers import NotificationSerializer
-from .models import Notification, FCMDevice # <-- FCMDevice import karein
+from .models import FCMDevice # <-- FCMDevice import karein
 from rest_framework.views import APIView # <-- Import add karein
 
 class NotificationListView(generics.ListAPIView):
@@ -42,6 +42,20 @@ class NotificationDetailView(generics.RetrieveAPIView):
             notification.is_read = True
             notification.save(update_fields=['is_read'])
             
+        return Response({"status": "read"}, status=status.HTTP_200_OK)
+
+
+class NotificationMarkReadView(APIView):
+    """POST endpoint to mark a notification as read."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk=None):
+        notification = get_object_or_404(Notification.objects.filter(user=request.user), pk=pk)
+
+        if not notification.is_read:
+            notification.is_read = True
+            notification.save(update_fields=['is_read'])
+
         return Response({"status": "read"}, status=status.HTTP_200_OK)
 
 

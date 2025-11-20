@@ -1,6 +1,6 @@
 import random
 from django.db import transaction
-from django.db.models import Sum, F, Q
+from django.db.models import Sum, F
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from apps.accounts.models import EmployeeProfile

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import PhoneOTP, RiderProfile, CustomerProfile, EmployeeProfile
+from .models import RiderProfile, EmployeeProfile
 
 User = get_user_model()
 
@@ -72,3 +72,9 @@ class AdminForgotPasswordSerializer(serializers.Serializer):
 class AdminResetPasswordSerializer(serializers.Serializer):
     token = serializers.CharField(max_length=100)
     new_password = serializers.CharField(min_length=8)
+
+
+# Simple serializer used by admin views for changing a user's role
+class ChangeUserRoleSerializer(serializers.Serializer):
+    user_id = serializers.UUIDField()
+    role = serializers.CharField(max_length=50)

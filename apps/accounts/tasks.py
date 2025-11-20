@@ -4,7 +4,6 @@ from django.conf import settings
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
 from django.core.mail import send_mail
-from django.template.loader import render_to_string
 # Logger setup
 logger = logging.getLogger(__name__)
 
@@ -54,7 +53,7 @@ def send_sms_task(self, phone: str, otp_code: str, login_type: str):
         
     except Exception as exc:
         # Koi aur unexpected error
-        logger.error(
+        logger.exception(
             "Unexpected error sending SMS to %s: %s. Retrying...", phone, str(exc)
         )
         self.retry(exc=exc)
@@ -100,7 +99,7 @@ def send_admin_password_reset_email_task(self, user_email: str, user_name: str, 
         return f"Email sent to {user_email}."
 
     except Exception as exc:
-        logger.warning(
+        logger.exception(
             "Error sending password reset email to %s: %s. Retrying...", user_email, exc
         )
         self.retry(exc=exc)

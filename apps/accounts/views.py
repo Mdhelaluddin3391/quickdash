@@ -1,13 +1,12 @@
 # apps/accounts/views.py
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from rest_framework import generics, status, views
+from rest_framework import status, views
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.conf import settings
 import random
-import uuid
 
 from .models import PhoneOTP, UserSession
 from .signals import user_signed_up
@@ -16,6 +15,10 @@ from .serializers import (
     VerifyOTPSerializer, 
     UserProfileSerializer,
 )
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
@@ -111,4 +114,5 @@ class LogoutView(views.APIView):
         except KeyError:
             return Response({"error": "Refresh token not provided."}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.exception("Logout failed for user %s: %s", request.user if hasattr(request, 'user') else 'unknown', e)
+            return Response({"error": "Logout failed"}, status=status.HTTP_400_BAD_REQUEST)

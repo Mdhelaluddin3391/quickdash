@@ -4,13 +4,12 @@ import random
 from celery import shared_task
 from django.db import transaction
 from django.utils import timezone
-from decimal import Decimal
 from apps.accounts.models import RiderProfile
 # Imports
-from apps.accounts.models import RiderProfile, User
 from apps.orders.models import Order
 from apps.warehouse.models import Warehouse # Warehouse model import kiya
-from .models import DeliveryTask, RiderLocation
+from .models import DeliveryTask
+from apps.accounts.models import RiderProfile as RiderProfileModel
 from .signals import rider_assigned_to_dispatch
 from .utils import haversine_distance # Math function import kiya
 
@@ -41,9 +40,8 @@ def _find_best_rider_for_warehouse(warehouse_id: str) -> RiderProfile | None:
 
     # 1. Wo Riders jo On-Duty hain
     # Note: select_related se DB queries kam hongi
-    candidate_locations = RiderLocation.objects.filter(
-        on_duty=True
-    ).select_related('rider')
+    # Use RiderProfile.current_location (GeoDjango PointField) for rider locations
+    candidate_locations = RiderProfileModel.objects.filter(on_duty=True).select_related('user')
 
     if not candidate_locations.exists():
         logger.warning(f"No riders are on duty for WH {warehouse_id}.")
@@ -61,24 +59,26 @@ def _find_best_rider_for_warehouse(warehouse_id: str) -> RiderProfile | None:
     # Configurable: Rider maximum kitni door ho sakta hai? (e.g., 10 km)
     MAX_RADIUS_KM = 10.0 
 
-    for loc in candidate_locations:
-        # Agar rider busy hai to skip karo
-        if loc.rider_id in busy_rider_ids:
+    for profile in candidate_locations:
+        # Skip if rider busy
+        if profile.id in busy_rider_ids:
             continue
-            
-        # Distance Calculate karo
-        # Decimal ko float mein convert karna zaroori hai math operations ke liye
-        rider_lat = float(loc.lat)
-        rider_lng = float(loc.lng)
-        
+
+        # Ensure we have a current_location Point
+        if not profile.current_location:
+            continue
+
+        rider_lng = float(profile.current_location.x)
+        rider_lat = float(profile.current_location.y)
+
         dist = haversine_distance(wh_lat, wh_lng, rider_lat, rider_lng)
-        
-        # Debug log (Development mein helpful)
-        # logger.debug(f"Rider {loc.rider.rider_code} distance: {dist:.2f} km")
+
+        # Debug log (Development)
+        # logger.debug(f"Rider {profile.rider_code} distance: {dist:.2f} km")
 
         if dist < min_distance and dist <= MAX_RADIUS_KM:
             min_distance = dist
-            best_rider = loc.rider
+            best_rider = profile
 
     if best_rider:
         logger.info(f"Selected Rider {best_rider.rider_code} (Dist: {min_distance:.2f} km)")
@@ -130,7 +130,7 @@ def find_and_assign_rider_for_task(self, delivery_task_id: str, warehouse_id: st
         return f"Task {task.id} assigned to {best_rider.rider_code}"
 
     except Exception as exc:
-        logger.error(f"Assignment Logic Error: {exc}")
+        logger.exception(f"Assignment Logic Error for delivery task {delivery_task_id}: {exc}")
         raise self.retry(exc=exc)
 
 # ... create_delivery_task_from_signal same rahega ...
@@ -156,4 +156,4 @@ def create_delivery_task_from_signal(dispatch_id, order_id, warehouse_id, pickup
                     warehouse_id=warehouse_id
                 )
     except Exception as e:
-        logger.error(f"Error creating delivery task: {e}")
+        logger.exception(f"Error creating delivery task {dispatch_id}/{order_id}: {e}")
