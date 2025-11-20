@@ -2,10 +2,13 @@
 import uuid
 from django.db import models
 
+from django.db import models
+from django.utils.text import slugify
+
 class Category(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
-    slug = models.SlugField(unique=True)
+    slug = models.SlugField(unique=True, blank=True)
     parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='subcategories')
 
     class Meta:
@@ -13,6 +16,11 @@ class Category(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
 
 class Brand(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -41,7 +49,7 @@ class SKU(models.Model):
     # Meta info
     image_url = models.URLField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
-    metadata = models.JSONField(default=dict, blank=True) # Extra attributes like weight, dimensions
+    metadata = models.JSONField(default=dict, blank=True, help_text="Extra attributes like weight, dimensions, etc.") # Extra attributes like weight, dimensions
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

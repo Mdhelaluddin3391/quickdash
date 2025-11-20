@@ -17,3 +17,6 @@ class DailyKPISerializer(serializers.ModelSerializer):
             'avg_delivery_time_min',
             'inventory_discrepancy_count',
         ]
+        extra_kwargs = {
+            'warehouse': {'write_only': True}
+        }

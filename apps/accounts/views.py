@@ -61,16 +61,19 @@ class VerifyOTPView(views.APIView):
 
         user, created = User.objects.get_or_create(phone=phone)
         
-        if created:
-            user.app_role = login_type
-            user.save()
+        # Auto-provisioning logic based on login type
+        if login_type == 'CUSTOMER' and not hasattr(user, 'customer_profile'):
+            user_signed_up.send(sender=self.__class__, user=user, login_type=login_type)
+        elif login_type == 'RIDER' and not hasattr(user, 'rider_profile'):
+            user_signed_up.send(sender=self.__class__, user=user, login_type=login_type)
+        elif login_type == 'EMPLOYEE' and not hasattr(user, 'employee_profile'):
             user_signed_up.send(sender=self.__class__, user=user, login_type=login_type)
         
         refresh = RefreshToken.for_user(user)
         
         UserSession.objects.create(
             user=user,
-            role=user.app_role,
+            role=login_type,
             client=request.META.get('HTTP_USER_AGENT', 'Unknown'),
             jti=refresh['jti'],
             ip_address=request.META.get('REMOTE_ADDR')

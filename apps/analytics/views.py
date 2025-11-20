@@ -15,6 +15,9 @@ class DailyKPIListView(generics.ListAPIView):
     queryset = DailyKPI.objects.all().select_related('warehouse')
     
     def get_queryset(self):
+        """
+        For more complex filtering, consider using a library like django-filter.
+        """
         queryset = super().get_queryset()
         
         # Simple filters (jaise date range ya warehouse)

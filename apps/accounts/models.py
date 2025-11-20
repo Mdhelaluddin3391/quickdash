@@ -10,20 +10,12 @@ from django.conf import settings
 from apps.utils.models import TimestampedModel
 
 class User(AbstractBaseUser, PermissionsMixin):
-    class Role(models.TextChoices):
-        CUSTOMER = "CUSTOMER", "Customer"
-        RIDER = "RIDER", "Rider"
-        EMPLOYEE = "EMPLOYEE", "Employee"
-        ADMIN = "ADMIN", "Admin"
-
     phone = models.CharField(max_length=15, unique=True, db_index=True)
     email = models.EmailField(null=True, blank=True)
     full_name = models.CharField(max_length=255, blank=True)
     
     profile_picture = models.ImageField(upload_to='profile_pics/', null=True, blank=True)
     fcm_token = models.CharField(max_length=255, null=True, blank=True, help_text="For Push Notifications")
-
-    app_role = models.CharField(max_length=20, choices=Role.choices, default=Role.CUSTOMER)
 
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
@@ -36,15 +28,15 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     @property
     def is_customer(self):
-        return self.app_role == self.Role.CUSTOMER
+        return hasattr(self, 'customer_profile')
 
     @property
     def is_rider(self):
-        return self.app_role == self.Role.RIDER
+        return hasattr(self, 'rider_profile')
 
     @property
     def is_employee(self):
-        return self.app_role == self.Role.EMPLOYEE
+        return hasattr(self, 'employee_profile')
 
     def __str__(self):
         return self.phone

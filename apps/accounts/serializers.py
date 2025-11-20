@@ -29,7 +29,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = User
-        fields = ['id', 'phone', 'full_name', 'email', 'profile_picture', 'app_role']
+        fields = ['id', 'phone', 'full_name', 'email', 'profile_picture']
 
 class RiderProfileSerializer(serializers.ModelSerializer):
     class Meta:
@@ -61,10 +61,6 @@ class AdminCreateEmployeeSerializer(serializers.Serializer):
 class AdminChangeEmployeeStatusSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     status = serializers.CharField(max_length=10) # 'ACTIVE' or 'INACTIVE'
-
-class ChangeUserRoleSerializer(serializers.Serializer):
-    user_id = serializers.UUIDField()
-    role = serializers.ChoiceField(choices=User.Role.choices)
 
 # ===================================================================
 #                      ADMIN PASSWORD RESET SERIALIZERS

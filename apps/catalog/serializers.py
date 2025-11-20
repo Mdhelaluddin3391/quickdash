@@ -25,3 +25,7 @@ class SKUSerializer(serializers.ModelSerializer):
             'unit', 'sale_price', 'cost_price', 
             'image_url', 'is_active', 'metadata'
         ]
+        extra_kwargs = {
+            'category': {'write_only': True},
+            'brand': {'write_only': True}
+        }
