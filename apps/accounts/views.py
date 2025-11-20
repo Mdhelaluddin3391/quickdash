@@ -9,8 +9,8 @@ from django.conf import settings
 import random
 import uuid
 
-from .models import PhoneOTP, UserSession, CustomerProfile, EmployeeProfile
-from apps.delivery.models import RiderProfile
+from .models import PhoneOTP, UserSession
+from .signals import user_signed_up
 from .serializers import (
     RequestOTPSerializer, 
     VerifyOTPSerializer, 
@@ -63,16 +63,8 @@ class VerifyOTPView(views.APIView):
         
         if created:
             user.app_role = login_type
-            if login_type == 'RIDER':
-                user.is_rider = True
-                RiderProfile.objects.create(user=user, rider_code=f"RIDER-{uuid.uuid4().hex[:8].upper()}")
-            elif login_type == 'EMPLOYEE':
-                user.is_employee = True
-                EmployeeProfile.objects.create(user=user, employee_code=f"EMP-{uuid.uuid4().hex[:8].upper()}", role='PICKER', warehouse_code='DEFAULT')
-            else:
-                user.is_customer = True
-                CustomerProfile.objects.create(user=user)
             user.save()
+            user_signed_up.send(sender=self.__class__, user=user, login_type=login_type)
         
         refresh = RefreshToken.for_user(user)
         
@@ -104,6 +96,8 @@ class LogoutView(views.APIView):
     def post(self, request):
         try:
             refresh_token = request.data["refresh"]
+            if not refresh_token:
+                return Response({"error": "Refresh token is required."}, status=status.HTTP_400_BAD_REQUEST)
             token = RefreshToken(refresh_token)
             token.blacklist()
             
@@ -111,5 +105,7 @@ class LogoutView(views.APIView):
             UserSession.objects.filter(jti=token['jti']).update(is_active=False, revoked_at=timezone.now())
             
             return Response({"detail": "Logged out successfully"}, status=status.HTTP_205_RESET_CONTENT)
+        except KeyError:
+            return Response({"error": "Refresh token not provided."}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

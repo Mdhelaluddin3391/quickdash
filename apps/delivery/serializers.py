@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from apps.orders.serializers import OrderSerializer # Order ki details dikhane ke liye
-from .models import DeliveryTask, RiderProfile, RiderEarning
+from apps.accounts.models import RiderProfile
+from .models import DeliveryTask, RiderEarning
 
 class RiderProfileSerializer(serializers.ModelSerializer):
     class Meta:

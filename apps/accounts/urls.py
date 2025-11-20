@@ -15,5 +15,5 @@ urlpatterns = [
     path('me/', MeView.as_view(), name='me'),
     path('logout/', LogoutView.as_view(), name='logout'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-    path("change-role/", ChangeUserRole.as_view()),
+    path("users/<uuid:user_id>/role/", ChangeUserRole.as_view()),
 ]

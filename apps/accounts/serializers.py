@@ -4,16 +4,20 @@ from .models import PhoneOTP, RiderProfile, CustomerProfile, EmployeeProfile
 
 User = get_user_model()
 
+def normalize_phone(phone):
+    # TODO: Implement phone number normalization logic
+    return phone
+
 class RequestOTPSerializer(serializers.Serializer):
     """
-    Phone number accept karne ke liye.
+    Serializer for requesting an OTP.
     """
     phone = serializers.CharField(max_length=15)
     login_type = serializers.ChoiceField(choices=[("CUSTOMER", "Customer"), ("RIDER", "Rider"), ("EMPLOYEE", "Employee")])
 
 class VerifyOTPSerializer(serializers.Serializer):
     """
-    OTP Verify karne ke liye.
+    Serializer for verifying an OTP.
     """
     phone = serializers.CharField(max_length=15)
     otp = serializers.CharField(max_length=6)
@@ -21,11 +25,17 @@ class VerifyOTPSerializer(serializers.Serializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     """
-    User ki basic details return karne ke liye.
+    Serializer for basic user details.
     """
     class Meta:
         model = User
         fields = ['id', 'phone', 'full_name', 'email', 'profile_picture', 'app_role']
+
+class RiderProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RiderProfile
+        fields = ['id', 'on_duty', 'on_delivery', 'rating', 'cash_on_hand']
+
 # ===================================================================
 #                      ADMIN MANAGEMENT SERIALIZERS
 # ===================================================================
@@ -38,19 +48,23 @@ class AdminCreateRiderSerializer(serializers.Serializer):
 
 class AdminChangeRiderStatusSerializer(serializers.Serializer):
     id = serializers.UUIDField()
-    status = serializers.ChoiceField(choices=RiderProfile.STATUS_CHOICES)
+    status = serializers.ChoiceField(choices=RiderProfile.RiderStatus.choices)
 
 class AdminCreateEmployeeSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=15)
     full_name = serializers.CharField(max_length=255)
     employee_code = serializers.CharField(max_length=50)
-    role = serializers.ChoiceField(choices=EmployeeProfile.ROLE_CHOICES)
+    role = serializers.ChoiceField(choices=EmployeeProfile.Role.choices)
     warehouse_code = serializers.CharField(max_length=50)
     def validate_phone(self, value): return normalize_phone(value)
 
 class AdminChangeEmployeeStatusSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     status = serializers.CharField(max_length=10) # 'ACTIVE' or 'INACTIVE'
+
+class ChangeUserRoleSerializer(serializers.Serializer):
+    user_id = serializers.UUIDField()
+    role = serializers.ChoiceField(choices=User.Role.choices)
 
 # ===================================================================
 #                      ADMIN PASSWORD RESET SERIALIZERS

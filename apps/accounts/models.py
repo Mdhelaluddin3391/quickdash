@@ -1,12 +1,13 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
-from django.contrib.gis.db import models as gis_models  # <-- GeoDjango Magic
+from django.contrib.gis.db import models as gis_models
 from django.utils import timezone
 from datetime import timedelta
 import uuid
 from .managers import UserManager
 from django.db import transaction
 from django.conf import settings
+from apps.utils.models import TimestampedModel
 
 class User(AbstractBaseUser, PermissionsMixin):
     class Role(models.TextChoices):
@@ -22,10 +23,6 @@ class User(AbstractBaseUser, PermissionsMixin):
     profile_picture = models.ImageField(upload_to='profile_pics/', null=True, blank=True)
     fcm_token = models.CharField(max_length=255, null=True, blank=True, help_text="For Push Notifications")
 
-    is_customer = models.BooleanField(default=False)
-    is_rider = models.BooleanField(default=False)
-    is_employee = models.BooleanField(default=False)
-
     app_role = models.CharField(max_length=20, choices=Role.choices, default=Role.CUSTOMER)
 
     is_active = models.BooleanField(default=True)
@@ -36,6 +33,18 @@ class User(AbstractBaseUser, PermissionsMixin):
     REQUIRED_FIELDS = []
 
     objects = UserManager()
+
+    @property
+    def is_customer(self):
+        return self.app_role == self.Role.CUSTOMER
+
+    @property
+    def is_rider(self):
+        return self.app_role == self.Role.RIDER
+
+    @property
+    def is_employee(self):
+        return self.app_role == self.Role.EMPLOYEE
 
     def __str__(self):
         return self.phone
@@ -71,6 +80,38 @@ class CustomerProfile(models.Model):
 
     def __str__(self):
         return f"Customer({self.user.phone})"
+
+class RiderProfile(TimestampedModel):
+    """
+    Rider ki details, location, aur status.
+    """
+    class ApprovalStatus(models.TextChoices):
+        PENDING = 'PENDING', 'Pending'
+        APPROVED = 'APPROVED', 'Approved'
+        REJECTED = 'REJECTED', 'Rejected'
+
+    class RiderStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        ACTIVE = "ACTIVE", "Active"
+        SUSPENDED = "SUSPENDED", "Suspended"
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='rider_profile')
+    rider_code = models.CharField(max_length=50, unique=True)
+    approval_status = models.CharField(max_length=10, choices=ApprovalStatus.choices, default=ApprovalStatus.PENDING)
+    status = models.CharField(max_length=16, choices=RiderStatus.choices, default=RiderStatus.PENDING)
+    
+    # GeoDjango Location
+    current_location = gis_models.PointField(srid=4326, null=True, blank=True)
+    last_location_update = models.DateTimeField(null=True, blank=True)
+    
+    on_duty = models.BooleanField(default=False, db_index=True)
+    on_delivery = models.BooleanField(default=False, db_index=True)
+    vehicle_type = models.CharField(max_length=32, null=True, blank=True)
+    rating = models.DecimalField(max_digits=3, decimal_places=2, default=5.0)
+    cash_on_hand = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+
+    def __str__(self):
+        return f"Rider: {self.user.username} ({self.status})"
 
 class EmployeeProfile(models.Model):
     class Role(models.TextChoices):

@@ -31,7 +31,9 @@ class DailyKPI(models.Model):
         verbose_name = "Daily KPI"
         verbose_name_plural = "Daily KPIs"
         ordering = ['-date']
-        unique_together = ('date', 'warehouse')
+        constraints = [
+            models.UniqueConstraint(fields=['date', 'warehouse'], name='unique_daily_kpi_for_warehouse')
+        ]
 
     def __str__(self):
         return f"KPI for {self.date} @ {self.warehouse.code if self.warehouse else 'Overall'}"

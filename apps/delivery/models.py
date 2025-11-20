@@ -9,44 +9,12 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 
 # Apps Imports (Aapke structure ke hisaab se)
 from apps.orders.models import Order
+from apps.accounts.models import RiderProfile
 from apps.utils.models import TimestampedModel
 
 logger = logging.getLogger(__name__)
 
-# ==========================================
-# 1. RIDER PROFILE & AUTH
-# ==========================================
-class RiderProfile(TimestampedModel):
-    """
-    Rider ki details, location, aur status.
-    """
-    class ApprovalStatus(models.TextChoices):
-        PENDING = 'PENDING', 'Pending'
-        APPROVED = 'APPROVED', 'Approved'
-        REJECTED = 'REJECTED', 'Rejected'
 
-    class RiderStatus(models.TextChoices):
-        PENDING = "PENDING", "Pending"
-        ACTIVE = "ACTIVE", "Active"
-        SUSPENDED = "SUSPENDED", "Suspended"
-
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='rider_profile')
-    rider_code = models.CharField(max_length=50, unique=True)
-    approval_status = models.CharField(max_length=10, choices=ApprovalStatus.choices, default=ApprovalStatus.PENDING)
-    status = models.CharField(max_length=16, choices=RiderStatus.choices, default=RiderStatus.PENDING)
-    
-    # GeoDjango Location
-    current_location = gis_models.PointField(srid=4326, null=True, blank=True)
-    last_location_update = models.DateTimeField(null=True, blank=True)
-    
-    on_duty = models.BooleanField(default=False, db_index=True)
-    on_delivery = models.BooleanField(default=False, db_index=True)
-    vehicle_type = models.CharField(max_length=32, null=True, blank=True)
-    rating = models.DecimalField(max_digits=3, decimal_places=2, default=5.0)
-    cash_on_hand = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-
-    def __str__(self):
-        return f"Rider: {self.user.username} ({self.status})"
 
 # ==========================================
 # 2. DELIVERY TASK (Main Logic)

@@ -7,8 +7,8 @@ from django.db import transaction
 
 # Permissions (Niche Step 8 mein banayenge)
 from apps.accounts.permissions import IsRider 
-
-from .models import DeliveryTask, RiderProfile, RiderEarning
+from apps.accounts.models import RiderProfile
+from .models import DeliveryTask, RiderEarning
 from .serializers import DeliveryTaskSerializer, RiderEarningSerializer, RiderProfileSerializer
 
 class RiderDashboardView(views.APIView):
