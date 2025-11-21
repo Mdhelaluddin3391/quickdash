@@ -19,56 +19,17 @@ from .serializers import (
     CreateOrderSerializer,
     PaymentVerificationSerializer,
 )
-from .signals import payment_succeeded
+from rest_framework import viewsets
+from rest_framework import filters
+from .serializers import OrderSerializer, OrderListSerializer
+from .models import Order
+from apps.payments.signals import payment_succeeded
+from .services import process_successful_payment
 
 logger = logging.getLogger(__name__)
 
 
-def process_successful_payment(order_id):
-    """
-    Confirms an order and triggers the warehouse process.
-    """
-    try:
-        with transaction.atomic():
-            order = Order.objects.select_for_update().get(pk=order_id, status="pending")
-            
-            order.status = "confirmed"
-            order.payment_status = "paid"
-            order.save()
-
-            payment = order.payments.first()
-            if payment:
-                payment.status = "successful"
-                payment.save()
-
-            DeliveryTask.objects.create(order=order, status=DeliveryTask.DeliveryStatus.PENDING_ASSIGNMENT)
-            Cart.objects.filter(customer=order.customer).delete()
-
-            if order.warehouse:
-                picking_task = PickingTask.objects.create(
-                    order_id=str(order.id),
-                    warehouse=order.warehouse,
-                    status='PENDING'
-                )
-                for item in order.items.all():
-                    PickItem.objects.create(
-                        task=picking_task,
-                        sku=item.sku,
-                        qty_to_pick=item.quantity
-                    )
-                logger.info(f"WMS Task created for Order {order_id}")
-            
-            # Trigger signal for other apps
-            payment_succeeded.send(sender=Order, order=order)
-            
-            return True, "Success"
-
-    except Order.DoesNotExist:
-        logger.warning(f"Order {order_id} not found or already processed.")
-        return False, "Order not found."
-    except Exception as e:
-        logger.exception(f"Payment processing failed for order {order_id}: {e}")
-        return False, str(e)
+# moved payment confirmation logic to `services.process_successful_payment`
 
 
 
@@ -87,46 +48,28 @@ class CheckoutView(generics.GenericAPIView):
         data = serializer.validated_data
         payment_method = data.get('payment_method', 'RAZORPAY')
         
+        # Delegate order creation to service layer
         try:
-            cart = Cart.objects.get(customer=user)
-            if not cart.items.exists():
-                return Response({"error": "Cart is empty"}, status=status.HTTP_400_BAD_REQUEST)
-        except Cart.DoesNotExist:
-             return Response({"error": "Cart not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        item_subtotal = cart.total_amount
-        delivery_fee = settings.BASE_DELIVERY_FEE
-        final_total = item_subtotal + delivery_fee
-        
-        try:
-            with transaction.atomic():
-                order = Order.objects.create(
-                    customer=user,
-                    warehouse_id=data.get('warehouse_id'),
-                    delivery_address_json=data.get('delivery_address_json'),
-                    total_amount=item_subtotal,
-                    final_amount=final_total,
-                    status="pending",
-                    payment_status="pending"
-                )
-                
-                items_to_create = [
-                    OrderItem(
-                        order=order,
-                        sku=c_item.sku,
-                        quantity=c_item.quantity,
-                        unit_price=c_item.sku.sale_price
-                    ) for c_item in cart.items.all()
-                ]
-                OrderItem.objects.bulk_create(items_to_create)
-
+            order, payment, err = create_order_from_cart(
+                user=user,
+                warehouse_id=data.get('warehouse_id'),
+                delivery_address_json=data.get('delivery_address_json'),
+                delivery_lat=data.get('delivery_lat'),
+                delivery_lng=data.get('delivery_lng'),
+                payment_method=payment_method,
+            )
+            if err:
+                return Response({"error": err}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.exception(f"Error creating order for user {user.id if user else 'unknown'}: {e}")
+            logger.exception("Error creating order for user %s: %s", user.id if user else 'unknown', e)
             return Response({"error": "Could not create order."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         if payment_method == 'COD':
-            Payment.objects.create(order=order, payment_method='COD', amount=final_total)
-            success, msg = process_successful_payment(order.id)
+            # For COD we created a payment in service; if not present, create one
+            if not payment:
+                from apps.payments.models import Payment as PaymentModel
+                payment = PaymentModel.objects.create(order=order, payment_method='COD', amount=order.final_amount)
+            success, msg = process_successful_payment(order)
             if success:
                 return Response({"message": "Order Confirmed (COD)", "order_id": order.id}, status=status.HTTP_201_CREATED)
             return Response({"error": msg}, status=status.HTTP_400_BAD_REQUEST)
@@ -135,22 +78,22 @@ class CheckoutView(generics.GenericAPIView):
             try:
                 client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
                 rzp_order = client.order.create({
-                    'amount': int(final_total * 100),
+                    'amount': int(order.final_amount * 100),
                     'currency': 'INR',
                     'receipt': str(order.id)
                 })
-                
+
                 Payment.objects.create(
-                    order=order, 
+                    order=order,
                     payment_method='RAZORPAY',
-                    amount=final_total,
+                    amount=order.final_amount,
                     gateway_order_id=rzp_order['id']
                 )
-                
+
                 return Response({
                     "razorpay_order_id": rzp_order['id'],
                     "razorpay_key": settings.RAZORPAY_KEY_ID,
-                    "amount": int(final_total * 100),
+                    "amount": int(order.final_amount * 100),
                     "order_id": order.id
                 })
             except Exception as e:
@@ -180,7 +123,7 @@ class PaymentVerificationView(APIView):
             payment.transaction_id = data['razorpay_payment_id']
             payment.save()
             
-            success, msg = process_successful_payment(payment.order.id)
+            success, msg = process_successful_payment(payment.order)
             if success:
                 return Response({"status": "Payment Successful, Order Confirmed"}, status=status.HTTP_200_OK)
             else:
@@ -192,3 +135,25 @@ class PaymentVerificationView(APIView):
         except Exception as e:
             logger.exception(f"Payment verification failed: {e}")
             return Response({"error": "An unexpected error occurred"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class OrderViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only endpoints for Orders: list and retrieve for customers."""
+    queryset = Order.objects.all().select_related('customer', 'warehouse')
+    serializer_class = OrderSerializer
+    filter_backends = [filters.OrderingFilter, filters.SearchFilter]
+    ordering_fields = ['created_at', 'final_amount']
+    search_fields = ['id', 'status']
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return OrderListSerializer
+        return OrderSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.user
+        if user and user.is_authenticated:
+            # Customers only see their orders
+            return qs.filter(customer=user)
+        return qs.none()

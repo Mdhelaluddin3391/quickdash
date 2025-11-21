@@ -2,7 +2,7 @@ from celery import shared_task
 import razorpay
 import logging
 from django.conf import settings
-from .models import Payment
+from apps.payments.models import Payment
 
 logger = logging.getLogger(__name__)
 
