@@ -45,3 +45,27 @@ def process_razorpay_refund_task(payment_id, is_partial_refund=False, amount=Non
         logger.exception(f"Refund Failed for Payment {payment_id}: {e}")
         # Retry logic can be added here (e.g., self.retry())
         return f"Refund Failed: {e}"
+
+
+@shared_task(name="auto_cancel_unpaid_orders")
+def auto_cancel_unpaid_orders():
+    """Auto-cancel orders stuck in pending/payment states beyond allowed window."""
+    from django.utils import timezone
+    from datetime import timedelta
+    from apps.orders.models import Order
+    from apps.orders.services import cancel_order
+
+    cutoff_minutes = getattr(__import__('django.conf').conf.settings, 'AUTO_CANCEL_PENDING_MINUTES', 30)
+    cutoff = timezone.now() - timedelta(minutes=cutoff_minutes)
+
+    orders = Order.objects.filter(status__in=['pending', 'pending_payment'], created_at__lte=cutoff)
+    count = 0
+    for order in orders:
+        ok, msg = cancel_order(order, cancelled_by='SYSTEM', reason='Auto-cancel unpaid order')
+        if ok:
+            count += 1
+            logger.info(f"Auto-cancelled order {order.id}")
+        else:
+            logger.warning(f"Failed to auto-cancel order {order.id}: {msg}")
+
+    return f"Auto-cancelled {count} orders"

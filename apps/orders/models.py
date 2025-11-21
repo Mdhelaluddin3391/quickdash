@@ -134,9 +134,22 @@ class OrderTimeline(models.Model):
     status = models.CharField(max_length=30, choices=ORDER_STATUS_CHOICES)
     timestamp = models.DateTimeField(auto_now_add=True)
     notes = models.TextField(blank=True, default="")
+    meta = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     
     class Meta:
         ordering = ['timestamp']
+
+
+class OrderCancellation(models.Model):
+    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="cancellation")
+    reason_code = models.CharField(max_length=50)
+    reason_text = models.TextField(blank=True)
+    cancelled_by = models.CharField(max_length=20, choices=[('CUSTOMER','CUSTOMER'),('SYSTEM','SYSTEM'),('OPS','OPS')])
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Cancellation for {self.order_id} by {self.cancelled_by}"
 
 class Cart(models.Model):
     customer = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="cart")
