@@ -32,6 +32,7 @@ class CreateOrderSerializer(serializers.Serializer):
     # FIX: Add optional lat/lng fields
     delivery_lat = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, allow_null=True)
     delivery_lng = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, allow_null=True)
+    payment_method = serializers.ChoiceField(choices=(('RAZORPAY', 'Razorpay'), ('COD', 'Cash on Delivery')), required=False, default='RAZORPAY')
 
 
     def validate_warehouse_id(self, value):

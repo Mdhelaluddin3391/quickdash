@@ -19,6 +19,7 @@ from .serializers import (
     CreateOrderSerializer,
     PaymentVerificationSerializer,
 )
+from .services import create_order_from_cart
 from rest_framework import viewsets
 from rest_framework import filters
 from .serializers import OrderSerializer, OrderListSerializer
@@ -157,3 +158,45 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
             # Customers only see their orders
             return qs.filter(customer=user)
         return qs.none()
+
+
+
+class CartView(APIView):
+    permission_classes = [IsAuthenticated, IsCustomer]
+
+    def get(self, request):
+        # Return or create cart for user
+        cart, _ = Cart.objects.get_or_create(customer=request.user)
+        from .serializers import CartSerializer
+        return Response(CartSerializer(cart).data)
+
+
+class AddToCartView(APIView):
+    permission_classes = [IsAuthenticated, IsCustomer]
+
+    def post(self, request):
+        from .serializers import AddToCartSerializer, CartSerializer
+        serializer = AddToCartSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        cart, _ = Cart.objects.get_or_create(customer=request.user)
+        sku_id = data['sku_id']
+        qty = data['quantity']
+
+        # import SKU lazily
+        from apps.catalog.models import SKU
+        try:
+            sku = SKU.objects.get(id=sku_id)
+        except SKU.DoesNotExist:
+            return Response({'error': 'SKU not found'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ci, created = CartItem.objects.get_or_create(cart=cart, sku=sku, defaults={'quantity': max(0, qty)})
+        if not created:
+            if qty == 0:
+                ci.delete()
+            else:
+                ci.quantity = qty
+                ci.save()
+
+        return Response(CartSerializer(cart).data, status=status.HTTP_200_OK)

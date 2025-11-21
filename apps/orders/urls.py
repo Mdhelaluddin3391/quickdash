@@ -1,13 +1,17 @@
 # apps/orders/urls.py
 from rest_framework import routers
-from .views import CheckoutView
-from .views import OrderViewSet
+from django.urls import path
+from .views import CheckoutView, OrderViewSet, CartView, AddToCartView, PaymentVerificationView
 
 router = routers.DefaultRouter()
 router.register(r'', OrderViewSet, basename='orders')
 
 urlpatterns = router.urls + [
-    # Keep checkout endpoint separate
-    # POST /api/v1/orders/create/
+    # Checkout & payment
     path('create/', CheckoutView.as_view(), name='create-order'),
+    path('payment/verify/', PaymentVerificationView.as_view(), name='payment-verify'),
+
+    # Cart endpoints
+    path('cart/', CartView.as_view(), name='cart-detail'),
+    path('cart/add/', AddToCartView.as_view(), name='cart-add'),
 ]

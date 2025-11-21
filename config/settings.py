@@ -207,6 +207,19 @@ MAX_DELIVERY_FEE = config('MAX_DELIVERY_FEE', default='100.00', cast=Decimal)
 ORDER_CANCELLATION_WINDOW = config('ORDER_CANCELLATION_WINDOW', default=300, cast=int) # 5 mins
 RIDER_BASE_FEE = config('RIDER_BASE_FEE', default='30.00', cast=Decimal)
 
+# Orders auto-cancel window (minutes) — used by Celery task
+AUTO_CANCEL_PENDING_MINUTES = config('AUTO_CANCEL_PENDING_MINUTES', default=30, cast=int)
+
+# Celery beat schedule: run auto-cancel task every X minutes (configurable)
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = globals().get('CELERY_BEAT_SCHEDULE', {})
+CELERY_BEAT_SCHEDULE.update({
+    'orders-auto-cancel-every-5-mins': {
+        'task': 'auto_cancel_unpaid_orders',
+        'schedule': crontab(minute='*/5'),
+    }
+})
+
 # GeoDjango (Linux path fix)
 if os.name == 'posix':
     GDAL_LIBRARY_PATH = os.getenv('GDAL_LIBRARY_PATH', '/usr/lib/x86_64-linux-gnu/libgdal.so')
