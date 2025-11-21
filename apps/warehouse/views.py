@@ -1,72 +1,488 @@
-from rest_framework import viewsets, views
+# apps/warehouse/views.py
+import logging
+
+from django.db import transaction
+from django.shortcuts import get_object_or_404
+
+from rest_framework import viewsets, views, generics, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db import transaction
-from django.utils import timezone
 
-# Apps Imports
-# Note: `IsStoreStaff` not present in `apps.accounts.permissions`; use `IsAuthenticated` or
-# employee-level permissions instead.
-from .models import PickingTask, PickItem
-from .serializers import PickingTaskSerializer
-import logging
+from .models import (
+    Warehouse,
+    BinInventory,
+    PickingTask,
+    PickItem,
+    PackingTask,
+    GRN,
+)
+from .serializers import (
+    WarehouseSerializer,
+    BinInventorySerializer,
+    PickingTaskSerializer,
+    PackingTaskSerializer,
+    DispatchRecordSerializer,
+    ShortPickResolveSerializer,
+    FulfillmentCancelSerializer,
+    CreateGRNSerializer,
+    GRNSerializer,
+    PlacePutawaySerializer,
+    PutawayTaskSerializer,
+    CreateCycleCountSerializer,
+    CycleCountTaskSerializer,
+    RecordCycleCountSerializer,
+    DispatchOTPVerifySerializer,
+)
+from .permissions import (
+    PickerOnly,
+    PackerOnly,
+    WarehouseManagerOnly,
+    AnyEmployee,
+)
+from .services import (
+    scan_pick,
+    mark_pickitem_skipped,
+    complete_packing,
+    resolve_skip_as_shortpick,
+    admin_fulfillment_cancel,
+    create_grn_and_putaway,
+    place_putaway_item,
+    create_cycle_count,
+    record_cycle_count_item,
+    verify_dispatch_otp,
+)
 
 logger = logging.getLogger(__name__)
 
-class PickerTaskViewSet(viewsets.ModelViewSet):
-    """
-    Picker ke liye APIs:
-    1. GET /api/warehouse/tasks/ -> Mere assigned tasks dikhao
-    2. POST /api/warehouse/tasks/{id}/complete_pick/ -> Task complete karo
-    """
-    serializer_class = PickingTaskSerializer
-    permission_classes = [IsAuthenticated] # Add IsStoreStaff if available
 
-    def get_queryset(self):
-        # Sirf wahi tasks dikhao jo is user (picker) ko assigned hain
-        user = self.request.user
-        return PickingTask.objects.filter(picker=user).order_by('-created_at')
+# =========================================================
+# WAREHOUSE STRUCTURE
+# =========================================================
 
-class ScanItemView(views.APIView):
+class WarehouseViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    API: POST /api/warehouse/scan-item/
-    Picker jab barcode scan karega toh yeh API call hogi.
+    Read-only list/detail of warehouses.
+    Managers can later get write endpoints if needed.
     """
+    queryset = Warehouse.objects.filter(is_active=True)
+    serializer_class = WarehouseSerializer
     permission_classes = [IsAuthenticated]
 
+
+class BinInventoryList(generics.ListAPIView):
+    """
+    GET /api/v1/wms/inventory/bin/?warehouse=<id>&sku=<id>
+    """
+    serializer_class = BinInventorySerializer
+    permission_classes = [IsAuthenticated, WarehouseManagerOnly]
+
+    def get_queryset(self):
+        qs = BinInventory.objects.select_related(
+            "bin__zone__warehouse",
+            "sku",
+        )
+        wh = self.request.query_params.get("warehouse")
+        sku = self.request.query_params.get("sku")
+        if wh:
+            qs = qs.filter(bin__zone__warehouse_id=wh)
+        if sku:
+            qs = qs.filter(sku_id=sku)
+        return qs.order_by("bin__bin_code")
+
+
+# =========================================================
+# PICKING TASKS (PICKER APP)
+# =========================================================
+
+class PickingTaskViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Picker ke liye:
+    - /api/v1/wms/picking/tasks/  -> mere assigned tasks
+    """
+    serializer_class = PickingTaskSerializer
+    permission_classes = [IsAuthenticated, PickerOnly]
+
+    def get_queryset(self):
+        user = self.request.user
+        return PickingTask.objects.filter(picker=user).order_by("-created_at")
+
+
+class ScanPickAPIView(views.APIView):
+    """
+    POST /api/v1/wms/picking/scan/
+    body: { "task_id": "...", "pick_item_id": "...", "qty": 1 }
+    """
+    permission_classes = [IsAuthenticated, PickerOnly]
+
     def post(self, request):
-        task_id = request.data.get('task_id')
-        sku_code = request.data.get('sku_code') # Barcode scan se aaya hua
-        location_code = request.data.get('location_code') # Optional validation
+        task_id = request.data.get("task_id")
+        pick_item_id = request.data.get("pick_item_id")
+        qty = request.data.get("qty", 1)
+
+        if not (task_id and pick_item_id):
+            return Response(
+                {"detail": "task_id and pick_item_id required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             with transaction.atomic():
-                # 1. Item dhoondo jo pending hai
-                pick_item = PickItem.objects.select_for_update().filter(
-                    task_id=task_id,
-                    sku__sku_code=sku_code,
-                    picked_qty__lt=models.F('qty_to_pick')
-                ).first()
-
-                if not pick_item:
-                    return Response({"error": "Wrong item scanned or item already picked!"}, status=400)
-
-                # 2. Pick Confirm karo
-                pick_item.picked_qty += 1
-                pick_item.save()
-
-                # 3. Check karo agar poora task complete ho gaya
-                task = pick_item.task
-                remaining_items = task.items.filter(picked_qty__lt=models.F('qty_to_pick')).exists()
-                
-                if not remaining_items:
-                    task.status = PickingTask.TaskStatus.COMPLETED
-                    task.completed_at = timezone.now()
-                    task.save()
-                    return Response({"message": "Item Scanned. TASK COMPLETED! 🚀"})
-
-                return Response({"message": "Item Scanned Successfully."})
-
+                item = scan_pick(task_id, pick_item_id, qty, request.user)
         except Exception as e:
-            logger.exception("Error scanning item for task %s SKU %s: %s", task_id, sku_code, e)
-            return Response({"error": str(e)}, status=400)
+            logger.exception("scan_pick failed: %s", e)
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "detail": "Scan recorded.",
+                "pick_item_id": str(item.id),
+                "picked_qty": item.picked_qty,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class MarkPickItemSkippedAPIView(views.APIView):
+    """
+    POST /api/v1/wms/picking/skip/
+    body: { "task_id": "...", "pick_item_id": "...", "reason": "..." }
+    """
+    permission_classes = [IsAuthenticated, PickerOnly]
+
+    def post(self, request):
+        task_id = request.data.get("task_id")
+        pick_item_id = request.data.get("pick_item_id")
+        reason = request.data.get("reason") or ""
+
+        if not (task_id and pick_item_id and reason):
+            return Response(
+                {"detail": "task_id, pick_item_id and reason required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():
+                skip = mark_pickitem_skipped(
+                    task_id,
+                    pick_item_id,
+                    request.user,
+                    reason,
+                    reopen_for_picker=False,
+                )
+        except Exception as e:
+            logger.exception("mark_pickitem_skipped failed: %s", e)
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {"detail": "Item skipped.", "skip_id": str(skip.id)},
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# PACKING (PACKER APP)
+# =========================================================
+
+class CompletePackingAPIView(views.APIView):
+    """
+    POST /api/v1/wms/packing/complete/
+    body: { "packing_task_id": "..." }
+    Returns DispatchRecord.
+    """
+    permission_classes = [IsAuthenticated, PackerOnly]
+
+    def post(self, request):
+        packing_task_id = request.data.get("packing_task_id")
+        if not packing_task_id:
+            return Response(
+                {"detail": "packing_task_id required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():
+                dispatch = complete_packing(packing_task_id, request.user)
+        except Exception as e:
+            logger.exception("complete_packing failed: %s", e)
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            DispatchRecordSerializer(dispatch).data,
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# DISPATCH OTP VERIFY (RIDER PICKUP)
+# =========================================================
+
+class DispatchOTPVerifyAPIView(views.APIView):
+    """
+    POST /api/v1/wms/dispatch/verify-otp/
+    body: { "dispatch_id": "<uuid>", "otp": "1234" }
+    """
+    permission_classes = [IsAuthenticated, AnyEmployee]
+
+    def post(self, request):
+        serializer = DispatchOTPVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            with transaction.atomic():
+                dispatch = verify_dispatch_otp(
+                    data["dispatch_id"],
+                    data["otp"],
+                    user=request.user,
+                )
+        except ValidationError as ve:
+            # Django ValidationError -> DRF response
+            return Response({"detail": str(ve)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.exception("verify_dispatch_otp failed: %s", e)
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "detail": "OTP verified. Order handed over to rider.",
+                "dispatch": DispatchRecordSerializer(dispatch).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# MANAGER RESOLUTION (SHORT PICK / FC)
+# =========================================================
+
+class AdminResolveShortPickAPIView(views.APIView):
+    """
+    Manager resolves short-pick:
+    POST /api/v1/wms/resolution/shortpick/
+    body: { "skip_id": int, "note": "..." }
+    """
+    permission_classes = [IsAuthenticated, WarehouseManagerOnly]
+
+    def post(self, request):
+        serializer = ShortPickResolveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        skip_id = serializer.validated_data["skip_id"]
+        note = serializer.validated_data["note"]
+
+        from .models import PickSkip
+
+        skip = get_object_or_404(PickSkip, id=skip_id)
+        try:
+            with transaction.atomic():
+                spi = resolve_skip_as_shortpick(skip, request.user, note)
+        except Exception as e:
+            logger.exception("resolve_skip_as_shortpick failed: %s", e)
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "detail": "Short-pick resolved.",
+                "short_picked_qty": spi.short_picked_qty,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminFulfillmentCancelAPIView(views.APIView):
+    """
+    Manager cancels remaining qty for a pick item:
+    POST /api/v1/wms/resolution/fc/
+    body: { "pick_item_id": int, "reason": "..." }
+    """
+    permission_classes = [IsAuthenticated, WarehouseManagerOnly]
+
+    def post(self, request):
+        serializer = FulfillmentCancelSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        pick_item_id = serializer.validated_data["pick_item_id"]
+        reason = serializer.validated_data["reason"]
+
+        pick_item = get_object_or_404(PickItem, id=pick_item_id)
+        try:
+            with transaction.atomic():
+                fc_record = admin_fulfillment_cancel(
+                    pick_item,
+                    request.user,
+                    reason,
+                )
+        except Exception as e:
+            logger.exception("admin_fulfillment_cancel failed: %s", e)
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "detail": "Fulfillment item cancelled.",
+                "fc_id": str(fc_record.id),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# INBOUND / PUTAWAY
+# =========================================================
+
+class CreateGRNAPIView(views.APIView):
+    """
+    Manager creates GRN + putaway task:
+    POST /api/v1/wms/inbound/grn/
+    """
+    permission_classes = [IsAuthenticated, WarehouseManagerOnly]
+
+    def post(self, request):
+        serializer = CreateGRNSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        wh_id = serializer.validated_data["warehouse_id"]
+        grn_number = serializer.validated_data["grn_number"]
+        items = serializer.validated_data["items"]
+
+        try:
+            with transaction.atomic():
+                grn, putaway_task = create_grn_and_putaway(
+                    wh_id,
+                    grn_number,
+                    items,
+                    created_by=request.user,
+                )
+        except Exception as e:
+            logger.exception("create_grn_and_putaway failed: %s", e)
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = {
+            "grn": GRNSerializer(grn).data,
+            "putaway_task": PutawayTaskSerializer(putaway_task).data,
+        }
+        response = Response(data, status=status.HTTP_201_CREATED)
+        # Idempotency middleware ke liye flag
+        response["X-STORE-IDEMPOTENCY"] = "1"
+        return response
+
+
+class PlacePutawayItemView(views.APIView):
+    """
+    POST /api/v1/wms/inbound/putaway/place/
+    """
+    permission_classes = [IsAuthenticated, AnyEmployee]
+
+    def post(self, request):
+        serializer = PlacePutawaySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        data = serializer.validated_data
+        try:
+            with transaction.atomic():
+                item = place_putaway_item(
+                    data["task_id"],
+                    data["putaway_item_id"],
+                    data["bin_id"],
+                    data["qty_placed"],
+                    request.user,
+                )
+        except Exception as e:
+            logger.exception("place_putaway_item failed: %s", e)
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {"detail": "Putaway updated.", "item_id": str(item.id)},
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# CYCLE COUNT
+# =========================================================
+
+class CycleCountTaskViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Manager/Auditor can list CC tasks for their warehouses.
+    Creation via separate API.
+    """
+    serializer_class = CycleCountTaskSerializer
+    permission_classes = [IsAuthenticated, WarehouseManagerOnly]
+
+    def get_queryset(self):
+        # basic implementation: all tasks
+        return CycleCountTaskSerializer.Meta.model.objects.all().order_by("-created_at")
+
+
+class CreateCycleCountView(views.APIView):
+    """
+    POST /api/v1/wms/cycle-count/create/
+    body: { "warehouse_id": int, "sample_bins": [int, ...] }
+    """
+    permission_classes = [IsAuthenticated, WarehouseManagerOnly]
+
+    def post(self, request):
+        serializer = CreateCycleCountSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        wh_id = serializer.validated_data["warehouse_id"]
+        sample_bins = serializer.validated_data.get("sample_bins") or None
+
+        try:
+            with transaction.atomic():
+                cc_task = create_cycle_count(wh_id, request.user, sample_bins)
+        except Exception as e:
+            logger.exception("create_cycle_count failed: %s", e)
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            CycleCountTaskSerializer(cc_task).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class RecordCycleCountView(views.APIView):
+    """
+    POST /api/v1/wms/cycle-count/record/
+    """
+    permission_classes = [IsAuthenticated, WarehouseManagerOnly]
+
+    def post(self, request):
+        serializer = RecordCycleCountSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            with transaction.atomic():
+                cc_item = record_cycle_count_item(
+                    data["task_id"],
+                    data["bin_id"],
+                    data["sku_id"],
+                    data["counted_qty"],
+                    request.user,
+                )
+        except Exception as e:
+            logger.exception("record_cycle_count_item failed: %s", e)
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "detail": "Cycle count recorded.",
+                "cc_item_id": str(cc_item.id),
+                "adjusted": cc_item.adjusted,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# COMPATIBLE FUNCTION-STYLE VIEWS FOR urls.py
+# =========================================================
+
+# urls.py dynamic resolver names expect these:
+
+scan_pick_view = ScanPickAPIView.as_view()
+mark_pickitem_skipped_view = MarkPickItemSkippedAPIView.as_view()
+complete_packing_view = CompletePackingAPIView.as_view()
+place_putaway_item_view = PlacePutawayItemView.as_view()
+record_cycle_count_view = RecordCycleCountView.as_view()
+dispatch_otp_verify_view = DispatchOTPVerifyAPIView.as_view()
