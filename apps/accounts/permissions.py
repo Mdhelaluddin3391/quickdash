@@ -1,7 +1,6 @@
+# apps/accounts/permissions.py
 from rest_framework.permissions import BasePermission
 from .models import EmployeeProfile
-
-
 
 
 class IsCustomer(BasePermission):
@@ -9,9 +8,10 @@ class IsCustomer(BasePermission):
     Checks if the user has a customer profile.
     """
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
             return False
-        return hasattr(request.user, 'customer_profile')
+        return hasattr(user, 'customer_profile')
 
 
 class IsRider(BasePermission):
@@ -19,20 +19,22 @@ class IsRider(BasePermission):
     Checks if the user has a rider profile.
     """
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
             return False
-        return hasattr(request.user, 'rider_profile')
+        return hasattr(user, 'rider_profile')
 
 
 class IsAdmin(BasePermission):
     """
-    This permission is for Admin Panel (is_staff) login.
+    Admin Panel (is_staff) login.
     """
     def has_permission(self, request, view):
-        return request.user and request.user.is_authenticated and request.user.is_staff
+        user = getattr(request, "user", None)
+        return bool(user and user.is_authenticated and user.is_staff)
 
 
-# ========== Employee-Level Permissions (Naye waale) ==========
+# ========== Employee-Level Permissions (Warehouse / Ops) ==========
 
 def _get_employee_role(user):
     """
@@ -59,17 +61,17 @@ class IsEmployee(BasePermission):
 
 class IsPickerEmployee(BasePermission):
     def has_permission(self, request, view):
-        return _get_employee_role(request.user) == "PICKER"
+        return _get_employee_role(request.user) == EmployeeProfile.Role.PICKER
 
 
 class IsPackerEmployee(BasePermission):
     def has_permission(self, request, view):
-        return _get_employee_role(request.user) == "PACKER"
+        return _get_employee_role(request.user) == EmployeeProfile.Role.PACKER
 
 
 class IsAuditorEmployee(BasePermission):
     def has_permission(self, request, view):
-        return _get_employee_role(request.user) == "AUDITOR"
+        return _get_employee_role(request.user) == EmployeeProfile.Role.AUDITOR
 
 
 class IsWarehouseManagerEmployee(BasePermission):
@@ -78,7 +80,11 @@ class IsWarehouseManagerEmployee(BasePermission):
     """
     def has_permission(self, request, view):
         role = _get_employee_role(request.user)
-        return role in ("MANAGER", "SUPERVISOR", "ADMIN")
+        return role in (
+            EmployeeProfile.Role.MANAGER,
+            EmployeeProfile.Role.SUPERVISOR,
+            EmployeeProfile.Role.ADMIN,
+        )
 
 
 class IsAdminEmployee(BasePermission):
@@ -86,4 +92,4 @@ class IsAdminEmployee(BasePermission):
     Strict warehouse admin (jaise FC issue karna)
     """
     def has_permission(self, request, view):
-        return _get_employee_role(request.user) == "ADMIN"
+        return _get_employee_role(request.user) == EmployeeProfile.Role.ADMIN
