@@ -1,52 +1,93 @@
 # apps/payments/services.py
+import logging
+from decimal import Decimal
+
 import razorpay
 from django.conf import settings
 
-# Client Initialize
-client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+from .models import Payment, Refund
 
-def create_razorpay_order(amount, currency="INR"):
+logger = logging.getLogger(__name__)
+
+# Single shared client
+try:
+    if settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET:
+        razorpay_client = razorpay.Client(
+            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
+        )
+        logger.info("Razorpay client initialized in payments.services")
+    else:
+        razorpay_client = None
+        logger.error("Razorpay keys missing in settings.")
+except Exception as e:
+    razorpay_client = None
+    logger.error(f"Failed to initialize Razorpay client: {e}")
+
+
+def create_razorpay_order(order, amount: Decimal, currency: str = "INR") -> str:
     """
-    Order ID generate karta hai jo frontend par chahiye hota hai.
-    Amount paise mein hona chahiye (100 INR = 10000 paise).
+    Create a Razorpay order ID for a given amount.
+    Amount must be in rupees (Decimal); we convert to paise.
     """
+    if not razorpay_client:
+        raise RuntimeError("Razorpay client is not configured.")
+
     data = {
         "amount": int(amount * 100),
         "currency": currency,
-        "payment_capture": 1 # Auto capture
+        "receipt": str(order.id),
+        "payment_capture": 1,
+        "notes": {
+            "order_id": str(order.id),
+            "customer_phone": getattr(order.customer, "phone", ""),
+        },
     }
-    order = client.order.create(data=data)
-    return order['id']
+    rp_order = razorpay_client.order.create(data=data)
+    return rp_order["id"]
 
-def verify_payment_signature(params_dict):
+
+def verify_payment_signature(order_id: str, gateway_order_id: str, gateway_payment_id: str, gateway_signature: str) -> bool:
     """
-    Signature verify karta hai taaki koi fake payment na kar sake.
+    Verify signature coming from Razorpay checkout.
     """
+    if not razorpay_client:
+        raise RuntimeError("Razorpay client is not configured.")
+
+    params_dict = {
+        "razorpay_order_id": gateway_order_id,
+        "razorpay_payment_id": gateway_payment_id,
+        "razorpay_signature": gateway_signature,
+    }
     try:
-        client.utility.verify_payment_signature(params_dict)
+        razorpay_client.utility.verify_payment_signature(params_dict)
         return True
     except razorpay.errors.SignatureVerificationError:
         return False
 
-def initiate_refund(payment_obj):
+
+def initiate_refund(refund: Refund) -> tuple[bool, str | dict]:
     """
-    Agar order cancel ho, toh paise wapas bhejne ka logic.
+    Call Razorpay refund API for a given Refund record.
     """
-    if not payment_obj.transaction_id:
-        return False, "No transaction ID found."
-        
+    payment = refund.payment
+    if payment.payment_method != Payment.PaymentMethod.RAZORPAY:
+        return False, "Only Razorpay payments support online refunds."
+
+    if not payment.transaction_id:
+        return False, "No transaction ID found on Payment."
+
+    if not razorpay_client:
+        return False, "Razorpay client not configured."
+
     try:
-        # Razorpay Refund API call
-        refund = client.payment.refund(payment_obj.transaction_id, {
-            "amount": int(payment_obj.amount * 100),
-            "speed": "normal"
-        })
-        
-        # Update Local DB
-        payment_obj.status = 'REFUNDED'
-        payment_obj.gateway_response = refund
-        payment_obj.save()
-        
-        return True, refund
+        rp_refund = razorpay_client.payment.refund(
+            payment.transaction_id,
+            {
+                "amount": int(refund.amount * 100),
+                "speed": "normal",
+            },
+        )
+        return True, rp_refund
     except Exception as e:
+        logger.exception("Error initiating refund for payment %s: %s", payment.id, e)
         return False, str(e)

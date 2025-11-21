@@ -1,8 +1,6 @@
 # apps/delivery/signals.py
 from django.dispatch import Signal
 
-# --- Signal (delivery -> wms) ---
+# delivery -> WMS / Orders
 rider_assigned_to_dispatch = Signal()
-
-# --- Signal (delivery -> orders) ---
 delivery_completed = Signal()

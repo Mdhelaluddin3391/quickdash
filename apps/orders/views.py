@@ -1,202 +1,372 @@
 import logging
-import razorpay
 
-from django.db import transaction
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 
-from rest_framework import generics, status
+import razorpay
+from rest_framework import status, viewsets, permissions
+from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
+from django.utils import timezone
+from datetime import timedelta
+from django.conf import settings
+from django.shortcuts import get_object_or_404
 
-from apps.accounts.permissions import IsCustomer
-from apps.delivery.models import DeliveryTask
-from .models import Cart, Order, OrderItem
+from .services import create_order_from_cart, process_successful_payment, cancel_order
+from .models import Cart, CartItem, Order
+
 from apps.payments.models import Payment
-from apps.warehouse.models import PickingTask, PickItem
+
+from .models import Order, Cart, CartItem
 from .serializers import (
     CreateOrderSerializer,
+    OrderSerializer,
+    OrderListSerializer,
+    CartSerializer,
+    AddToCartSerializer,
     PaymentVerificationSerializer,
+    CancelOrderSerializer,
 )
-from .services import create_order_from_cart
-from rest_framework import viewsets
-from rest_framework import filters
-from .serializers import OrderSerializer, OrderListSerializer
-from .models import Order
-from apps.payments.signals import payment_succeeded
-from .services import process_successful_payment
+from .services import (
+    create_order_from_cart,
+    process_successful_payment,
+    cancel_order,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# moved payment confirmation logic to `services.process_successful_payment`
+# =========================================================
+# Cart Views
+# =========================================================
 
 
+class CartView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
 
-class CheckoutView(generics.GenericAPIView):
-    """
-    Handles the checkout process, creates a pending order, and initiates payment.
-    """
-    permission_classes = [IsAuthenticated, IsCustomer]
-    serializer_class = CreateOrderSerializer
+    def get(self, request):
+        cart, _ = Cart.objects.get_or_create(customer=request.user)
+        serializer = CartSerializer(cart)
+        return Response(serializer.data)
 
-    def post(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+
+class AddToCartView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = AddToCartSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
-        user = request.user
+        sku_id = serializer.validated_data["sku_id"]
+        qty = serializer.validated_data["quantity"]
+
+        cart, _ = Cart.objects.get_or_create(customer=request.user)
+
+        if qty == 0:
+            CartItem.objects.filter(cart=cart, sku_id=sku_id).delete()
+        else:
+            item, _ = CartItem.objects.get_or_create(cart=cart, sku_id=sku_id)
+            item.quantity = qty
+            item.save()
+
+        cart.refresh_from_db()
+        return Response(CartSerializer(cart).data, status=status.HTTP_200_OK)
+
+
+# =========================================================
+# Checkout / Payment Views
+# =========================================================
+
+
+class CheckoutView(APIView):
+    """
+    Cart se order create karta hai.
+    - COD: turant confirm + WMS signal
+    - Razorpay: RZP order create + Payment record, client se payment karao
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = CreateOrderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        payment_method = data.get('payment_method', 'RAZORPAY')
-        
-        # Delegate order creation to service layer
-        try:
-            order, payment, err = create_order_from_cart(
-                user=user,
-                warehouse_id=data.get('warehouse_id'),
-                delivery_address_json=data.get('delivery_address_json'),
-                delivery_lat=data.get('delivery_lat'),
-                delivery_lng=data.get('delivery_lng'),
-                payment_method=payment_method,
-            )
-            if err:
-                return Response({"error": err}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.exception("Error creating order for user %s: %s", user.id if user else 'unknown', e)
-            return Response({"error": "Could not create order."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        if payment_method == 'COD':
-            # For COD we created a payment in service; if not present, create one
-            if not payment:
-                from apps.payments.models import Payment as PaymentModel
-                payment = PaymentModel.objects.create(order=order, payment_method='COD', amount=order.final_amount)
-            success, msg = process_successful_payment(order)
-            if success:
-                return Response({"message": "Order Confirmed (COD)", "order_id": order.id}, status=status.HTTP_201_CREATED)
-            return Response({"error": msg}, status=status.HTTP_400_BAD_REQUEST)
+        warehouse_id = data["warehouse_id"]
+        delivery_address_json = data["delivery_address_json"]
+        delivery_lat = data.get("delivery_lat")
+        delivery_lng = data.get("delivery_lng")
+        payment_method = data.get("payment_method", "RAZORPAY")
 
-        elif payment_method == 'RAZORPAY':
-            try:
-                client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-                rzp_order = client.order.create({
-                    'amount': int(order.final_amount * 100),
-                    'currency': 'INR',
-                    'receipt': str(order.id)
-                })
+        # Create Order from Cart
+        order, payment, err = create_order_from_cart(
+            user=request.user,
+            warehouse_id=warehouse_id,
+            delivery_address_json=delivery_address_json,
+            delivery_lat=delivery_lat,
+            delivery_lng=delivery_lng,
+            payment_method=payment_method,
+        )
 
-                Payment.objects.create(
-                    order=order,
-                    payment_method='RAZORPAY',
-                    amount=order.final_amount,
-                    gateway_order_id=rzp_order['id']
+        if err:
+            return Response({"error": err}, status=status.HTTP_400_BAD_REQUEST)
+
+        # COD → straight confirm
+        if payment_method == "COD":
+            ok, msg = process_successful_payment(order)
+            if not ok:
+                return Response(
+                    {"error": "Failed to confirm COD order", "detail": msg},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
 
-                return Response({
-                    "razorpay_order_id": rzp_order['id'],
-                    "razorpay_key": settings.RAZORPAY_KEY_ID,
-                    "amount": int(order.final_amount * 100),
-                    "order_id": order.id
-                })
-            except Exception as e:
-                logger.exception(f"Razorpay client error for order {order.id if 'order' in locals() else 'unknown'}: {e}")
-                return Response({"error": "Payment gateway error."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            # Optionally cart clear
+            try:
+                Cart.objects.filter(customer=request.user).delete()
+            except Exception:
+                pass
 
-        return Response({"error": "Invalid payment method"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "order": OrderSerializer(order).data,
+                    "payment": {"mode": "COD", "status": "CONFIRMED"},
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        # Online payment (Razorpay)
+        client = razorpay.Client(
+            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
+        )
+
+        amount_paise = int(float(order.final_amount) * 100)
+
+        rzp_order = client.order.create(
+            dict(
+                amount=amount_paise,
+                currency="INR",
+                payment_capture=1,
+                notes={"order_id": str(order.id)},
+            )
+        )
+
+        # Payment record (if not already from service)
+        if not payment:
+            payment = Payment.objects.create(
+                order=order,
+                amount=order.final_amount,
+                payment_method=Payment.PaymentMethod.RAZORPAY,
+                gateway_order_id=rzp_order["id"],
+            )
+        else:
+            payment.gateway_order_id = rzp_order["id"]
+            payment.save(update_fields=["gateway_order_id"])
+
+        # Store PG order id on Order too (optional)
+        order.payment_gateway_order_id = rzp_order["id"]
+        order.save(update_fields=["payment_gateway_order_id"])
+
+        return Response(
+            {
+                "order_id": str(order.id),
+                "razorpay_order_id": rzp_order["id"],
+                "amount": str(order.final_amount),
+                "currency": "INR",
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class PaymentVerificationView(APIView):
     """
-    Verifies the Razorpay payment signature and confirms the order.
+    Razorpay payment verify endpoint.
+    Client se RZP order_id, payment_id, signature aata hai.
     """
-    permission_classes = [IsAuthenticated]
-    serializer_class = PaymentVerificationSerializer
+
+    permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        serializer = self.serializer_class(data=request.data)
+        serializer = PaymentVerificationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        try:
-            client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-            client.utility.verify_payment_signature(data)
-            
-            payment = get_object_or_404(Payment, gateway_order_id=data['razorpay_order_id'])
-            payment.transaction_id = data['razorpay_payment_id']
-            payment.save()
-            
-            success, msg = process_successful_payment(payment.order)
-            if success:
-                return Response({"status": "Payment Successful, Order Confirmed"}, status=status.HTTP_200_OK)
-            else:
-                return Response({"error": msg}, status=status.HTTP_400_BAD_REQUEST)
+        client = razorpay.Client(
+            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
+        )
 
-        except razorpay.errors.SignatureVerificationError:
-            logger.warning(f"Razorpay signature verification failed for order {data.get('razorpay_order_id')}")
-            return Response({"error": "Invalid payment signature"}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.exception(f"Payment verification failed: {e}")
-            return Response({"error": "An unexpected error occurred"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # Verify signature
+        try:
+            client.utility.verify_payment_signature(
+                {
+                    "razorpay_order_id": data["razorpay_order_id"],
+                    "razorpay_payment_id": data["razorpay_payment_id"],
+                    "razorpay_signature": data["razorpay_signature"],
+                }
+            )
+        except razorpay.errors.SignatureVerificationError as e:
+            logger.warning("Razorpay signature verification failed: %s", e)
+            return Response(
+                {"error": "Invalid payment signature"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Locate Payment
+        payment = get_object_or_404(
+            Payment, gateway_order_id=data["razorpay_order_id"]
+        )
+
+        # Extra safety: ensure current user owns this order
+        if payment.order.customer_id != request.user.id:
+            return Response(
+                {"error": "Not allowed for this order"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Update Payment
+        payment.transaction_id = data["razorpay_payment_id"]
+        payment.status = Payment.PaymentStatus.SUCCESSFUL
+        payment.save(update_fields=["transaction_id", "status"])
+
+        # Process success flow
+        ok, msg = process_successful_payment(payment.order)
+        if not ok:
+            return Response(
+                {"error": "Payment processed but order update failed", "detail": msg},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # Clear cart
+        try:
+            Cart.objects.filter(customer=request.user).delete()
+        except Exception:
+            pass
+
+        return Response(
+            {"status": "success", "order": OrderSerializer(payment.order).data}
+        )
+
+# =========================================================
+# Orders ViewSet
+# =========================================================
+
+
+class IsOrderOwnerOrStaff(permissions.BasePermission):
+    """
+    Customer apne hi orders dekh sakta hai.
+    Staff sab dekh sakte hain.
+    """
+
+    def has_object_permission(self, request, view, obj):
+        if request.user.is_staff:
+            return True
+        return getattr(obj, "customer_id", None) == request.user.id
 
 
 class OrderViewSet(viewsets.ReadOnlyModelViewSet):
-    """Read-only endpoints for Orders: list and retrieve for customers."""
-    queryset = Order.objects.all().select_related('customer', 'warehouse')
-    serializer_class = OrderSerializer
-    filter_backends = [filters.OrderingFilter, filters.SearchFilter]
-    ordering_fields = ['created_at', 'final_amount']
-    search_fields = ['id', 'status']
+    """
+    - GET /orders/       => list (My Orders)
+    - GET /orders/<id>/  => detail
+    - POST /orders/<id>/cancel/  => cancel order
+    """
+
+    permission_classes = [permissions.IsAuthenticated, IsOrderOwnerOrStaff]
+    queryset = (
+        Order.objects.select_related("customer", "warehouse")
+        .prefetch_related("items", "timeline")
+        .all()
+    )
 
     def get_serializer_class(self):
-        if self.action == 'list':
+        if self.action == "list":
             return OrderListSerializer
         return OrderSerializer
 
     def get_queryset(self):
         qs = super().get_queryset()
         user = self.request.user
-        if user and user.is_authenticated:
-            # Customers only see their orders
-            return qs.filter(customer=user)
-        return qs.none()
+        if user.is_staff:
+            return qs
+        return qs.filter(customer=user)
 
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="cancel",
+        permission_classes=[permissions.IsAuthenticated, IsOrderOwnerOrStaff],
+    )
+    def cancel(self, request, pk=None):
+        """
+        Customer/OPS order cancel kar sakte hain.
 
-
-class CartView(APIView):
-    permission_classes = [IsAuthenticated, IsCustomer]
-
-    def get(self, request):
-        # Return or create cart for user
-        cart, _ = Cart.objects.get_or_create(customer=request.user)
-        from .serializers import CartSerializer
-        return Response(CartSerializer(cart).data)
-
-
-class AddToCartView(APIView):
-    permission_classes = [IsAuthenticated, IsCustomer]
-
-    def post(self, request):
-        from .serializers import AddToCartSerializer, CartSerializer
-        serializer = AddToCartSerializer(data=request.data)
+        - Already delivered/cancelled => 400
+        - Paid order => refund signal trigger hota hai (payments app mein handle)
+        """
+        order = self.get_object()
+        serializer = CancelOrderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
 
-        cart, _ = Cart.objects.get_or_create(customer=request.user)
-        sku_id = data['sku_id']
-        qty = data['quantity']
+        reason = serializer.validated_data.get("reason", "")
 
-        # import SKU lazily
-        from apps.catalog.models import SKU
-        try:
-            sku = SKU.objects.get(id=sku_id)
-        except SKU.DoesNotExist:
-            return Response({'error': 'SKU not found'}, status=status.HTTP_400_BAD_REQUEST)
+        ok, msg = cancel_order(order, cancelled_by=request.user, reason=reason)
+        if not ok:
+            return Response(
+                {"error": msg or "Unable to cancel order"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        ci, created = CartItem.objects.get_or_create(cart=cart, sku=sku, defaults={'quantity': max(0, qty)})
-        if not created:
-            if qty == 0:
-                ci.delete()
-            else:
-                ci.quantity = qty
-                ci.save()
+        order.refresh_from_db()
+        return Response(OrderSerializer(order).data, status=status.HTTP_200_OK)
 
-        return Response(CartSerializer(cart).data, status=status.HTTP_200_OK)
+class CancelOrderView(APIView):
+    """
+    Customer-initiated order cancellation.
+
+    POST /api/v1/orders/<order_id>/cancel/
+    body: { "reason": "optional string" }
+
+    Rules:
+    - Only the owning customer can cancel
+    - Status must NOT be delivered/cancelled
+    - Optional time-window check (ORDER_CANCELLATION_WINDOW in seconds)
+    """
+    permission_classes = [IsAuthenticated, IsCustomer]
+
+    def post(self, request, pk):
+        user = request.user
+        reason = request.data.get("reason", "")
+
+        # 1. Get order owned by this customer
+        order = get_object_or_404(Order, id=pk, customer=user)
+
+        # 2. Check basic status guard
+        if order.status in ["delivered", "cancelled"]:
+            return Response(
+                {"error": "Order cannot be cancelled in its current state."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 3. Optional cancellation time window
+        window_seconds = getattr(settings, "ORDER_CANCELLATION_WINDOW", 300)
+        cutoff = order.created_at + timedelta(seconds=window_seconds)
+        if timezone.now() > cutoff:
+            return Response(
+                {"error": "Cancellation window has expired."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 4. Delegate to service
+        ok, msg = cancel_order(order, cancelled_by="CUSTOMER", reason=reason)
+        if not ok:
+            return Response(
+                {"error": msg or "Unable to cancel order."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                "status": "cancelled",
+                "order_id": str(order.id),
+                "message": "Order cancelled successfully.",
+            },
+            status=status.HTTP_200_OK,
+        )

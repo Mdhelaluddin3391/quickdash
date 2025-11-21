@@ -58,7 +58,12 @@ def auto_cancel_unpaid_orders():
     cutoff_minutes = getattr(__import__('django.conf').conf.settings, 'AUTO_CANCEL_PENDING_MINUTES', 30)
     cutoff = timezone.now() - timedelta(minutes=cutoff_minutes)
 
-    orders = Order.objects.filter(status__in=['pending', 'pending_payment'], created_at__lte=cutoff)
+    orders = Order.objects.filter(
+        status='pending',
+        payment_status='pending',
+        created_at__lte=cutoff
+    )
+
     count = 0
     for order in orders:
         ok, msg = cancel_order(order, cancelled_by='SYSTEM', reason='Auto-cancel unpaid order')

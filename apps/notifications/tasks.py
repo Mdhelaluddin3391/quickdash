@@ -1,72 +1,128 @@
 # apps/notifications/tasks.py
-from celery import shared_task
-from django.contrib.auth import get_user_model
-from django.conf import settings
 import logging
-import firebase_admin
-from firebase_admin import credentials, messaging
 
-from apps.accounts.tasks import send_sms_task 
-from .models import Notification
-from .fcm import send_push_to_user
+from celery import shared_task
+from django.db import transaction
+from django.utils import timezone
 
-User = get_user_model()
+from .models import Notification, NotificationChannel, NotificationStatus, FCMDevice
+from .fcm import send_push_to_device
+
 logger = logging.getLogger(__name__)
 
-# Initialize Firebase Admin SDK
-if not firebase_admin._apps:
-    try:
-        cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
-        firebase_admin.initialize_app(cred)
-        logger.info("Firebase Admin SDK initialized successfully.")
-    except Exception as e:
-        logger.error(f"Failed to initialize Firebase Admin SDK: {e}")
 
-@shared_task
-def send_order_notification(user_id, title, message):
-    try:
-        user = User.objects.get(id=user_id)
-        
-        Notification.objects.create(user=user, title=title, message=message)
-        
-        if user.phone:
-            send_sms_task.delay(user.phone, f"{title}: {message}", "notification")
-            
-        send_push_to_user(user.id, title, message, data={"type": "order_update"})
-            
-    except User.DoesNotExist:
-        logger.warning(f"User with id {user_id} not found. Could not send order notification.")
-    except Exception as e:
-        logger.error(f"An error occurred while sending order notification: {e}")
-
-@shared_task(name="send_fcm_push_notification")
-def send_fcm_push_notification_task(user_id, title, body, data=None):
+def _send_push_notification(notification: Notification) -> str | None:
     """
-    Sends a push notification to all of a user's registered devices.
+    Push via FCM to all active devices of user.
     """
-    try:
-        user = User.objects.get(id=user_id)
-        tokens = user.fcm_devices.values_list('fcm_token', flat=True)
-        
-        if not tokens:
-            logger.info(f"No FCM tokens found for user {user_id}.")
-            return "No FCM tokens found for user."
+    devices = FCMDevice.objects.filter(
+        user=notification.user,
+        is_active=True,
+    )
 
-        message = messaging.MulticastMessage(
-            notification=messaging.Notification(
-                title=title,
-                body=body,
-            ),
-            data=data or {},
-            tokens=list(tokens),
+    if not devices.exists():
+        logger.info("No active FCM devices for user %s", notification.user_id)
+        return None
+
+    last_response = None
+
+    for dev in devices:
+        resp = send_push_to_device(
+            device=dev,
+            title=notification.title,
+            body=notification.body,
+            data=notification.data,
         )
-        
-        response = messaging.send_multicast(message)
-        logger.info(f"Sent {response.success_count} push notifications to user {user_id}.")
-        return f"Success: {response.success_count}, Failed: {response.failure_count}"
+        last_response = resp
 
-    except User.DoesNotExist:
-        logger.warning(f"User with id {user_id} not found. Could not send push notification.")
-    except Exception as e:
-        logger.error(f"FCM push notification failed for user {user_id}: {e}")
-        return str(e)
+        if resp is None:
+            # if token invalid, optionally deactivate
+            # dev.is_active = False
+            # dev.save(update_fields=["is_active"])
+            pass
+
+    return last_response
+
+
+def _send_sms_notification(notification: Notification) -> str | None:
+    """
+    Dummy SMS sender – integrate with real SMS provider here.
+    """
+    user = notification.user
+    phone = getattr(user, "phone", None)
+    if not phone:
+        logger.warning(
+            "Cannot send SMS notification %s – user %s has no phone.",
+            notification.id,
+            user.id,
+        )
+        return None
+
+    logger.info(
+        "SMS to %s: %s",
+        phone,
+        notification.body,
+    )
+    # TODO: integrate with SMS provider (Exotel/Twilio/etc.)
+    return "sms-mock-id"
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=10)
+def send_notification_task(self, notification_id: str):
+    """
+    Sends a single Notification instance via its channel.
+    """
+    try:
+        with transaction.atomic():
+            notification = (
+                Notification.objects.select_for_update().get(id=notification_id)
+            )
+
+            if notification.status == NotificationStatus.SENT:
+                logger.info("Notification %s already sent, skipping", notification_id)
+                return
+
+            if notification.channel == NotificationChannel.PUSH:
+                provider_id = _send_push_notification(notification)
+
+            elif notification.channel == NotificationChannel.SMS:
+                provider_id = _send_sms_notification(notification)
+
+            else:
+                # For now we treat email/whatsapp as not implemented
+                logger.info(
+                    "Channel %s not implemented for notification %s",
+                    notification.channel,
+                    notification.id,
+                )
+                provider_id = None
+
+            notification.provider_message_id = provider_id or ""
+            notification.status = NotificationStatus.SENT
+            notification.sent_at = timezone.now()
+            notification.error_message = ""
+            notification.save(
+                update_fields=[
+                    "provider_message_id",
+                    "status",
+                    "sent_at",
+                    "error_message",
+                ]
+            )
+
+    except Notification.DoesNotExist:
+        logger.error("Notification %s does not exist", notification_id)
+        return
+
+    except Exception as exc:
+        logger.exception(
+            "Failed to send notification %s: %s", notification_id, exc
+        )
+        try:
+            notification = Notification.objects.get(id=notification_id)
+            notification.status = NotificationStatus.FAILED
+            notification.error_message = str(exc)
+            notification.save(update_fields=["status", "error_message"])
+        except Notification.DoesNotExist:
+            pass
+        raise self.retry(exc=exc)

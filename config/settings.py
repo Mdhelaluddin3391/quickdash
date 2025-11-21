@@ -174,6 +174,24 @@ REST_FRAMEWORK = {
         "rest_framework.permissions.AllowAny",
     ),
 }
+REST_FRAMEWORK = {
+    "DEFAULT_THROTTLE_CLASSES": [
+        "apps.utils.throttle.BurstRateThrottle",
+        "apps.utils.throttle.SustainedRateThrottle",
+    ]
+}
+MIDDLEWARE += [
+    "apps.utils.middleware.RequestLogMiddleware",
+]
+
+
+CELERY_BEAT_SCHEDULE = {
+    "run-daily-analytics": {
+        "task": "apps.analytics.tasks.run_daily_analytics_for_date",
+        "schedule": 60 * 60 * 24,  # daily
+        "args": (),  # empty means "today"
+    },
+}
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),

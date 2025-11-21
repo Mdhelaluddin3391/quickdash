@@ -1,14 +1,15 @@
 # apps/notifications/urls.py
 from django.urls import path
-from .views import NotificationListView, NotificationDetailView, RegisterFCMTokenView, NotificationMarkReadView
+
+from .views import (
+    NotificationListView,
+    NotificationMarkReadView,
+    FCMDeviceRegisterView,
+)
 
 urlpatterns = [
-    # GET /api/v1/notifications/
-    path('', NotificationListView.as_view(), name='notification-list'),
-    
-    # GET /api/v1/notifications/<id>/
-    # POST /api/v1/notifications/<id>/mark_as_read/
-    path('<int:pk>/', NotificationDetailView.as_view(), name='notification-detail'),
-    path('<int:pk>/mark_as_read/', NotificationMarkReadView.as_view(), name='notification-mark-read'),
-    path('register-device/', RegisterFCMTokenView.as_view(), name='register-fcm-device'),
+    path("", NotificationListView.as_view(), name="notification-list"),
+    path("devices/", FCMDeviceRegisterView.as_view(), name="notification-fcm-register"),
+    path("<uuid:pk>/read/", NotificationMarkReadView.as_view(), name="notification-mark-read"),
+    path("read-all/", NotificationMarkReadView.as_view(), {"pk": "read-all"}, name="notification-mark-all-read"),
 ]

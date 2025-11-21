@@ -1,35 +1,115 @@
 # apps/analytics/views.py
-from rest_framework import generics
-from rest_framework.permissions import IsAuthenticated
-from apps.accounts.permissions import IsAdmin # Strictest permission for analytics
-from .models import DailyKPI
-from .serializers import DailyKPISerializer
+from rest_framework import generics, permissions
 
-class DailyKPIListView(generics.ListAPIView):
+from .models import (
+    DailySalesSummary,
+    WarehouseKPISnapshot,
+    RiderKPISnapshot,
+    SKUAnalyticsDaily,
+    InventorySnapshotDaily,
+)
+from .serializers import (
+    DailySalesSummarySerializer,
+    WarehouseKPISnapshotSerializer,
+    RiderKPISnapshotSerializer,
+    SKUAnalyticsDailySerializer,
+    InventorySnapshotDailySerializer,
+)
+
+
+class IsStaffUser(permissions.BasePermission):
     """
-    GET /api/v1/analytics/kpis/
-    Admin users ke liye Daily KPIs ki list.
+    Only staff/admin can access analytics APIs.
     """
-    permission_classes = [IsAuthenticated, IsAdmin] 
-    serializer_class = DailyKPISerializer
-    queryset = DailyKPI.objects.all().select_related('warehouse')
-    
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_staff)
+
+
+class DailySalesSummaryListView(generics.ListAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsStaffUser]
+    serializer_class = DailySalesSummarySerializer
+
     def get_queryset(self):
-        """
-        For more complex filtering, consider using a library like django-filter.
-        """
-        queryset = super().get_queryset()
-        
-        # Simple filters (jaise date range ya warehouse)
-        start_date = self.request.query_params.get('start_date')
-        end_date = self.request.query_params.get('end_date')
-        warehouse_id = self.request.query_params.get('warehouse_id')
-        
-        if start_date:
-            queryset = queryset.filter(date__gte=start_date)
-        if end_date:
-            queryset = queryset.filter(date__lte=end_date)
+        qs = DailySalesSummary.objects.all().order_by("-date")
+        days = self.request.query_params.get("days")
+        if days:
+            try:
+                limit = int(days)
+                qs = qs[:limit]
+            except ValueError:
+                pass
+        return qs
+
+
+class WarehouseKPIListView(generics.ListAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsStaffUser]
+    serializer_class = WarehouseKPISnapshotSerializer
+
+    def get_queryset(self):
+        qs = WarehouseKPISnapshot.objects.select_related("warehouse").order_by(
+            "-date", "warehouse__code"
+        )
+        warehouse_id = self.request.query_params.get("warehouse_id")
+        date_str = self.request.query_params.get("date")
+
         if warehouse_id:
-            queryset = queryset.filter(warehouse_id=warehouse_id)
-            
-        return queryset
+            qs = qs.filter(warehouse_id=warehouse_id)
+        if date_str:
+            qs = qs.filter(date=date_str)
+        return qs
+
+
+class RiderKPIListView(generics.ListAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsStaffUser]
+    serializer_class = RiderKPISnapshotSerializer
+
+    def get_queryset(self):
+        qs = RiderKPISnapshot.objects.select_related("rider", "rider__user").order_by(
+            "-date"
+        )
+        rider_id = self.request.query_params.get("rider_id")
+        date_str = self.request.query_params.get("date")
+
+        if rider_id:
+            qs = qs.filter(rider_id=rider_id)
+        if date_str:
+            qs = qs.filter(date=date_str)
+        return qs
+
+
+class SKUAnalyticsDailyListView(generics.ListAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsStaffUser]
+    serializer_class = SKUAnalyticsDailySerializer
+
+    def get_queryset(self):
+        qs = SKUAnalyticsDaily.objects.select_related("sku").order_by("-date", "sku__name")
+        sku_id = self.request.query_params.get("sku_id")
+        date_str = self.request.query_params.get("date")
+
+        if sku_id:
+            qs = qs.filter(sku_id=sku_id)
+        if date_str:
+            qs = qs.filter(date=date_str)
+        return qs
+
+
+class InventorySnapshotDailyListView(generics.ListAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsStaffUser]
+    serializer_class = InventorySnapshotDailySerializer
+
+    def get_queryset(self):
+        qs = InventorySnapshotDaily.objects.select_related(
+            "warehouse", "sku"
+        ).order_by("-date", "warehouse__code")
+        warehouse_id = self.request.query_params.get("warehouse_id")
+        sku_id = self.request.query_params.get("sku_id")
+        date_str = self.request.query_params.get("date")
+
+        if warehouse_id:
+            qs = qs.filter(warehouse_id=warehouse_id)
+        if sku_id:
+            qs = qs.filter(sku_id=sku_id)
+        if date_str:
+            qs = qs.filter(date=date_str)
+        return qs

@@ -1,87 +1,100 @@
 # apps/notifications/views.py
-from rest_framework import generics
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import action
+from django.utils import timezone
+
+from rest_framework import generics, status, views, permissions
 from rest_framework.response import Response
-from rest_framework import status
-from django.shortcuts import get_object_or_404
-from .models import Notification
-from .serializers import NotificationSerializer
-from .models import FCMDevice # <-- FCMDevice import karein
-from rest_framework.views import APIView # <-- Import add karein
+
+from .models import Notification, FCMDevice, NotificationTemplate
+from .serializers import (
+    NotificationSerializer,
+    FCMDeviceSerializer,
+    NotificationTemplateSerializer,
+)
+
 
 class NotificationListView(generics.ListAPIView):
     """
-    Customer ke liye saari notifications ki list.
     GET /api/v1/notifications/
     """
-    permission_classes = [IsAuthenticated]
     serializer_class = NotificationSerializer
-    
+    permission_classes = [permissions.IsAuthenticated]
+
     def get_queryset(self):
-        # Sirf logged-in user ki notifications dikhayenge
-        return Notification.objects.filter(user=self.request.user).order_by('-sent_at')
+        return Notification.objects.filter(
+            user=self.request.user
+        ).order_by("-created_at")
 
-class NotificationDetailView(generics.RetrieveAPIView):
+
+class NotificationMarkReadView(views.APIView):
     """
-    Ek specific notification ki detail.
-    GET /api/v1/notifications/<id>/
+    POST /api/v1/notifications/<id>/read/
+    POST /api/v1/notifications/read-all/
     """
-    permission_classes = [IsAuthenticated]
-    serializer_class = NotificationSerializer
-    
-    def get_queryset(self):
-        # User sirf apni notifications dekh sakta hai
-        return Notification.objects.filter(user=self.request.user)
 
-    @action(detail=True, methods=['post'], name='Mark as Read')
-    def mark_as_read(self, request, pk=None):
-        notification = get_object_or_404(Notification.objects.filter(user=request.user), pk=pk)
-        
-        if not notification.is_read:
-            notification.is_read = True
-            notification.save(update_fields=['is_read'])
-            
-        return Response({"status": "read"}, status=status.HTTP_200_OK)
-
-
-class NotificationMarkReadView(APIView):
-    """POST endpoint to mark a notification as read."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk=None):
-        notification = get_object_or_404(Notification.objects.filter(user=request.user), pk=pk)
+        if pk == "read-all":
+            Notification.objects.filter(
+                user=request.user,
+                is_read=False,
+            ).update(
+                is_read=True,
+                read_at=timezone.now(),
+            )
+            return Response({"status": "all_read"})
+        else:
+            try:
+                notif = Notification.objects.get(
+                    id=pk,
+                    user=request.user,
+                )
+            except Notification.DoesNotExist:
+                return Response(
+                    {"detail": "Not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            notif.mark_read()
+            return Response({"status": "read"})
 
-        if not notification.is_read:
-            notification.is_read = True
-            notification.save(update_fields=['is_read'])
 
-        return Response({"status": "read"}, status=status.HTTP_200_OK)
-
-
-class RegisterFCMTokenView(APIView):
+class FCMDeviceRegisterView(views.APIView):
     """
-    Frontend app is endpoint par apna FCM Token bhejega.
-    POST /api/v1/notifications/register-device/
-    Body: { "fcm_token": "...", "device_type": "android" }
+    Register/update FCM Device token for current user.
+
+    POST /api/v1/notifications/devices/
+    body: { "token": "...", "device_type": "android|ios|web" }
     """
-    permission_classes = [IsAuthenticated]
+
+    permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        token = request.data.get("fcm_token")
-        device_type = request.data.get("device_type", "android")
+        serializer = FCMDeviceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-        if not token:
-            return Response({"detail": "Token required"}, status=status.HTTP_400_BAD_REQUEST)
+        token = serializer.validated_data["token"]
+        device_type = serializer.validated_data.get("device_type", "android")
 
-        # Update or Create logic
-        device, created = FCMDevice.objects.update_or_create(
-            fcm_token=token,
+        device, _ = FCMDevice.objects.update_or_create(
+            token=token,
             defaults={
                 "user": request.user,
                 "device_type": device_type,
-                "is_active": True
-            }
+                "is_active": True,
+                "last_seen_at": timezone.now(),
+            },
         )
-        
-        return Response({"status": "registered", "device_id": device.id}, status=status.HTTP_200_OK)
+
+        return Response(
+            FCMDeviceSerializer(device).data,
+            status=status.HTTP_200_OK,
+        )
+
+
+class NotificationTemplateAdminViewSet(generics.ListCreateAPIView):
+    """
+    OPTIONAL: can be mounted behind admin permission if you want API-based template management.
+    """
+    queryset = NotificationTemplate.objects.all()
+    serializer_class = NotificationTemplateSerializer
+    permission_classes = [permissions.IsAdminUser]

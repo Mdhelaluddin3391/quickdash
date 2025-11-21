@@ -104,89 +104,96 @@ class VerifyOTPView(views.APIView):
         otp_record.is_used = True
         otp_record.save(update_fields=["is_used"])
 
+        # ===========================
+        # 3) USER FETCH / CREATE
+        # ===========================
         user = None
         created = False
 
-        # =================== CUSTOMER LOGIN ===================
-        if login_type == 'CUSTOMER':
-            # 1 phone = 1 user
+        # ---- CUSTOMER LOGIN ----
+        if login_type == "CUSTOMER":
             user, created = User.objects.get_or_create(phone=phone)
 
-            # Agar customer profile nahi hai to create (signal se)
-            if not hasattr(user, 'customer_profile'):
-                user_signed_up.send(
-                    sender=self.__class__,
-                    user=user,
-                    login_type='CUSTOMER',
-                )
+            # auto-create CustomerProfile via signal
+            if not hasattr(user, "customer_profile"):
+                user_signed_up.send(sender=self.__class__, user=user, login_type="CUSTOMER")
 
-        # =================== RIDER LOGIN ===================
-        elif login_type == 'RIDER':
+            # ---- NEW IMPORTANT UPDATE ----
+            # first time login → user flag = is_customer = True
+            if not user.is_customer:
+                user.is_customer = True
+                user.save(update_fields=["is_customer"])
+
+        # ---- RIDER LOGIN ----
+        elif login_type == "RIDER":
             try:
-                # Sirf wohi login kar sakta hai jiska RiderProfile APPROVED hai
                 user = User.objects.get(
                     phone=phone,
                     rider_profile__approval_status=RiderProfile.ApprovalStatus.APPROVED,
                 )
-                created = False
             except User.DoesNotExist:
                 return Response(
-                    {
-                        "detail": (
-                            "You are not an approved rider. "
-                            "Please complete onboarding and wait for admin approval."
-                        )
-                    },
+                    {"detail": "Rider not approved."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-        # =================== EMPLOYEE LOGIN ===================
-        elif login_type == 'EMPLOYEE':
+            if not user.is_rider:
+                user.is_rider = True
+                user.save(update_fields=["is_rider"])
+
+        # ---- EMPLOYEE LOGIN ----
+        elif login_type == "EMPLOYEE":
             try:
-                # Sirf active employee
                 user = User.objects.get(
                     phone=phone,
                     employee_profile__is_active_employee=True,
                 )
-                created = False
             except User.DoesNotExist:
                 return Response(
-                    {
-                        "detail": (
-                            "You are not an active employee. "
-                            "Please contact HR."
-                        )
-                    },
+                    {"detail": "Employee not active."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
+            if not user.is_employee:
+                user.is_employee = True
+                user.save(update_fields=["is_employee"])
+
         if user is None:
             return Response(
-                {"detail": "Unexpected error: user not found."},
+                {"detail": "User not found after OTP verification."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # 3) Tokens + Session
+        # ===========================
+        # 4) JWT + SESSION CREATION
+        # ===========================
         refresh = RefreshToken.for_user(user)
+        refresh["role"] = login_type
 
+        # store session for logout & tracking
         UserSession.objects.create(
             user=user,
             role=login_type,
-            client=request.META.get('HTTP_USER_AGENT', 'Unknown'),
-            jti=refresh['jti'],
+            client=request.META.get("HTTP_USER_AGENT", "Unknown"),
+            jti=refresh["jti"],
             ip_address=get_client_ip(request),
         )
 
+        access = refresh.access_token
+        access["role"] = login_type
+
+        # ===========================
+        # 5) RESPONSE
+        # ===========================
         return Response(
             {
+                "access": str(access),
                 "refresh": str(refresh),
-                "access": str(refresh.access_token),
                 "user": UserProfileSerializer(user).data,
                 "is_new_user": created,
             },
             status=status.HTTP_200_OK,
         )
-
 
 
 # ==========================

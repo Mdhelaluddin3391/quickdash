@@ -1,93 +1,40 @@
 # apps/analytics/tasks.py
+import logging
+from datetime import date
+
 from celery import shared_task
 from django.utils import timezone
-from django.db.models import Sum, Avg, F
-from django.db.models.functions import Coalesce
-from datetime import timedelta
 
-# Models import karein
-from apps.orders.models import Order
-from apps.warehouse.models import Warehouse
-from apps.analytics.models import DailyKPI
-import logging
+from .services import (
+    compute_daily_sales_summary,
+    compute_warehouse_kpi_snapshot,
+    compute_rider_kpi_snapshot,
+    compute_sku_analytics_daily,
+    compute_inventory_snapshot_daily,
+)
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_day(day_str: str | None) -> date:
+    if day_str:
+        return timezone.datetime.strptime(day_str, "%Y-%m-%d").date()
+    return timezone.localdate()
+
+
 @shared_task
-def generate_daily_kpi_report():
+def run_daily_analytics_for_date(day_str: str | None = None):
     """
-    Yeh task har raat (e.g., 12:05 AM) chalna chahiye.
-    Yeh pichle din (Yesterday) ka data calculate karke DailyKPI table mein bharega.
+    Single orchestration task to run all daily aggregations.
+    Typically scheduled at night via Celery beat.
     """
-    # 1. Date decide karein (Yesterday)
-    today = timezone.now().date()
-    yesterday = today - timedelta(days=1)
-    
-    logger.info(f"Starting Daily KPI calculation for date: {yesterday}")
+    day = _resolve_day(day_str)
+    logger.info("Starting daily analytics for %s", day)
 
-    # 2. Saare active warehouses fetch karein
-    warehouses = Warehouse.objects.filter(is_active=True)
+    compute_daily_sales_summary(day)
+    compute_warehouse_kpi_snapshot(day)
+    compute_rider_kpi_snapshot(day)
+    compute_sku_analytics_daily(day)
+    compute_inventory_snapshot_daily(day)
 
-    for warehouse in warehouses:
-        try:
-            # Warehouse specific orders filter karein
-            orders_qs = Order.objects.filter(
-                warehouse=warehouse,
-                created_at__date=yesterday
-            )
-
-            # --- METRICS CALCULATION ---
-            
-            # A. Total Orders & Revenue
-            total_orders = orders_qs.count()
-            
-            # Agar koi order nahi hai, toh revenue 0.00 maano
-            agg_data = orders_qs.aggregate(
-                revenue=Coalesce(Sum('final_amount'), 0.00)
-            )
-            total_revenue = agg_data['revenue']
-
-            # B. Fulfillment Rate (Delivered vs Total)
-            delivered_orders_qs = orders_qs.filter(status='delivered')
-            delivered_count = delivered_orders_qs.count()
-
-            if total_orders > 0:
-                fulfillment_rate = (delivered_count / total_orders) * 100
-            else:
-                fulfillment_rate = 100.00 # Agar order hi nahi aaye, toh rate 100% ya 0% (Business Logic)
-
-            # C. Avg Delivery Time (Minutes)
-            # Delivered orders ka (delivered_at - created_at) ka average nikalo
-            avg_time_data = delivered_orders_qs.annotate(
-                delivery_duration=F('delivered_at') - F('created_at')
-            ).aggregate(
-                avg_duration=Avg('delivery_duration')
-            )
-            
-            avg_duration = avg_time_data['avg_duration']
-            avg_minutes = 0
-            if avg_duration:
-                avg_minutes = int(avg_duration.total_seconds() / 60)
-
-            # --- SAVE TO DB ---
-            
-            # DailyKPI record create ya update karein
-            kpi, created = DailyKPI.objects.update_or_create(
-                date=yesterday,
-                warehouse=warehouse,
-                defaults={
-                    'total_orders': total_orders,
-                    'total_revenue': total_revenue,
-                    'fulfillment_rate': round(fulfillment_rate, 2),
-                    'avg_delivery_time_min': avg_minutes,
-                    # Inventory discrepancy abhi 0 rakhenge (Inventory module se link karna baki hai)
-                    'inventory_discrepancy_count': 0 
-                }
-            )
-            
-            logger.info(f"KPI generated for {warehouse.code}: Orders={total_orders}, Rev={total_revenue}")
-
-        except Exception as e:
-            logger.exception(f"Failed to generate KPI for warehouse {warehouse.code}: {e}")
-
-    return f"KPI Report generated for {yesterday}"
+    logger.info("Completed daily analytics for %s", day)

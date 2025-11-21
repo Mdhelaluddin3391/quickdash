@@ -1,16 +1,25 @@
-# apps/utils/models.py
 from django.db import models
+import uuid
+
 
 class TimestampedModel(models.Model):
     """
-    Ek abstract base class model jo har model mein 
-    'created_at' aur 'updated_at' fields jodta hai.
+    Common timestamps for all models
     """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        # Abstract = True se Django is model ke liye koi table nahi banayega.
-        # Yeh sirf doosre models ko fields dene ke liye hai.
         abstract = True
-        ordering = ['-created_at']
+
+
+class SoftDeleteModel(models.Model):
+    """
+    Mark rows as deleted instead of actually deleting them.
+    """
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        abstract = True
