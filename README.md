@@ -67,7 +67,7 @@ The project is organized into several Django apps, each responsible for a specif
 
 1.  **Clone the repository:**
     ```bash
-    git clone <repository-url>
+    git clone https://github.com/Mdhelaluddin3391/quickdash
     cd quickdash
     ```
 
