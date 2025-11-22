@@ -63,8 +63,8 @@ class Shelf(models.Model):
         return f"{self.aisle.code}-{self.code}"
 
 class Bin(models.Model):
-    # Fixed: Linked to Shelf instead of Zone
-    sshelf = models.ForeignKey(Shelf, on_delete=models.CASCADE, related_name="bins")  # Remove null=True
+    # [FIX] Renamed 'sshelf' to 'shelf' to match unique_together constraint
+    shelf = models.ForeignKey(Shelf, on_delete=models.CASCADE, related_name="bins")
 
     # Optional direct zone link if needed for legacy, but hierarchy prefers shelf
     zone = models.ForeignKey(Zone, on_delete=models.CASCADE, related_name="bins_direct", null=True, blank=True)
