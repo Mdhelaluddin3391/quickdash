@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from .models import PhoneOTP, UserSession
 from django.core.cache import cache # <-- Redis Cache Import
-
+from .tasks import send_sms_task
 
 def normalize_phone(phone: str) -> str:
     phone = phone.strip().replace(" ", "")
@@ -18,11 +18,10 @@ def create_and_send_otp(phone: str, login_type: str):
     phone = normalize_phone(phone)
     otp_code = "".join(str(random.randint(0, 9)) for _ in range(6))
     otp = PhoneOTP.create_otp(phone=phone, login_type=login_type, code=otp_code)
-    # Production mein yahan SMS service call hogi. Abhi ke liye print kar rahe hain.
     
-    # Asynchronous SMS task ko call karein (optional for non-prod)
-    # from .tasks import send_sms_task
-    # send_sms_task.delay(phone=phone, otp_code=otp_code, login_type=login_type)
+    # [FIX] Uncommented execution
+    # Call the Celery task asynchronously
+    send_sms_task.delay(phone=phone, otp_code=otp_code, login_type=login_type)
     
     return otp
 

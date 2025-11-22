@@ -1,3 +1,5 @@
+# apps/orders/services.py
+
 import logging
 from django.db import transaction
 from apps.payments.models import Payment
@@ -9,37 +11,51 @@ logger = logging.getLogger(__name__)
 def process_successful_payment(order):
     try:
         with transaction.atomic():
+            # 1. Update Order Status
             order.status = "confirmed"
             order.payment_status = "paid"
             order.save(update_fields=["status", "payment_status"])
 
+            # 2. Update Payment Record
             payment = order.payments.first()
             if payment:
                 payment.status = Payment.PaymentStatus.SUCCESSFUL
                 payment.save(update_fields=["status"])
 
-            try:
-                wms_items_list = [
-                    {"sku_id": str(item.sku.id), "qty": item.quantity}
-                    for item in order.items.all().select_related('sku')
-                ]
-                send_order_created.send(
-                    sender=order.__class__,
-                    order_id=order.id,
-                    order_items=wms_items_list,
-                    metadata={
-                        "warehouse_id": str(order.warehouse.id) if order.warehouse else None,
-                        "customer_id": str(order.customer.id) if order.customer else None,
-                    }
-                )
-            except Exception:
-                logger.exception("Failed to send WMS signal")
+            # 3. Prepare WMS Payload
+            wms_items_list = [
+                {"sku_id": str(item.sku.id), "qty": item.quantity}
+                for item in order.items.all().select_related('sku')
+            ]
+            
+            # 4. Define the trigger function
+            def trigger_wms_signal():
+                try:
+                    send_order_created.send(
+                        sender=order.__class__,
+                        order_id=order.id,
+                        order_items=wms_items_list,
+                        metadata={
+                            "warehouse_id": str(order.warehouse.id) if order.warehouse else None,
+                            "customer_id": str(order.customer.id) if order.customer else None,
+                        }
+                    )
+                    logger.info(f"WMS signal sent for confirmed order {order.id}")
+                except Exception:
+                    logger.exception("Failed to send WMS signal")
 
-            payments_payment_succeeded.send(sender=order.__class__, order=order)
+            # 5. Execute ONLY after commit [FIX]
+            transaction.on_commit(trigger_wms_signal)
+
+            # 6. Notify Payments App
+            transaction.on_commit(lambda: payments_payment_succeeded.send(sender=order.__class__, order=order))
+
             return True, "Success"
     except Exception as e:
         logger.exception(f"Payment processing failed: {e}")
         return False, str(e)
+
+# ... (Rest of the file remains unchanged)
 
 def create_order_from_cart(user, warehouse_id, delivery_address_json, delivery_lat=None, delivery_lng=None, payment_method='RAZORPAY'):
     from .models import Order, OrderItem

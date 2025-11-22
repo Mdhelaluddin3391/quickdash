@@ -46,5 +46,4 @@ daphne==4.0.0
 django-redis==5.2.0
 dj-database-url==1.0.0
 Pillow==10.0.0
-GDAL>=3.0
 Shapely>=1.8.0

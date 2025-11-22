@@ -117,12 +117,10 @@ class VerifyOTPView(views.APIView):
         if login_type == "CUSTOMER":
             user, created = User.objects.get_or_create(phone=phone)
 
-            # auto-create CustomerProfile via signal
             if not hasattr(user, "customer_profile"):
                 user_signed_up.send(sender=self.__class__, user=user, login_type="CUSTOMER")
 
-            # ---- NEW IMPORTANT UPDATE ----
-            # first time login → user flag = is_customer = True
+            # [FIX] Only set is_customer if login_type is CUSTOMER
             if not user.is_customer:
                 user.is_customer = True
                 user.save(update_fields=["is_customer"])
@@ -135,14 +133,12 @@ class VerifyOTPView(views.APIView):
                     rider_profile__approval_status=RiderProfile.ApprovalStatus.APPROVED,
                 )
             except User.DoesNotExist:
-                return Response(
-                    {"detail": "Rider not approved."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+                return Response({"detail": "Rider not approved."}, status=status.HTTP_403_FORBIDDEN)
 
             if not user.is_rider:
                 user.is_rider = True
                 user.save(update_fields=["is_rider"])
+
 
         # ---- EMPLOYEE LOGIN ----
         elif login_type == "EMPLOYEE":
@@ -152,10 +148,7 @@ class VerifyOTPView(views.APIView):
                     employee_profile__is_active_employee=True,
                 )
             except User.DoesNotExist:
-                return Response(
-                    {"detail": "Employee not active."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+                return Response({"detail": "Employee not active."}, status=status.HTTP_403_FORBIDDEN)
 
             if not user.is_employee:
                 user.is_employee = True
