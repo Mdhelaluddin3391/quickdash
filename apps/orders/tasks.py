@@ -2,7 +2,6 @@ from celery import shared_task
 import razorpay
 import logging
 from django.conf import settings
-from apps.payments.models import Payment
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +11,8 @@ def process_razorpay_refund_task(payment_id, is_partial_refund=False, amount=Non
     Background task jo Razorpay se refund process karta hai.
     Yeh user ko wait nahi karvata.
     """
+    from apps.payments.models import Payment
+
     try:
         payment = Payment.objects.get(id=payment_id)
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))

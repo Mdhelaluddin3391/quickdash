@@ -3,13 +3,12 @@ import logging
 from django.dispatch import receiver
 from django.utils import timezone
 from django.contrib.auth import get_user_model
-from apps.warehouse.signals import send_order_created, item_fulfillment_cancelled
 
-# Signals Imports
+# FIXED IMPORTS
+from apps.orders.signals import send_order_created, order_refund_requested
+from apps.warehouse.signals import item_fulfillment_cancelled 
 from apps.payments.signals import payment_succeeded
 from apps.delivery.signals import delivery_completed, rider_assigned_to_dispatch
-from apps.warehouse.signals import send_order_created, item_fulfillment_cancelled 
-from .signals import order_refund_requested
 
 from .models import Order, OrderTimeline
 
@@ -18,40 +17,33 @@ logger = logging.getLogger(__name__)
 
 @receiver(payment_succeeded)
 def handle_payment_success(sender, order, **kwargs):
-    """
-    Payment success hone par order confirm karo aur WMS ko signal bhejo.
-    """
     if order.status == "pending":
         order.status = "confirmed"
         order.payment_status = "paid"
         order.save(update_fields=["status", "payment_status"])
         
-        OrderTimeline.objects.create(
-            order=order,
-            status="confirmed",
-            notes="Payment successful."
-        )
+        OrderTimeline.objects.create(order=order, status="confirmed", notes="Payment successful.")
         
-        # Ab WMS ko batao ki order aa gaya hai
         try:
             wms_items_list = [
                 {"sku_id": str(item.sku.id), "qty": item.quantity}
                 for item in order.items.all().select_related('sku')
             ]
             
-            # 'send_order_created' signal WMS app mein defined hai
+            # USING LOCAL SIGNAL
             send_order_created.send(
                 sender=Order,
                 order_id=order.id,
                 order_items=wms_items_list,
                 metadata={
-                    "warehouse_id": str(order.warehouse.id),
-                    "customer_id": str(order.customer.id)
+                    "warehouse_id": str(order.warehouse.id) if order.warehouse else None,
+                    "customer_id": str(order.customer.id) if order.customer else None
                 }
             )
             logger.info(f"WMS signal sent for confirmed order {order.id}")
         except Exception as e:
             logger.exception(f"Failed to send WMS signal for order {order.id}: {e}")
+
 
 @receiver(delivery_completed)
 def handle_delivery_success(sender, order, rider_code, **kwargs):

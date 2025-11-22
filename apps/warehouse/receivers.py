@@ -4,6 +4,8 @@ from apps.delivery.signals import rider_assigned_to_dispatch
 from .models import DispatchRecord
 from .signals import send_order_created
 from .tasks import orchestrate_order_fulfilment_from_order_payload
+from apps.orders.signals import send_order_created  # <--- FIXED IMPORT
+
 
 logger = logging.getLogger(__name__)
 

@@ -1,3 +1,4 @@
+# apps/orders/signals.py
 from django.dispatch import Signal
 
 # Orders app signals

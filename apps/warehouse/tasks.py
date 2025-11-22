@@ -34,6 +34,21 @@ def orchestrate_order_fulfilment_from_order_payload(payload):
         return str(pick_task.id)
         
     except Exception as e:
-        logger.exception(f"Orchestration Error for Order {order_id}: {e}")
-        # Error ko propagate karein taaki Celery retry kar sake (agar chahein)
-        raise e
+    logger.exception(f"Orchestration Error: {e}")
+    # ADD THIS:
+    from apps.orders.models import Order
+    from apps.orders.services import cancel_order
+    
+    order = Order.objects.get(id=order_id)
+    cancel_order(order, cancelled_by="SYSTEM", reason=f"WMS Allocation Failed: {str(e)}")
+
+def _cancel_failed_order(order_id, reason):
+    try:
+        from apps.orders.models import Order
+        from apps.orders.services import cancel_order
+        
+        order = Order.objects.get(id=order_id)
+        cancel_order(order, cancelled_by="SYSTEM", reason=reason)
+        logger.info(f"Order {order_id} auto-cancelled due to fulfillment failure.")
+    except Exception as ex:
+        logger.error(f"Failed to auto-cancel order {order_id}: {ex}")

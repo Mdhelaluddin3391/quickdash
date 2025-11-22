@@ -1,69 +1,40 @@
 # apps/warehouse/views.py
 import logging
-import logging
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-from django.core.exceptions import ValidationError  # <--- ADDED
+from django.core.exceptions import ValidationError
+
+from rest_framework import viewsets, views, generics, status
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
 from .models import (
     Warehouse, BinInventory, PickingTask, PickItem,
-    PackingTask, GRN, CycleCountTask,  # ADD THIS
+    PackingTask, GRN, CycleCountTask,
     PickSkip, ShortPickIncident, FulfillmentCancel
 )
-from rest_framework import viewsets, views, generics, status
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from django.db import transaction
-from django.shortcuts import get_object_or_404
-
-from rest_framework import viewsets, views, generics, status
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-
-from .models import (
-    Warehouse,
-    BinInventory,
-    PickingTask,
-    PickItem,
-    PackingTask,
-    GRN,
-)
 from .serializers import (
-    WarehouseSerializer,
-    BinInventorySerializer,
-    PickingTaskSerializer,
-    PackingTaskSerializer,
-    DispatchRecordSerializer,
-    ShortPickResolveSerializer,
-    FulfillmentCancelSerializer,
-    CreateGRNSerializer,
-    GRNSerializer,
-    PlacePutawaySerializer,
-    PutawayTaskSerializer,
-    CreateCycleCountSerializer,
-    CycleCountTaskSerializer,
-    RecordCycleCountSerializer,
-    DispatchOTPVerifySerializer,
+    WarehouseSerializer, BinInventorySerializer, PickingTaskSerializer,
+    PackingTaskSerializer, DispatchRecordSerializer, ShortPickResolveSerializer,
+    FulfillmentCancelSerializer, CreateGRNSerializer, GRNSerializer,
+    PlacePutawaySerializer, PutawayTaskSerializer, CreateCycleCountSerializer,
+    CycleCountTaskSerializer, RecordCycleCountSerializer, DispatchOTPVerifySerializer,
 )
 from .permissions import (
-    PickerOnly,
-    PackerOnly,
-    WarehouseManagerOnly,
-    AnyEmployee,
+    PickerOnly, PackerOnly, WarehouseManagerOnly, AnyEmployee,
 )
 from .services import (
-    scan_pick,
-    mark_pickitem_skipped,
-    complete_packing,
-    resolve_skip_as_shortpick,
-    admin_fulfillment_cancel,
-    create_grn_and_putaway,
-    place_putaway_item,
-    create_cycle_count,
-    record_cycle_count_item,
-    verify_dispatch_otp,
+    scan_pick, mark_pickitem_skipped, complete_packing,
+    resolve_skip_as_shortpick, admin_fulfillment_cancel,
+    create_grn_and_putaway, place_putaway_item,
+    create_cycle_count, record_cycle_count_item, verify_dispatch_otp,
 )
 
 logger = logging.getLogger(__name__)
+
+# ... (Rest of the file remains exactly the same as your original, just the header fixed)
+# To save space, I am not repeating the logic below as it was correct, only imports were wrong.
+# Ensure you keep the classes WarehouseViewSet, etc.
 
 
 # =========================================================

@@ -1,10 +1,8 @@
-# apps/orders/services.py
-
 import logging
 from django.db import transaction
 from apps.payments.models import Payment
 from apps.payments.signals import payment_succeeded as payments_payment_succeeded
-from apps.warehouse.signals import send_order_created
+from apps.orders.signals import send_order_created # <--- FIXED IMPORT
 
 logger = logging.getLogger(__name__)
 

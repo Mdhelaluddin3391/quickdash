@@ -463,51 +463,51 @@ class IdempotencyKey(models.Model):
 # 7. AUTO STOCK SYNC TO CENTRAL INVENTORY
 # =========================================================
 
-def sync_inventory_stock(warehouse_id, sku_id):
-    """
-    Calculates total available stock across ALL bins for a specific SKU in a Warehouse,
-    and updates the central 'InventoryStock' (apps.inventory) used by cart/search.
-    """
-    from apps.inventory.models import InventoryStock  # local import to avoid circulars
+# def sync_inventory_stock(warehouse_id, sku_id):
+#     """
+#     Calculates total available stock across ALL bins for a specific SKU in a Warehouse,
+#     and updates the central 'InventoryStock' (apps.inventory) used by cart/search.
+#     """
+#     from apps.inventory.models import InventoryStock  # local import to avoid circulars
 
-    try:
-        with transaction.atomic():
-            totals = BinInventory.objects.filter(
-                bin__zone__warehouse_id=warehouse_id,
-                sku_id=sku_id,
-            ).aggregate(
-                total_qty=Sum("qty"),
-                total_reserved=Sum("reserved_qty"),
-            )
-            qty = totals["total_qty"] or 0
-            reserved = totals["total_reserved"] or 0
-            available = max(0, qty - reserved)
+#     try:
+#         with transaction.atomic():
+#             totals = BinInventory.objects.filter(
+#                 bin__zone__warehouse_id=warehouse_id,
+#                 sku_id=sku_id,
+#             ).aggregate(
+#                 total_qty=Sum("qty"),
+#                 total_reserved=Sum("reserved_qty"),
+#             )
+#             qty = totals["total_qty"] or 0
+#             reserved = totals["total_reserved"] or 0
+#             available = max(0, qty - reserved)
 
-            stock, _ = InventoryStock.objects.select_for_update().get_or_create(
-                warehouse_id=warehouse_id,
-                sku_id=sku_id,
-                defaults={"available_qty": 0, "reserved_qty": 0},
-            )
-            stock.available_qty = available
-            stock.reserved_qty = reserved
-            stock.save()
+#             stock, _ = InventoryStock.objects.select_for_update().get_or_create(
+#                 warehouse_id=warehouse_id,
+#                 sku_id=sku_id,
+#                 defaults={"available_qty": 0, "reserved_qty": 0},
+#             )
+#             stock.available_qty = available
+#             stock.reserved_qty = reserved
+#             stock.save()
 
-            logger.info(
-                "SYNC: SKU %s in WH %s -> avail=%s reserved=%s",
-                sku_id,
-                warehouse_id,
-                available,
-                reserved,
-            )
-    except Exception:
-        logger.exception("Stock sync failed for warehouse=%s sku=%s", warehouse_id, sku_id)
+#             logger.info(
+#                 "SYNC: SKU %s in WH %s -> avail=%s reserved=%s",
+#                 sku_id,
+#                 warehouse_id,
+#                 available,
+#                 reserved,
+#             )
+#     except Exception:
+#         logger.exception("Stock sync failed for warehouse=%s sku=%s", warehouse_id, sku_id)
 
 
-@receiver([post_save, post_delete], sender=BinInventory)
-def on_bin_inventory_change(sender, instance, **kwargs):
-    """
-    Whenever BinInventory changes, update central InventoryStock.
-    """
-    warehouse_id = instance.bin.zone.warehouse_id
-    sku_id = instance.sku_id
-    sync_inventory_stock(warehouse_id, sku_id)
+# @receiver([post_save, post_delete], sender=BinInventory)
+# def on_bin_inventory_change(sender, instance, **kwargs):
+#     """
+#     Whenever BinInventory changes, update central InventoryStock.
+#     """
+#     warehouse_id = instance.bin.zone.warehouse_id
+#     sku_id = instance.sku_id
+#     sync_inventory_stock(warehouse_id, sku_id)
