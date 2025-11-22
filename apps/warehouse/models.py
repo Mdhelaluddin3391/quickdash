@@ -6,7 +6,10 @@ from django.utils import timezone
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.db.models import Sum
-
+import uuid
+from django.db import models
+from django.conf import settings
+from apps.catalog.models import SKU
 from apps.catalog.models import SKU
 
 import logging
@@ -45,13 +48,26 @@ class Zone(models.Model):
     def __str__(self):
         return f"{self.warehouse.code}-{self.code}"
 
+class Aisle(models.Model):
+    zone = models.ForeignKey(Zone, on_delete=models.CASCADE, related_name="aisles")
+    code = models.CharField(max_length=10)
+
+    def __str__(self):
+        return f"{self.zone.code}-{self.code}"
+
+class Shelf(models.Model):
+    aisle = models.ForeignKey(Aisle, on_delete=models.CASCADE, related_name="shelves")
+    code = models.CharField(max_length=10)
+
+    def __str__(self):
+        return f"{self.aisle.code}-{self.code}"
 
 class Bin(models.Model):
-    zone = models.ForeignKey(
-        Zone,
-        on_delete=models.CASCADE,
-        related_name="bins",
-    )
+    # Fixed: Linked to Shelf instead of Zone
+    shelf = models.ForeignKey(Shelf, on_delete=models.CASCADE, related_name="bins", null=True)
+    # Optional direct zone link if needed for legacy, but hierarchy prefers shelf
+    zone = models.ForeignKey(Zone, on_delete=models.CASCADE, related_name="bins_direct", null=True, blank=True)
+    
     bin_code = models.CharField(max_length=20, unique=True, db_index=True)
     capacity = models.FloatField(default=100.0)
 
@@ -60,11 +76,7 @@ class Bin(models.Model):
 
 
 class BinInventory(models.Model):
-    bin = models.ForeignKey(
-        Bin,
-        on_delete=models.CASCADE,
-        related_name="inventory",
-    )
+    bin = models.ForeignKey(Bin, on_delete=models.CASCADE, related_name="inventory")
     sku = models.ForeignKey(SKU, on_delete=models.CASCADE)
     qty = models.PositiveIntegerField(default=0)
     reserved_qty = models.PositiveIntegerField(default=0)

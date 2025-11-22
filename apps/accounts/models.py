@@ -4,7 +4,7 @@ from django.contrib.gis.db import models as gis_models
 from django.utils import timezone
 from datetime import timedelta
 import uuid
-
+import secrets
 from django.conf import settings
 from .managers import UserManager
 from apps.utils.models import TimestampedModel
@@ -353,7 +353,7 @@ class PasswordResetToken(models.Model):
     token = models.CharField(
         max_length=100,
         unique=True,
-        default=uuid.uuid4,
+        default=secrets.token_urlsafe,
     )
     expires_at = models.DateTimeField()
     is_used = models.BooleanField(default=False)

@@ -23,6 +23,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY')
 DEBUG = config('DEBUG', default=False, cast=bool)
 
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 # Allowed Hosts ko environment se load karein
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='127.0.0.1,localhost').split(',')
 
@@ -173,13 +181,17 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.AllowAny",
     ),
-}
-REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_CLASSES": [
         "apps.utils.throttle.BurstRateThrottle",
         "apps.utils.throttle.SustainedRateThrottle",
-    ]
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "burst": "20/min",
+        "sustained": "300/hour",
+    }
 }
+
+
 MIDDLEWARE += [
     "apps.utils.middleware.RequestLogMiddleware",
 ]

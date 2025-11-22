@@ -79,7 +79,10 @@ class VerifyOTPView(views.APIView):
         phone = normalize_phone(serializer.validated_data['phone'])
         otp_input = serializer.validated_data['otp']
         login_type = serializer.validated_data['login_type']
-
+        try:
+            check_otp_rate_limit(phone, login_type, ip=get_client_ip(request))
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
         # 1) OTP record dhoondo
         otp_record = PhoneOTP.objects.filter(
             phone=phone,

@@ -12,6 +12,8 @@ from apps.accounts.models import RiderProfile as RiderProfileModel
 from .models import DeliveryTask
 from .signals import rider_assigned_to_dispatch
 from .utils import haversine_distance  # assuming already present
+from django.conf import settings
+
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,7 @@ def _find_best_rider_for_warehouse(
     3) Riders not already busy on active task
     4) Minimum distance within MAX_RADIUS_KM
     """
+    MAX_RADIUS_KM = getattr(settings, "RIDER_MAX_RADIUS_KM", 10.0) # <--- Clean access
     try:
         warehouse = Warehouse.objects.get(id=warehouse_id)
         if warehouse.lat is None or warehouse.lng is None:

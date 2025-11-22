@@ -41,7 +41,7 @@ def handle_inventory_change_signal(
     )
 
     # Strong consistency mode → direct call
-    update_inventory_stock_task(
+    update_inventory_stock_task.delay(
         sku_id=str(sku_id),
         warehouse_id=str(warehouse_id),
         delta_available=delta_available,
