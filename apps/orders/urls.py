@@ -17,4 +17,6 @@ urlpatterns = router.urls + [
 
     # NEW: cancel order
     path('<uuid:pk>/cancel/', CancelOrderView.as_view(), name='order-cancel'),
+    path('<uuid:pk>/cancel/', CancelOrderView.as_view(), name='order-cancel'),
+
 ]

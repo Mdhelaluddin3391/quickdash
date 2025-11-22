@@ -101,7 +101,7 @@ def cancel_order(order, cancelled_by=None, reason=""):
         
         OrderCancellation.objects.create(
             order=order,
-            reason_text=reason or '',
+            reason=reason or '',
             cancelled_by=cancelled_by if isinstance(cancelled_by, str) else 'OPS'
         )
 

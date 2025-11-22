@@ -64,7 +64,8 @@ class Shelf(models.Model):
 
 class Bin(models.Model):
     # Fixed: Linked to Shelf instead of Zone
-    shelf = models.ForeignKey(Shelf, on_delete=models.CASCADE, related_name="bins", null=True)
+    sshelf = models.ForeignKey(Shelf, on_delete=models.CASCADE, related_name="bins")  # Remove null=True
+
     # Optional direct zone link if needed for legacy, but hierarchy prefers shelf
     zone = models.ForeignKey(Zone, on_delete=models.CASCADE, related_name="bins_direct", null=True, blank=True)
     
@@ -73,6 +74,9 @@ class Bin(models.Model):
 
     def __str__(self):
         return self.bin_code
+
+    class Meta:
+        unique_together = ('shelf', 'bin_code')
 
 
 class BinInventory(models.Model):

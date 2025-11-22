@@ -30,12 +30,7 @@ class Cart(models.Model):
 
     @property
     def total_amount(self) -> Decimal:
-        from .cart import CartItem  # self-reference safe, but we can also use related_name
-
-        total = (
-            self.items.aggregate(total=models.Sum("total_price"))["total"]
-            or Decimal("0.00")
-        )
+        total = self.items.aggregate(total=models.Sum("total_price"))["total"] or Decimal("0.00")
         return total
 
 

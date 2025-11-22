@@ -8,7 +8,7 @@ from rest_framework import status, viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
+from django.db import models
 from apps.accounts.permissions import IsCustomer  # Added Import
 from apps.payments.models import Payment
 from .models import Order, Cart, CartItem
