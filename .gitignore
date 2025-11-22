@@ -16,7 +16,7 @@ venv/
 ENV/
 env/
 .venv/
-
+.github
 # Django
 *.log
 db.sqlite3
