@@ -1,0 +1,211 @@
+.
+├── apps
+│   ├── accounts
+│   │   ├── admin.py
+│   │   ├── apps.py
+│   │   ├── __init__.py
+│   │   ├── management
+│   │   │   └── commands
+│   │   │       ├── cleanup_auth_data.py
+│   │   │       └── create_admin.py
+│   │   ├── managers.py
+│   │   ├── middleware.py
+│   │   ├── migrations
+│   │   │   ├── 0001_initial.py
+│   │   │   ├── 0002_remove_user_app_role.py
+│   │   │   └── __init__.py
+│   │   ├── models.py
+│   │   ├── permissions.py
+│   │   ├── receivers.py
+│   │   ├── serializers.py
+│   │   ├── signals.py
+│   │   ├── tasks.py
+│   │   ├── tests.py
+│   │   ├── urls.py
+│   │   ├── utils.py
+│   │   ├── views_onboarding.py
+│   │   ├── views.py
+│   │   └── views_roles.py
+│   ├── analytics
+│   │   ├── admin.py
+│   │   ├── apps.py
+│   │   ├── __init__.py
+│   │   ├── migrations
+│   │   │   └── __init__.py
+│   │   ├── models.py
+│   │   ├── receivers.py
+│   │   ├── serializers.py
+│   │   ├── services.py
+│   │   ├── tasks.py
+│   │   ├── tests.py
+│   │   ├── urls.py
+│   │   └── views.py
+│   ├── catalog
+│   │   ├── admin.py
+│   │   ├── apps.py
+│   │   ├── __init__.py
+│   │   ├── management
+│   │   │   └── commands
+│   │   │       └── import_catalog.py
+│   │   ├── migrations
+│   │   │   └── __init__.py
+│   │   ├── models.py
+│   │   ├── serializers.py
+│   │   ├── tests.py
+│   │   ├── urls.py
+│   │   └── views.py
+│   ├── delivery
+│   │   ├── admin.py
+│   │   ├── apps.py
+│   │   ├── consumers.py
+│   │   ├── __init__.py
+│   │   ├── migrations
+│   │   │   └── __init__.py
+│   │   ├── models.py
+│   │   ├── receivers.py
+│   │   ├── routing.py
+│   │   ├── serializers.py
+│   │   ├── signals.py
+│   │   ├── tasks.py
+│   │   ├── tests.py
+│   │   ├── urls.py
+│   │   ├── utils.py
+│   │   └── views.py
+│   ├── __init__.py
+│   ├── inventory
+│   │   ├── admin.py
+│   │   ├── apps.py
+│   │   ├── __init__.py
+│   │   ├── management
+│   │   │   └── commands
+│   │   │       └── reconcile_inventory.py
+│   │   ├── migrations
+│   │   │   └── __init__.py
+│   │   ├── models.py
+│   │   ├── receivers.py
+│   │   ├── serializers.py
+│   │   ├── services.py
+│   │   ├── tasks.py
+│   │   ├── tests.py
+│   │   ├── urls.py
+│   │   └── views.py
+│   ├── notifications
+│   │   ├── admin.py
+│   │   ├── apps.py
+│   │   ├── fcm.py
+│   │   ├── __init__.py
+│   │   ├── migrations
+│   │   │   └── __init__.py
+│   │   ├── models.py
+│   │   ├── receivers.py
+│   │   ├── serializers.py
+│   │   ├── services.py
+│   │   ├── signals.py
+│   │   ├── tasks.py
+│   │   ├── tests.py
+│   │   ├── urls.py
+│   │   └── views.py
+│   ├── orders
+│   │   ├── admin.py
+│   │   ├── apps.py
+│   │   ├── Dockerfile
+│   │   ├── __init__.py
+│   │   ├── migrations
+│   │   │   └── __init__.py
+│   │   ├── models
+│   │   │   ├── cancellation.py
+│   │   │   ├── cart.py
+│   │   │   ├── __init__.py
+│   │   │   ├── item.py
+│   │   │   ├── order.py
+│   │   │   └── timeline.py
+│   │   ├── receivers.py
+│   │   ├── serializers.py
+│   │   ├── services.py
+│   │   ├── signals.py
+│   │   ├── tasks.py
+│   │   ├── tests_order_flow.py
+│   │   ├── tests.py
+│   │   ├── urls.py
+│   │   └── views.py
+│   ├── payments
+│   │   ├── admin.py
+│   │   ├── apps.py
+│   │   ├── __init__.py
+│   │   ├── migrations
+│   │   │   └── __init__.py
+│   │   ├── models.py
+│   │   ├── receivers.py
+│   │   ├── serializers.py
+│   │   ├── services.py
+│   │   ├── signals.py
+│   │   ├── tasks.py
+│   │   ├── tests.py
+│   │   ├── urls.py
+│   │   └── views.py
+│   ├── utils
+│   │   ├── admin.py
+│   │   ├── apps.py
+│   │   ├── exceptions.py
+│   │   ├── health.py
+│   │   ├── __init__.py
+│   │   ├── logging.py
+│   │   ├── middleware.py
+│   │   ├── migrations
+│   │   │   └── __init__.py
+│   │   ├── models.py
+│   │   ├── pagination.py
+│   │   ├── permissions.py
+│   │   ├── serializers.py
+│   │   ├── tasks.py
+│   │   ├── tests.py
+│   │   ├── throttle.py
+│   │   ├── urls.py
+│   │   ├── utils.py
+│   │   ├── validators.py
+│   │   └── views.py
+│   └── warehouse
+│       ├── admin.py
+│       ├── apps.py
+│       ├── consumers.py
+│       ├── exceptions.py
+│       ├── __init__.py
+│       ├── management
+│       │   └── commands
+│       │       └── seed_warehouse.py
+│       ├── middleware.py
+│       ├── migrations
+│       │   └── __init__.py
+│       ├── models.py
+│       ├── notifications.py
+│       ├── permissions.py
+│       ├── realtime.py
+│       ├── receivers.py
+│       ├── routing.py
+│       ├── serializers.py
+│       ├── services.py
+│       ├── signals.py
+│       ├── tasks.py
+│       ├── tests.py
+│       ├── urls.py
+│       ├── utils
+│       │   ├── __init__.py
+│       │   └── warehouse_selector.py
+│       ├── views.py
+│       └── websocket.py
+├── config
+│   ├── asgi.py
+│   ├── celery.py
+│   ├── __init__.py
+│   ├── settings.py
+│   ├── urls.py
+│   └── wsgi.py
+├── docker-compose.yml
+├── Dockerfile
+├── .env
+├── manage.py
+├── project_structure.txt
+├── README.md
+└── requirements.txt
+
+33 directories, 176 files

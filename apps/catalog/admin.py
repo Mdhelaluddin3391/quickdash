@@ -1,0 +1,37 @@
+# apps/catalog/admin.py
+from django.contrib import admin
+from .models import Category, Brand, SKU
+
+
+@admin.register(Category)
+class CategoryAdmin(admin.ModelAdmin):
+    list_display = ("name", "slug", "parent", "is_active", "sort_order")
+    list_filter = ("is_active", "parent")
+    search_fields = ("name", "slug")
+    prepopulated_fields = {"slug": ("name",)}
+    ordering = ("sort_order", "name")
+
+
+@admin.register(Brand)
+class BrandAdmin(admin.ModelAdmin):
+    list_display = ("name", "slug", "is_active")
+    search_fields = ("name", "slug")
+    prepopulated_fields = {"slug": ("name",)}
+    list_filter = ("is_active",)
+
+
+@admin.register(SKU)
+class SKUAdmin(admin.ModelAdmin):
+    list_display = (
+        "sku_code",
+        "name",
+        "category",
+        "brand",
+        "sale_price",
+        "is_active",
+        "is_featured",
+    )
+    search_fields = ("sku_code", "name", "primary_barcode", "search_keywords")
+    list_filter = ("category", "brand", "is_active", "is_featured")
+    list_editable = ("sale_price", "is_active", "is_featured")
+    readonly_fields = ("created_at", "updated_at")
