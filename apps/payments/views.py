@@ -207,15 +207,14 @@ class RazorpayWebhookView(View):
                 gateway_order_id = payment_entity["order_id"]
                 gateway_payment_id = payment_entity["id"]
 
-                # Try to relate back to PaymentIntent and Payment
-                try:
-                    intent = PaymentIntent.objects.filter(
-                        gateway_order_id=gateway_order_id
-                    ).order_by("-created_at")[0]
+                intent = PaymentIntent.objects.filter(gateway_order_id=gateway_order_id).order_by("-created_at").first()
+
+                if intent:
                     order = intent.order
-                except IndexError:
-                    intent = None
+                else:
+                    logger.error(f"Webhook Critical: Payment captured but PaymentIntent not found for gateway_order_id: {gateway_order_id}")
                     order = None
+                    intent = None
 
                 payment, created = Payment.objects.get_or_create(
                     transaction_id=gateway_payment_id,

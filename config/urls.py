@@ -17,8 +17,17 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 
+
+
+def home_view(request):
+    return HttpResponse("QuickDash Server is Running! ")
+
+
 urlpatterns = [
+    path("", home_view),
+
     path("admin/", admin.site.urls),
+
     path("api/v1/auth/", include("apps.accounts.urls")),
     path("api/v1/wms/", include("apps.warehouse.urls")),
     path("api/v1/orders/", include("apps.orders.urls")),

@@ -18,12 +18,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY & CONFIGURATION
 # ==========================================
 SECRET_KEY = config("SECRET_KEY")
-DEBUG = config("DEBUG", default=False, cast=bool)
+DEBUG = config("DEBUG", default=True, cast=bool)
 
 ALLOWED_HOSTS = config(
     "ALLOWED_HOSTS",
     default="127.0.0.1,localhost",
 ).split(",")
+
+
+FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
+
 
 # Separate JWT signing key (can rotate independently)
 JWT_SIGNING_KEY = config("JWT_SIGNING_KEY", default=SECRET_KEY)
@@ -112,8 +116,9 @@ if DATABASE_URL:
     DATABASES["default"] = dj_database_url.parse(
         DATABASE_URL,
         conn_max_age=600,
+        engine="django.contrib.gis.db.backends.postgis"  # [ADD THIS] Engine explicitly pass karein
     )
-
+DATABASES["default"]["ENGINE"] = "django.contrib.gis.db.backends.postgis"
 # ==========================================
 # REDIS / CACHE / CHANNELS / CELERY
 # ==========================================

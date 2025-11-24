@@ -1,31 +1,25 @@
-# apps/notifications/tasks.py
 import logging
-
 from celery import shared_task
 from django.db import transaction
 from django.utils import timezone
+from django.conf import settings
+from twilio.rest import Client
+from twilio.base.exceptions import TwilioRestException
 
 from .models import Notification, NotificationChannel, NotificationStatus, FCMDevice
 from .fcm import send_push_to_device
 
 logger = logging.getLogger(__name__)
 
-
 def _send_push_notification(notification: Notification) -> str | None:
     """
     Push via FCM to all active devices of user.
     """
-    devices = FCMDevice.objects.filter(
-        user=notification.user,
-        is_active=True,
-    )
-
+    devices = FCMDevice.objects.filter(user=notification.user, is_active=True)
     if not devices.exists():
-        logger.info("No active FCM devices for user %s", notification.user_id)
         return None
 
     last_response = None
-
     for dev in devices:
         resp = send_push_to_device(
             device=dev,
@@ -33,96 +27,73 @@ def _send_push_notification(notification: Notification) -> str | None:
             body=notification.body,
             data=notification.data,
         )
-        last_response = resp
-
-        if resp is None:
-            # if token invalid, optionally deactivate
-            # dev.is_active = False
-            # dev.save(update_fields=["is_active"])
-            pass
-
+        if resp:
+            last_response = resp
     return last_response
-
 
 def _send_sms_notification(notification: Notification) -> str | None:
     """
-    Dummy SMS sender – integrate with real SMS provider here.
+    Sends actual SMS using Twilio credentials from settings.
     """
     user = notification.user
     phone = getattr(user, "phone", None)
+    
     if not phone:
-        logger.warning(
-            "Cannot send SMS notification %s – user %s has no phone.",
-            notification.id,
-            user.id,
-        )
+        logger.warning(f"Cannot send SMS: User {user.id} has no phone number.")
         return None
 
-    logger.info(
-        "SMS to %s: %s",
-        phone,
-        notification.body,
-    )
-    # TODO: integrate with SMS provider (Exotel/Twilio/etc.)
-    return "sms-mock-id"
+    # Twilio Credentials Check
+    account_sid = settings.TWILIO_ACCOUNT_SID
+    auth_token = settings.TWILIO_AUTH_TOKEN
+    from_number = settings.TWILIO_FROM_NUMBER
 
+    if not all([account_sid, auth_token, from_number]):
+        logger.error("Twilio credentials missing in settings. SMS not sent.")
+        return None
+
+    try:
+        client = Client(account_sid, auth_token)
+        message = client.messages.create(
+            body=notification.body,
+            from_=from_number,
+            to=phone
+        )
+        logger.info(f"SMS sent to {phone}. SID: {message.sid}")
+        return message.sid
+
+    except TwilioRestException as e:
+        logger.error(f"Twilio Error sending SMS to {phone}: {e}")
+        return None
+    except Exception as e:
+        logger.exception(f"Unexpected error sending SMS: {e}")
+        return None
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=10)
 def send_notification_task(self, notification_id: str):
-    """
-    Sends a single Notification instance via its channel.
-    """
     try:
         with transaction.atomic():
-            notification = (
-                Notification.objects.select_for_update().get(id=notification_id)
-            )
+            # Lock the row to prevent race conditions
+            notification = Notification.objects.select_for_update().get(id=notification_id)
 
             if notification.status == NotificationStatus.SENT:
-                logger.info("Notification %s already sent, skipping", notification_id)
                 return
 
+            provider_id = None
             if notification.channel == NotificationChannel.PUSH:
                 provider_id = _send_push_notification(notification)
-
             elif notification.channel == NotificationChannel.SMS:
                 provider_id = _send_sms_notification(notification)
-
             else:
-                # For now we treat email/whatsapp as not implemented
-                logger.info(
-                    "Channel %s not implemented for notification %s",
-                    notification.channel,
-                    notification.id,
-                )
-                provider_id = None
+                logger.info(f"Channel {notification.channel} not implemented yet.")
 
+            # Update status
             notification.provider_message_id = provider_id or ""
-            notification.status = NotificationStatus.SENT
+            notification.status = NotificationStatus.SENT if provider_id else NotificationStatus.FAILED
             notification.sent_at = timezone.now()
-            notification.error_message = ""
-            notification.save(
-                update_fields=[
-                    "provider_message_id",
-                    "status",
-                    "sent_at",
-                    "error_message",
-                ]
-            )
+            notification.save(update_fields=["provider_message_id", "status", "sent_at"])
 
     except Notification.DoesNotExist:
-        logger.error("Notification %s does not exist", notification_id)
-        return
-
+        logger.error(f"Notification {notification_id} not found.")
     except Exception as exc:
-        logger.exception(
-            "Failed to send notification %s: %s", notification_id, exc
-        )
-        try:
-            notification = Notification.objects.get(id=notification_id)
-            notification.status = NotificationStatus.FAILED
-            notification.error_message = str(exc)
-            notification.save(update_fields=["status", "error_message"])
-        except Notification.DoesNotExist:
-            pass
-        raise self.retry(exc=exc)
+        logger.exception(f"Failed to send notification {notification_id}")
+        self.retry(exc=exc)
