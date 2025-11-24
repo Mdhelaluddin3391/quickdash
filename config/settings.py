@@ -20,17 +20,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default=False, cast=bool)
 
-if not DEBUG:
-    SECURE_SSL_REDIRECT = True
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-
-    SECURE_HSTS_SECONDS = 60 * 60 * 24 * 365  # 1 year
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
-
-    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-
+ALLOWED_HOSTS = config(
+    "ALLOWED_HOSTS",
+    default="127.0.0.1,localhost",
+).split(",")
 
 # Separate JWT signing key (can rotate independently)
 JWT_SIGNING_KEY = config("JWT_SIGNING_KEY", default=SECRET_KEY)
@@ -80,9 +73,7 @@ MIDDLEWARE = [
     "apps.utils.middleware.RequestLogMiddleware",
 ]
 
-
-
-ROOT_URLCONF = 'config.urls'
+ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [
     {
@@ -159,7 +150,7 @@ CELERY_BEAT_SCHEDULE = {
         "args": (),  # "today" by default
     },
     "orders-auto-cancel-every-5-mins": {
-        "task": "auto_cancel_unpaid_orders",
+        "task": "auto_cancel_unpaid_orders",  # make sure Celery task name matches
         "schedule": crontab(minute="*/5"),
     },
 }
@@ -176,11 +167,11 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-
-
-# --- Internationalization ---
-LANGUAGE_CODE = 'en-us'
-TIME_ZONE = config('TIME_ZONE', default='UTC')
+# ==========================================
+# I18N / TZ
+# ==========================================
+LANGUAGE_CODE = "en-us"
+TIME_ZONE = config("TIME_ZONE", default="UTC")
 USE_I18N = True
 USE_TZ = True
 
@@ -203,7 +194,7 @@ REST_FRAMEWORK = {
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.IsAuthenticated
+        "rest_framework.permissions.IsAuthenticated",  # secure default
     ),
     "DEFAULT_THROTTLE_CLASSES": [
         "apps.utils.throttle.BurstRateThrottle",
@@ -212,24 +203,18 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "burst": "20/min",
         "sustained": "300/hour",
-    }
-}
-
-
-
-
-
-CELERY_BEAT_SCHEDULE = {
-    "run-daily-analytics": {
-        "task": "apps.analytics.tasks.run_daily_analytics_for_date",
-        "schedule": 60 * 60 * 24,  # daily
-        "args": (),  # empty means "today"
     },
 }
 
+# Browsable API only in DEBUG
+if not DEBUG:
+    REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = [
+        "rest_framework.renderers.JSONRenderer",
+    ]
 
-JWT_SIGNING_KEY = config("JWT_SIGNING_KEY", default=SECRET_KEY)
-
+# ==========================================
+# SIMPLE JWT
+# ==========================================
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
@@ -240,16 +225,19 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
+# ==========================================
+# CORS / CSRF
+# ==========================================
+CORS_ALLOWED_ORIGINS = config(
+    "CORS_ALLOWED_ORIGINS",
+    default="http://localhost:3000,http://127.0.0.1:3000",
+).split(",")
 
-
-# --- CORS Settings ---
-CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='http://localhost:3000,http://127.0.0.1:3000').split(',')
-
-# Optional: for production behind domain, set CSRF_TRUSTED_ORIGINS
-CSRF_TRUSTED_ORIGINS = config(
-    "CSRF_TRUSTED_ORIGINS",
-    default="",
-).split(",") if config("CSRF_TRUSTED_ORIGINS", default="") else []
+CSRF_TRUSTED_ORIGINS = (
+    config("CSRF_TRUSTED_ORIGINS", default="").split(",")
+    if config("CSRF_TRUSTED_ORIGINS", default="")
+    else []
+)
 
 # ==========================================
 # THIRD PARTY KEYS

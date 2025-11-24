@@ -1,6 +1,6 @@
-# apps/inventory/views.py
 import logging
 
+from django.db import transaction
 from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -87,10 +87,6 @@ class AdjustStockAPIView(APIView):
 
     POST /api/v1/inventory/adjust/
     body: { "sku_id": "...", "warehouse_id": "...", "quantity": +10/-5 }
-
-    Microservice rule still respected:
-    - Normal flows hammesha WMS movement + signal se aane chahiye,
-      yeh sirf override hai.
     """
     permission_classes = [IsAuthenticated, IsWarehouseManagerEmployee]
 
@@ -120,33 +116,34 @@ class AdjustStockAPIView(APIView):
             )
 
         try:
-            stock, created = InventoryStock.objects.select_for_update().get_or_create(
-                warehouse_id=warehouse_id,
-                sku_id=sku_id,
-                defaults={"available_qty": 0, "reserved_qty": 0},
-            )
-
-            new_available = stock.available_qty + qty_delta
-            if new_available < 0:
-                return Response(
-                    {"detail": "Stock cannot be negative."},
-                    status=status.HTTP_400_BAD_REQUEST,
+            with transaction.atomic():
+                stock, created = InventoryStock.objects.select_for_update().get_or_create(
+                    warehouse_id=warehouse_id,
+                    sku_id=sku_id,
+                    defaults={"available_qty": 0, "reserved_qty": 0},
                 )
 
-            stock.available_qty = new_available
-            stock.save()
+                new_available = stock.available_qty + qty_delta
+                if new_available < 0:
+                    return Response(
+                        {"detail": "Stock cannot be negative."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
-            InventoryHistory.objects.create(
-                stock=stock,
-                warehouse_id=warehouse_id,
-                sku_id=sku_id,
-                delta_available=qty_delta,
-                delta_reserved=0,
-                available_after=stock.available_qty,
-                reserved_after=stock.reserved_qty,
-                change_type="manual_adjustment",
-                reference="MANUAL_UI",
-            )
+                stock.available_qty = new_available
+                stock.save()
+
+                InventoryHistory.objects.create(
+                    stock=stock,
+                    warehouse_id=warehouse_id,
+                    sku_id=sku_id,
+                    delta_available=qty_delta,
+                    delta_reserved=0,
+                    available_after=stock.available_qty,
+                    reserved_after=stock.reserved_qty,
+                    change_type="manual_adjustment",
+                    reference="MANUAL_UI",
+                )
 
             return Response(
                 {

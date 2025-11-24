@@ -1,9 +1,9 @@
-# apps/delivery/consumers.py
 import json
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.contrib.gis.geos import Point
+from django.utils import timezone
 
 from .models import DeliveryTask
 
@@ -50,9 +50,7 @@ class RiderLocationConsumer(AsyncWebsocketConsumer):
             return
 
         profile.current_location = Point(float(lng), float(lat))
-        profile.last_location_update = (
-            __import__("django.utils.timezone").utils.timezone.now()
-        )
+        profile.last_location_update = timezone.now()
         profile.save(update_fields=["current_location", "last_location_update"])
 
     @database_sync_to_async

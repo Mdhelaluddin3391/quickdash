@@ -1,5 +1,5 @@
 # apps/delivery/views.py
-from django.db import transaction
+from django.db import transaction, models
 from django.utils import timezone
 
 from rest_framework import viewsets, views, status

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 IDEMPOTENCY_HEADER = "HTTP_IDEMPOTENCY_KEY"
 
 # Safety limits
-MAX_RESPONSE_BYTES = 10_000  # 10 KB
+MAX_RESPONSE_BYTES = 10_000  # 10KB
 ALLOWED_CONTENT_TYPES = {"application/json"}
 
 
@@ -55,7 +55,6 @@ class IdempotencyMiddleware(MiddlewareMixin):
                         status=rec.response_status,
                         safe=isinstance(rec.response_body, dict),
                     )
-
         except Exception:
             logger.exception("Failed checking idempotency key")
 
@@ -70,7 +69,6 @@ class IdempotencyMiddleware(MiddlewareMixin):
 
         try:
             should_store = response.get("X-STORE-IDEMPOTENCY", "0") == "1"
-
             if not should_store:
                 return response
 
@@ -101,7 +99,9 @@ class IdempotencyMiddleware(MiddlewareMixin):
                 key=key,
                 defaults={
                     "route": request.path,
-                    "request_hash": getattr(request, "_idempotency_request_hash", ""),
+                    "request_hash": getattr(
+                        request, "_idempotency_request_hash", ""
+                    ),
                     "response_status": response.status_code,
                     "response_body": body_json,
                     "expires_at": expires_at,
