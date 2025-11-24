@@ -31,14 +31,25 @@ class RiderDashboardView(views.APIView):
 
     def post(self, request):
         profile = request.user.rider_profile
+
+        if profile.on_duty:
+            # going offline? ensure no active tasks
+            active_task_exists = DeliveryTask.objects.filter(
+                rider=profile,
+                status__in=[
+                    DeliveryTask.DeliveryStatus.ACCEPTED,
+                    DeliveryTask.DeliveryStatus.AT_STORE,
+                    DeliveryTask.DeliveryStatus.PICKED_UP,
+                ],
+            ).exists()
+            if active_task_exists:
+                return Response(
+                    {"detail": "Cannot go offline with active deliveries."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         profile.on_duty = not profile.on_duty
         profile.save(update_fields=["on_duty"])
-        return Response(
-            {
-                "status": "ONLINE" if profile.on_duty else "OFFLINE",
-                "on_duty": profile.on_duty,
-            }
-        )
 
 
 class DeliveryTaskViewSet(viewsets.ModelViewSet):

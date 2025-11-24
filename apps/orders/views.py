@@ -26,6 +26,7 @@ from .services import (
     process_successful_payment,
     cancel_order,
 )
+from apps.payments.services import create_razorpay_order
 
 logger = logging.getLogger(__name__)
 
@@ -66,15 +67,15 @@ class AddToCartView(APIView):
 # Checkout / Payment Views
 # =========================================================
 
+
 class CheckoutView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsCustomer]
 
     def post(self, request):
         serializer = CreateOrderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        # Create Order from Cart
         order, payment, err = create_order_from_cart(
             user=request.user,
             warehouse_id=data["warehouse_id"],
@@ -87,15 +88,14 @@ class CheckoutView(APIView):
         if err:
             return Response({"error": err}, status=status.HTTP_400_BAD_REQUEST)
 
-        # COD → straight confirm
         if data.get("payment_method") == "COD":
             ok, msg = process_successful_payment(order)
             if not ok:
+                logger.error("COD order confirm failed", extra={"order_id": str(order.id), "detail": msg})
                 return Response(
-                    {"error": "Failed to confirm COD order", "detail": msg},
+                    {"error": "Failed to confirm COD order"},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
-            # Clear cart
             Cart.objects.filter(customer=request.user).delete()
             return Response(
                 {
@@ -105,43 +105,38 @@ class CheckoutView(APIView):
                 status=status.HTTP_201_CREATED,
             )
 
-        # Online payment (Razorpay)
+        # Online payment
         try:
-            client = razorpay.Client(
-                auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
-            )
-            amount_paise = int(float(order.final_amount) * 100)
-            rzp_order = client.order.create(
-                dict(
-                    amount=amount_paise,
-                    currency="INR",
-                    payment_capture=1,
-                    notes={"order_id": str(order.id)},
-                )
+            rzp_order_id = create_razorpay_order(order, order.final_amount)
+        except RuntimeError as e:
+            logger.error("Razorpay misconfigured: %s", e)
+            return Response(
+                {"error": "Payment gateway is not configured"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         except Exception as e:
-            logger.error(f"Razorpay Error: {e}")
+            logger.exception("Razorpay order create failed for order %s", order.id)
             return Response({"error": "Payment Gateway Error"}, status=500)
 
-        # Update Payment Record
         if not payment:
             payment = Payment.objects.create(
                 order=order,
+                user=request.user,
                 amount=order.final_amount,
                 payment_method=Payment.PaymentMethod.RAZORPAY,
-                gateway_order_id=rzp_order["id"],
+                gateway_order_id=rzp_order_id,
             )
         else:
-            payment.gateway_order_id = rzp_order["id"]
+            payment.gateway_order_id = rzp_order_id
             payment.save(update_fields=["gateway_order_id"])
 
-        order.payment_gateway_order_id = rzp_order["id"]
+        order.payment_gateway_order_id = rzp_order_id
         order.save(update_fields=["payment_gateway_order_id"])
 
         return Response(
             {
                 "order_id": str(order.id),
-                "razorpay_order_id": rzp_order["id"],
+                "razorpay_order_id": rzp_order_id,
                 "amount": str(order.final_amount),
                 "currency": "INR",
             },
@@ -212,9 +207,10 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
         order = self.get_object()
-        
-        # Cancellation Window Check
+
         window_seconds = getattr(settings, "ORDER_CANCELLATION_WINDOW", 300)
+        cancelled_by = "OPS" if request.user.is_staff else "CUSTOMER"
+
         if not request.user.is_staff:
             cutoff = order.created_at + timedelta(seconds=window_seconds)
             if timezone.now() > cutoff:
@@ -224,7 +220,7 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
         serializer.is_valid(raise_exception=True)
         reason = serializer.validated_data.get("reason", "")
 
-        ok, msg = cancel_order(order, cancelled_by="CUSTOMER", reason=reason)
+        ok, msg = cancel_order(order, cancelled_by=cancelled_by, reason=reason)
         if not ok:
             return Response({"error": msg}, status=400)
 

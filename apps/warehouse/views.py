@@ -52,11 +52,8 @@ class WarehouseViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class BinInventoryList(generics.ListAPIView):
-    """
-    GET /api/v1/wms/inventory/bin/?warehouse=<id>&sku=<id>
-    """
-    serializer_class = BinInventorySerializer
     permission_classes = [IsAuthenticated, WarehouseManagerOnly]
+    serializer_class = BinInventorySerializer
 
     def get_queryset(self):
         qs = BinInventory.objects.select_related(
@@ -65,12 +62,18 @@ class BinInventoryList(generics.ListAPIView):
         )
         wh = self.request.query_params.get("warehouse")
         sku = self.request.query_params.get("sku")
+
+        # limit to manager's warehouse if you store mapping
+        emp = getattr(self.request.user, "employee_profile", None)
+        if emp:
+            qs = qs.filter(bin__zone__warehouse__code=emp.warehouse_code)
+
         if wh:
             qs = qs.filter(bin__zone__warehouse_id=wh)
         if sku:
             qs = qs.filter(sku_id=sku)
-        return qs.order_by("bin__bin_code")
 
+        return qs.order_by("bin__bin_code")
 
 # =========================================================
 # PICKING TASKS (PICKER APP)

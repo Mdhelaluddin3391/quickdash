@@ -79,13 +79,22 @@ class CreateOrderSerializer(serializers.Serializer):
 
 
 class AddToCartSerializer(serializers.Serializer):
-    """
-    Cart mein item add/update karne ke liye input serializer.
-    quantity == 0 -> item remove
-    """
     sku_id = serializers.UUIDField()
     quantity = serializers.IntegerField(min_value=0)
 
+    def validate(self, attrs):
+        sku_id = attrs["sku_id"]
+        qty = attrs["quantity"]
+        try:
+            sku = SKU.objects.get(id=sku_id, is_active=True)
+        except SKU.DoesNotExist:
+            raise serializers.ValidationError("Invalid or inactive SKU.")
+
+        if qty > sku.max_order_qty:
+            raise serializers.ValidationError(
+                f"Maximum {sku.max_order_qty} units allowed for this item."
+            )
+        return attrs
 
 class PaymentVerificationSerializer(serializers.Serializer):
     """Validates payment gateway signature data (Razorpay)."""

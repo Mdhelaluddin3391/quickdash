@@ -4,6 +4,7 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.contrib.gis.geos import Point
 from django.utils import timezone
+from apps.utils.validators import validate_lat_lng
 
 from .models import DeliveryTask
 
@@ -28,6 +29,11 @@ class RiderLocationConsumer(AsyncWebsocketConsumer):
 
         if lat is None or lng is None:
             return
+
+        try:
+            validate_lat_lng(float(lat), float(lng))
+        except ValueError:
+            return  # silently ignore invalid coordinates
 
         await self.update_rider_location(lat, lng)
 
