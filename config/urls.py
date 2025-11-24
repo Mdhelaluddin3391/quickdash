@@ -16,7 +16,7 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
-
+from django.http import HttpResponse  # <--- THIS LINE WAS MISSING
 
 
 def home_view(request):
@@ -37,6 +37,7 @@ urlpatterns = [
     path("api/v1/inventory/", include("apps.inventory.urls")),
     path("api/v1/analytics/", include("apps.analytics.urls")),
     path("api/v1/notifications/", include("apps.notifications.urls")),
+    path("api/v1/utils/", include("apps.utils.urls")),
 
 ]
 
