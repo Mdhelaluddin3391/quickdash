@@ -1,16 +1,15 @@
 # apps/warehouse/models.py
 import uuid
+import logging
 from django.db import models, transaction
 from django.conf import settings
 from django.utils import timezone
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.db.models import Sum
-import uuid
-from django.db import models
-from django.conf import settings
 from apps.catalog.models import SKU
-from apps.catalog.models import SKU
+
+logger = logging.getLogger(__name__)
 
 import logging
 logger = logging.getLogger(__name__)

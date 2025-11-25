@@ -1,0 +1,33 @@
+# --- Python & Django ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.sqlite3
+.db.sqlite3
+db.sqlite3
+
+# --- Virtual Environments ---
+env/
+venv/
+.venv/
+ENV/
+
+# --- Environment Variables (Security Risk) ---
+.env
+.env.*
+!.env.example
+
+# --- Static & Media (Auto-generated) ---
+/staticfiles/
+/media/
+
+# --- IDE & Editor Configs ---
+.idea/
+.vscode/
+.DS_Store
+
+# --- Logs & System ---
+*.log
+Thumbs.db

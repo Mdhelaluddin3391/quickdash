@@ -1,9 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+# [FIX] Removed duplicate import line here
 from .models import RiderProfile, EmployeeProfile, Address, CustomerProfile
-from .models import RiderProfile, EmployeeProfile  # already imported
-
-
 
 User = get_user_model()
 
@@ -13,7 +11,7 @@ User = get_user_model()
 # ======================
 
 def normalize_phone(phone: str) -> str:
-    from .utils import normalize_phone as _norm  # reuse utils :contentReference[oaicite:6]{index=6}
+    from .utils import normalize_phone as _norm
     return _norm(phone)
 
 
@@ -120,7 +118,7 @@ class CustomerMeSerializer(serializers.Serializer):
 
 
 # ======================
-# ADMIN / EMPLOYEE MGMT (existing)
+# ADMIN / EMPLOYEE MGMT
 # ======================
 
 class AdminCreateRiderSerializer(serializers.Serializer):
@@ -170,13 +168,7 @@ class ChangeUserRoleSerializer(serializers.Serializer):
     role = serializers.CharField(max_length=50)
 
 
-
-
-
 class RiderAdminListSerializer(serializers.ModelSerializer):
-    """
-    Admin ke liye Rider list / detail serializer.
-    """
     phone = serializers.CharField(source="user.phone", read_only=True)
     full_name = serializers.CharField(source="user.full_name", read_only=True)
 
@@ -196,9 +188,6 @@ class RiderAdminListSerializer(serializers.ModelSerializer):
 
 
 class EmployeeAdminListSerializer(serializers.ModelSerializer):
-    """
-    Admin / HR ke liye Employee list serializer.
-    """
     phone = serializers.CharField(source="user.phone", read_only=True)
     full_name = serializers.CharField(source="user.full_name", read_only=True)
 

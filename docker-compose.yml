@@ -21,7 +21,9 @@ services:
 
   web:
     build: .
-    command: daphne -b 0.0.0.0 -p 8000 config.asgi:application
+    # [FIX] Use start.sh for prod startup
+    # Assuming start.sh is in the root of your project and copied to /code/ inside container
+    command: /bin/sh /code/start.sh
     env_file:
       - .env
     volumes:
@@ -34,7 +36,6 @@ services:
     networks:
       - main_net
 
-  # --- NAYA SERVICE ADDED ---
   nginx:
     image: nginx:latest
     ports:
@@ -50,7 +51,7 @@ services:
 
   worker:
     build: .
-    command: celery -A config worker --loglevel=info
+    command: /wait-for-db.sh celery -A config worker --loglevel=info
     env_file:
       - .env
     depends_on:
@@ -63,7 +64,7 @@ services:
 
   beat:
     build: .
-    command: celery -A config beat --loglevel=info
+    command: /wait-for-db.sh celery -A config beat --loglevel=info
     env_file:
       - .env
     depends_on:

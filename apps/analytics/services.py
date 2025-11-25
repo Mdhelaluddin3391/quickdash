@@ -29,9 +29,13 @@ def _start_end_of_day(day: date):
     """
     Given a date, return its start & end datetime in current timezone.
     """
-    tz = timezone.get_current_timezone()
-    start = tz.localize(timezone.datetime.combine(day, timezone.datetime.min.time()))
-    end = tz.localize(timezone.datetime.combine(day, timezone.datetime.max.time()))
+    # Django ka `make_aware` helper use karein jo ZoneInfo compatible hai
+    start_naive = timezone.datetime.combine(day, timezone.datetime.min.time())
+    end_naive = timezone.datetime.combine(day, timezone.datetime.max.time())
+    
+    start = timezone.make_aware(start_naive)
+    end = timezone.make_aware(end_naive)
+    
     return start, end
 
 

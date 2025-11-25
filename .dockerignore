@@ -1,16 +1,34 @@
+# --- Python Bytecode ---
 __pycache__
 *.pyc
 *.pyo
 *.pyd
 .Python
+
+# --- Virtual Environments (Container ke andar naya banega) ---
 env/
 venv/
+.venv/
 ENV/
+
+# --- Build Artifacts ---
 build/
 dist/
+*.egg-info/
+
+# --- Database (Docker will use Postgres container) ---
 *.sqlite3
+.db.sqlite3
+
+# --- Static & Media (Will be collected inside container) ---
 /media
 /staticfiles
+
+# --- Git & Configs ---
 .git
+.gitignore
+.dockerignore
+
+# --- Environment Variables (Docker compose handle karega) ---
 .env
- .env.prod
+.env.prod
