@@ -1,85 +1,103 @@
 version: '3.8'
 
 services:
+  # --- 1. Database (PostGIS for Location Features) ---
   db:
     image: postgis/postgis:15-3.4
-    environment:
-      POSTGRES_DB: ${DB_NAME}
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    restart: always
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
     networks:
-      - main_net
+      - quickdash_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
+  # --- 2. Redis (Cache & Celery Broker) ---
   redis:
     image: redis:7-alpine
+    restart: always
     volumes:
       - redis_data:/data
     networks:
-      - main_net
+      - quickdash_net
 
+  # --- 3. Web App (Django + Daphne) ---
   web:
     build: .
-    # [FIX] Use start.sh for prod startup
-    # Assuming start.sh is in the root of your project and copied to /code/ inside container
-    command: /bin/sh /code/start.sh
+    # 'start.sh' script migrations chalayegi, static collect karegi aur server start karegi
+    command: /bin/sh start.sh 
+    volumes:
+      - .:/code  # Live code reloading ke liye (Dev mode)
+      - static_volume:/code/staticfiles  # Collected static files yahan jayenge
+      - media_volume:/code/media  # Uploaded images yahan jayengi
+    expose:
+      - 8000
     env_file:
       - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - quickdash_net
+
+  # --- 4. Celery Worker (Background Tasks: OTP, Notifications) ---
+  worker:
+    build: .
+    command: celery -A config worker --loglevel=info
     volumes:
       - .:/code
-      - static_volume:/code/staticfiles
-      - media_volume:/code/media
+    env_file:
+      - .env
     depends_on:
       - db
       - redis
     networks:
-      - main_net
+      - quickdash_net
 
+  # --- 5. Celery Beat (Scheduled Tasks: Daily Analytics) ---
+  beat:
+    build: .
+    command: celery -A config beat --loglevel=info
+    volumes:
+      - .:/code
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    networks:
+      - quickdash_net
+
+  # --- 6. Nginx (Static Files Server & Gateway) ---
   nginx:
     image: nginx:latest
+    restart: always
     ports:
-      - "80:80"
+      - "80:80" # Browser main localhost:80 par chalega
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - static_volume:/code/staticfiles
-      - media_volume:/code/media
+      - static_volume:/code/staticfiles # Web container se share kiye gaye static files
+      - media_volume:/code/media # Uploaded images
     depends_on:
       - web
     networks:
-      - main_net
+      - quickdash_net
 
-  worker:
-    build: .
-    command: /wait-for-db.sh celery -A config worker --loglevel=info
-    env_file:
-      - .env
-    depends_on:
-      - db
-      - redis
-    volumes:
-      - .:/code
-    networks:
-      - main_net
-
-  beat:
-    build: .
-    command: /wait-for-db.sh celery -A config beat --loglevel=info
-    env_file:
-      - .env
-    depends_on:
-      - db
-      - redis
-    volumes:
-      - .:/code
-    networks:
-      - main_net
-
+# --- Volumes & Networks ---
 volumes:
-  db_data:
+  postgres_data:
   redis_data:
   static_volume:
   media_volume:
 
 networks:
-  main_net:
+  quickdash_net:
