@@ -13,7 +13,7 @@ from .views import (
     CustomerAddressDetailView,
     SetDefaultAddressView,
 )
-
+from .views_social import GoogleLoginView 
 from .views_roles import ChangeUserRole
 from .views_onboarding import (   # <--- NEW
     RiderApplyView,
@@ -45,4 +45,8 @@ urlpatterns = [
 
     # Admin: change app_role
     path("users/<uuid:user_id>/role/", ChangeUserRole.as_view()),
+
+    path('auth/google/', GoogleLoginView.as_view(), name='google-login'),
 ]
+
+

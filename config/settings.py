@@ -19,6 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ==========================================
 SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default=True, cast=bool)
+GOOGLE_CLIENT_ID = "857888499606-9f2b1vn2foqvmsq0hbonj8s9d7fae5db.apps.googleusercontent.com"
 
 ALLOWED_HOSTS = config(
     "ALLOWED_HOSTS",
@@ -62,6 +63,7 @@ INSTALLED_APPS = [
     "apps.analytics",
     "apps.catalog",
     "apps.utils",
+    "apps.web_admin",
 ]
 
 MIDDLEWARE = [

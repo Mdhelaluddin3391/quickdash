@@ -39,6 +39,7 @@ urlpatterns = [
     path("api/v1/analytics/", include("apps.analytics.urls")),
     path("api/v1/notifications/", include("apps.notifications.urls")),
     path("api/v1/utils/", include("apps.utils.urls")),
+    path("admin-panel/", include("apps.web_admin.urls")),
 
 ]
 
