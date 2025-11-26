@@ -19,8 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ==========================================
 SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default=True, cast=bool)
-GOOGLE_CLIENT_ID = "857888499606-9f2b1vn2foqvmsq0hbonj8s9d7fae5db.apps.googleusercontent.com"
-
+GOOGLE_CLIENT_ID = config("GOOGLE_CLIENT_ID", default="")
 ALLOWED_HOSTS = config(
     "ALLOWED_HOSTS",
     default="127.0.0.1,localhost",

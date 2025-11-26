@@ -1,3 +1,4 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Category Detail - QuickDash</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <link rel="stylesheet" href="assets/css/category_detail.css">
+    <link rel="stylesheet" href="{% static \'assets/css/category_detail.css\' %}">
 </head>
 <body>
     <header class="site-header">
@@ -35,6 +36,6 @@
         </main>
     </div>
 
-    <script src="assets/js/utils/api.js"></script>
-    <script src="assets/js/pages/cart.js"></script> </body>
+    <script src="{% static \'assets/js/utils/api.js\' %}"></script>
+    <script src="{% static \'assets/js/pages/cart.js\' %}"></script> </body>
 </html>

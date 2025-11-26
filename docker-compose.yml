@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  # --- 1. Database (PostGIS for Location Features) ---
+  # --- 1. Database (Upgraded to PostGIS 16) ---
   db:
-    image: postgis/postgis:15-3.4
+    image: postgis/postgis:16-3.4
     restart: always
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -19,7 +19,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # --- 2. Redis (Cache & Celery Broker) ---
+  # --- 2. Redis ---
   redis:
     image: redis:7-alpine
     restart: always
@@ -31,12 +31,11 @@ services:
   # --- 3. Web App (Django + Daphne) ---
   web:
     build: .
-    # 'start.sh' script migrations chalayegi, static collect karegi aur server start karegi
-    command: /bin/sh start.sh 
+    command: /start.sh
     volumes:
-      - .:/code  # Live code reloading ke liye (Dev mode)
-      - static_volume:/code/staticfiles  # Collected static files yahan jayenge
-      - media_volume:/code/media  # Uploaded images yahan jayengi
+      - .:/code
+      - static_volume:/code/staticfiles
+      - media_volume:/code/media
     expose:
       - 8000
     env_file:
@@ -49,7 +48,7 @@ services:
     networks:
       - quickdash_net
 
-  # --- 4. Celery Worker (Background Tasks: OTP, Notifications) ---
+  # --- 4. Celery Worker ---
   worker:
     build: .
     command: celery -A config worker --loglevel=info
@@ -63,7 +62,7 @@ services:
     networks:
       - quickdash_net
 
-  # --- 5. Celery Beat (Scheduled Tasks: Daily Analytics) ---
+  # --- 5. Celery Beat ---
   beat:
     build: .
     command: celery -A config beat --loglevel=info
@@ -77,22 +76,21 @@ services:
     networks:
       - quickdash_net
 
-  # --- 6. Nginx (Static Files Server & Gateway) ---
+  # --- 6. Nginx ---
   nginx:
     image: nginx:latest
     restart: always
     ports:
-      - "80:80" # Browser main localhost:80 par chalega
+      - "80:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - static_volume:/code/staticfiles # Web container se share kiye gaye static files
-      - media_volume:/code/media # Uploaded images
+      - static_volume:/code/staticfiles
+      - media_volume:/code/media
     depends_on:
       - web
     networks:
       - quickdash_net
 
-# --- Volumes & Networks ---
 volumes:
   postgres_data:
   redis_data:
