@@ -1,0 +1,426 @@
+/* --- 0. Global & Font Styles --- */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: "Poppins", sans-serif;
+    background-color: #f9f9f9;
+    color: #333;
+    padding-bottom: 90px; /* Sticky footer ke liye space */
+}
+
+.container {
+    max-width: 900px; /* Product page ke liye optimal width */
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* --- 1. Header Styles --- */
+.site-header {
+    background-color: #fff;
+    border-bottom: 1px solid #e0e0e0;
+    padding: 15px 0;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.header-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+.logo {
+    font-weight: bold;
+    font-size: 1.5rem;
+    color: #00a94f;
+    /* Center logo when back btn is present */
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.back-link, .cart-link {
+    font-size: 0.95rem;
+    color: #555;
+    text-decoration: none;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 2; /* Taki logo ke upar rahe */
+}
+
+.cart-link {
+    font-size: 1.3rem;
+    position: relative;
+}
+
+.cart-count {
+    position: absolute;
+    top: -5px;
+    right: -10px;
+    background-color: #e74c3c;
+    color: white;
+    border-radius: 50%;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+/* --- 2. Product Detail Layout --- */
+.product-detail-layout {
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    margin-top: 10px;
+}
+
+/* --- 3. Image Container --- */
+.product-image-container {
+    width: 100%;
+    padding: 30px;
+    border-bottom: 1px solid #f0f0f0;
+    position: relative;
+    text-align: center; /* Center image */
+}
+
+.product-image-container img {
+    max-width: 100%;
+    height: 300px; /* Fixed height */
+    object-fit: contain;
+}
+
+.product-discount-badge {
+    background-color: #e6f7ff;
+    color: #0056b3;
+    font-size: 0.8rem;
+    font-weight: bold;
+    padding: 4px 8px;
+    border-radius: 4px;
+    position: absolute;
+    top: 20px;
+    left: 20px;
+}
+
+/* --- 4. Info Container --- */
+.product-info-container {
+    padding: 25px;
+}
+
+.product-name {
+    font-size: 1.6rem;
+    font-weight: 700;
+    line-height: 1.3;
+    margin-bottom: 8px;
+}
+
+.product-quantity-desc {
+    font-size: 1rem;
+    color: #777;
+    margin-bottom: 20px;
+}
+
+.price-and-quantity {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 25px;
+    padding-bottom: 25px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.price-box .current-price {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #00a94f;
+    margin-right: 8px;
+}
+
+.price-box .old-price {
+    font-size: 1.1rem;
+    text-decoration: line-through;
+    color: #888;
+}
+
+/* Quantity Control (from cart.css) */
+.item-quantity-control {
+    display: flex;
+    align-items: center;
+    border: 1px solid #00a94f;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.quantity-btn {
+    background-color: #f7fff7;
+    border: none;
+    color: #00a94f;
+    font-weight: bold;
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 10px 14px;
+    transition: background-color 0.2s;
+}
+
+.quantity-btn:hover {
+    background-color: #e6f7ef;
+}
+.quantity-btn:disabled {
+    color: #aaa;
+    background-color: #f9f9f9;
+    cursor: not-allowed;
+}
+
+.quantity-value {
+    padding: 8px 12px;
+    font-weight: 700;
+    font-size: 1.1rem;
+    min-width: 20px;
+    text-align: center;
+}
+
+/* Description */
+.product-description {
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: #555;
+}
+.product-description h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 10px;
+}
+.product-description ul {
+    margin-top: 15px;
+    padding-left: 20px;
+}
+
+/* --- 5. Sticky Footer --- */
+.sticky-footer-cart {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background-color: #fff;
+    border-top: 1px solid #e0e0e0;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.08);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    z-index: 100;
+}
+
+.footer-price-summary {
+    display: flex;
+    flex-direction: column;
+}
+.footer-price-summary .item-count {
+    font-size: 0.85rem;
+    color: #777;
+}
+.footer-price-summary .total-price {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #00a94f;
+}
+
+.add-to-cart-btn {
+    background-color: #00a94f;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    padding: 15px 30px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+.add-to-cart-btn .fas {
+    margin-right: 8px;
+}
+.add-to-cart-btn:hover {
+    background-color: #008a3f;
+}
+
+/* Desktop View (Sticky footer hata denge) */
+@media (min-width: 768px) {
+    body {
+        padding-bottom: 0; /* Sticky footer ki zaroorat nahi */
+    }
+    
+    .product-detail-layout {
+        display: flex;
+        margin-top: 20px;
+    }
+    
+    .product-image-container {
+        flex: 1;
+        border-bottom: none;
+        border-right: 1px solid #f0f0f0;
+    }
+
+    .product-info-container {
+        flex: 1.2; /* Info ko thodi zyada jagah */
+    }
+
+    /* Footer ko content ke andar move kar denge */
+    .sticky-footer-cart {
+        position: static;
+        box-shadow: none;
+        border-top: none;
+        padding: 0;
+        margin-top: 20px;
+    }
+    
+    .add-to-cart-btn {
+        width: 100%; /* Full width button */
+    }
+    
+    .footer-price-summary {
+        display: none; /* Desktop par yeh extra info hata denge */
+    }
+}
+
+/* --- 6. REVIEWS SECTION STYLES (PRODUCT DETAIL) --- */
+.reviews-section {
+    margin-top: 20px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    padding: 25px;
+}
+
+.reviews-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+/* Review Form */
+.review-form-container {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 20px;
+    background-color: #fcfcfc;
+    margin-bottom: 25px;
+}
+.review-form-container h3 {
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin-bottom: 5px;
+}
+.review-form-container p {
+    font-size: 0.9rem;
+    color: #555;
+    margin-bottom: 15px;
+}
+.review-form-container .form-group {
+    margin-bottom: 15px;
+}
+.review-form-container .form-group label {
+    display: block;
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+.review-form-container textarea {
+    width: 100%;
+    padding: 12px 15px;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-family: "Poppins", sans-serif;
+    resize: vertical;
+}
+.btn-submit-review {
+    background-color: #00a94f;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    padding: 12px 20px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+.btn-submit-review:hover {
+    background-color: #008a3f;
+}
+
+/* Star Rating Input (profile_additions.css se copy) */
+.rating-stars-input {
+    display: flex;
+    flex-direction: row-reverse;
+    justify-content: flex-start; /* Left align */
+}
+.rating-stars-input input[type="radio"] { display: none; }
+.rating-stars-input label {
+    font-size: 1.8rem;
+    color: #ccc;
+    cursor: pointer;
+    transition: color 0.2s;
+    padding: 0 3px;
+}
+.rating-stars-input:hover label { color: #ffc107; }
+.rating-stars-input label:hover ~ label { color: #ccc; }
+.rating-stars-input input[type="radio"]:checked ~ label { color: #ffc107; }
+
+
+/* Review List */
+.review-list {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+.review-card {
+    border-bottom: 1px solid #f0f0f0;
+    padding-bottom: 20px;
+}
+.review-card:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+.review-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.review-user {
+    font-size: 1rem;
+    font-weight: 600;
+}
+.review-rating {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    color: #ffc107;
+}
+.review-rating span {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #333;
+    margin-left: 5px;
+}
+.review-comment {
+    font-size: 0.95rem;
+    color: #555;
+    line-height: 1.6;
+    margin-bottom: 10px;
+}
+.review-date {
+    font-size: 0.8rem;
+    color: #999;
+}

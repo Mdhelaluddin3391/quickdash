@@ -1,0 +1,78 @@
+/* --- 0. Global Styles --- */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: "Poppins", sans-serif;
+    background-color: #f0f2f5; /* Light grey background */
+    color: #333;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 20px;
+}
+
+/* --- 1. Denied Card --- */
+.denied-container {
+    width: 100%;
+}
+
+.denied-card {
+    max-width: 450px;
+    margin: 0 auto;
+    background-color: #fff;
+    border-radius: 12px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+    padding: 40px 30px;
+    text-align: center;
+}
+
+.denied-card .fas {
+    font-size: 3.5rem;
+    color: #e74c3c; /* Red color */
+    margin-bottom: 25px;
+}
+
+.denied-card h1 {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin-bottom: 15px;
+}
+
+.denied-card p {
+    font-size: 0.95rem;
+    color: #555;
+    line-height: 1.6;
+    margin-bottom: 20px;
+}
+
+.denied-card p strong {
+    color: #333;
+}
+
+.reload-btn {
+    padding: 12px 25px;
+    background-color: #00a94f;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    width: 100%;
+}
+
+.reload-btn:hover {
+    background-color: #008a3f;
+}
+
+.reload-btn .fas {
+    font-size: 0.9rem;
+    color: #fff;
+    margin: 0 8px 0 0;
+}

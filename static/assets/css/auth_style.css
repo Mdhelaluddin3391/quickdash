@@ -1,0 +1,317 @@
+/* --- 0. Global & Font Styles --- */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --primary: #00a94f;
+    --primary-dark: #008a3f;
+    --primary-light: #e6f7ee;
+    --text: #333;
+    --text-light: #777;
+    --text-lighter: #999;
+    --background: #f8f9fa;
+    --card-bg: #fff;
+    --border: #e0e0e0;
+    --border-focus: #00a94f;
+    --error: #e53935;
+    --success: #43a047;
+    --shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+    --radius: 12px;
+    --transition: all 0.3s ease;
+}
+
+body {
+    font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--background);
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    line-height: 1.5;
+}
+
+/* --- 1. Auth Container & Card --- */
+.auth-container {
+    width: 100%;
+    padding: 20px;
+    animation: fadeIn 0.5s ease;
+}
+
+.auth-card {
+    max-width: 440px;
+    margin: 0 auto;
+    background-color: var(--card-bg);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 40px 35px;
+    position: relative;
+    transition: var(--transition);
+}
+
+/* --- 2. Close Button --- */
+.close-btn {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    color: var(--text-light);
+    text-decoration: none;
+    border-radius: 50%;
+    transition: var(--transition);
+}
+.close-btn:hover {
+    color: var(--text);
+    background-color: var(--background);
+}
+
+/* --- 3. Header --- */
+.auth-header {
+    text-align: center;
+    margin-bottom: 30px;
+}
+.header-icon {
+    width: 70px;
+    height: 70px;
+    margin-bottom: 15px;
+    border-radius: 50%;
+    padding: 15px;
+    background-color: var(--primary-light);
+    color: var(--primary);
+}
+.auth-header h2 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: var(--text);
+}
+.auth-header p {
+    font-size: 0.95rem;
+    color: var(--text-light);
+}
+
+/* --- 4. Form Styles --- */
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    animation: slideUp 0.4s ease;
+}
+.auth-form label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+    display: block;
+}
+
+.input-group {
+    display: flex;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 20px;
+    overflow: hidden;
+    transition: var(--transition);
+    background-color: var(--card-bg);
+}
+.input-group:focus-within {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px rgba(0, 169, 79, 0.1);
+}
+
+.country-code {
+    padding: 14px 16px;
+    background-color: var(--background);
+    font-weight: 600;
+    color: var(--text);
+    border-right: 1px solid var(--border);
+}
+
+.input-group input[type="tel"] {
+    flex: 1;
+    border: none;
+    outline: none;
+    padding: 14px 16px;
+    font-size: 1rem;
+    background-color: transparent;
+}
+
+/* OTP Form */
+.otp-info {
+    font-size: 0.9rem;
+    color: var(--text-light);
+    margin-bottom: 20px;
+    text-align: center;
+    padding: 12px 15px;
+    background-color: var(--primary-light);
+    border-radius: var(--radius);
+}
+.otp-info strong {
+    color: var(--text);
+}
+.otp-info #change-number {
+    font-weight: 600;
+    color: var(--primary);
+    text-decoration: none;
+    margin-left: 5px;
+}
+.otp-info #change-number:hover {
+    text-decoration: underline;
+}
+
+.otp-inputs {
+    justify-content: space-between;
+    gap: 10px;
+    border: none;
+    margin-bottom: 25px;
+}
+.otp-box {
+    width: 50px;
+    height: 55px;
+    text-align: center;
+    font-size: 1.3rem;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    transition: var(--transition);
+}
+.otp-box:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 2px rgba(0, 169, 79, 0.1);
+    outline: none;
+}
+.otp-box.filled {
+    border-color: var(--primary);
+    background-color: var(--primary-light);
+}
+
+.submit-btn {
+    padding: 16px;
+    background-color: var(--primary);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+.submit-btn:hover {
+    background-color: var(--primary-dark);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 169, 79, 0.3);
+}
+.submit-btn:active {
+    transform: translateY(0);
+}
+.submit-btn:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.resend-timer {
+    text-align: center;
+    margin-top: 20px;
+    font-size: 0.9rem;
+    color: var(--text-light);
+}
+.resend-timer a {
+    color: var(--primary);
+    text-decoration: none;
+    font-weight: 600;
+}
+.resend-timer a:hover {
+    text-decoration: underline;
+}
+
+/* --- 5. Footer --- */
+.auth-footer {
+    text-align: center;
+    margin-top: 30px;
+    font-size: 0.8rem;
+    color: var(--text-lighter);
+}
+.auth-footer a {
+    color: var(--text-light);
+    font-weight: 500;
+    text-decoration: none;
+}
+.auth-footer a:hover {
+    text-decoration: underline;
+    color: var(--text);
+}
+
+/* --- 6. Loading Spinner --- */
+.spinner {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: #fff;
+    animation: spin 1s linear infinite;
+}
+
+/* --- 7. Animations --- */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes slideUp {
+    from { 
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to { 
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
+}
+
+.shake {
+    animation: shake 0.3s ease;
+}
+
+/* --- 8. Media Queries --- */
+@media (max-width: 480px) {
+    .auth-card {
+        padding: 30px 25px;
+    }
+    .otp-inputs {
+        gap: 8px;
+    }
+    .otp-box {
+        width: 45px;
+        height: 50px;
+        font-size: 1.2rem;
+    }
+    .header-icon {
+        width: 60px;
+        height: 60px;
+        padding: 12px;
+    }
+}

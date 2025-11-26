@@ -1,0 +1,193 @@
+/* --- 0. Global & Font Styles --- */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+body {
+    font-family: "Poppins", sans-serif;
+    background-color: #f5f5f5;
+    color: #333;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* --- 1. Header (profile_style.css se copy) --- */
+.site-header {
+    background-color: #fff;
+    border-bottom: 1px solid #e0e0e0;
+    padding: 15px 0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+.header-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 800px;
+}
+.logo {
+    font-weight: bold;
+    font-size: 1.2rem;
+    color: #333;
+}
+.back-link {
+    font-size: 0.95rem;
+    color: #555;
+    text-decoration: none;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.back-link:hover { color: #00a94f; }
+
+/* --- 2. Chat Layout --- */
+main.container {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+}
+.chat-container {
+    background-color: #fff;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    max-height: calc(100vh - 100px); /* Full height minus header */
+}
+.chat-header {
+    padding: 15px 20px;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.ticket-subject {
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+.ticket-status {
+    font-size: 0.85rem;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 4px;
+    text-transform: capitalize;
+}
+.ticket-status.open {
+    background-color: #fff3e0; color: #ff9800;
+}
+.ticket-status.pending {
+    background-color: #e3f2fd; color: #2196f3;
+}
+.ticket-status.resolved {
+    background-color: #e6f7ef; color: #00a94f;
+}
+
+/* --- 3. Messages Area --- */
+.chat-messages {
+    flex-grow: 1;
+    padding: 20px;
+    overflow-y: auto;
+    background-color: #f9f9f9;
+}
+.message {
+    display: flex;
+    margin-bottom: 15px;
+}
+.message-bubble {
+    max-width: 80%;
+    padding: 10px 15px;
+    border-radius: 18px;
+    line-height: 1.5;
+}
+.message-user {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #00a94f;
+    margin-bottom: 2px;
+}
+.message-text {
+    font-size: 0.95rem;
+}
+.message-time {
+    font-size: 0.75rem;
+    color: #777;
+    margin-top: 5px;
+    display: block;
+}
+
+/* Customer message (right) */
+.message.customer {
+    justify-content: flex-end;
+}
+.message.customer .message-bubble {
+    background-color: #e6f7ef;
+    color: #333;
+    border-bottom-right-radius: 4px;
+}
+.message.customer .message-time {
+    text-align: right;
+}
+
+/* Staff message (left) */
+.message.staff {
+    justify-content: flex-start;
+}
+.message.staff .message-bubble {
+    background-color: #eee;
+    color: #333;
+    border-bottom-left-radius: 4px;
+}
+.message.staff .message-time {
+    text-align: left;
+}
+
+
+/* --- 4. Reply Form --- */
+.chat-reply-form {
+    padding: 15px 20px;
+    border-top: 1px solid #eee;
+    background-color: #fff;
+    border-bottom-left-radius: 12px;
+    border-bottom-right-radius: 12px;
+}
+.chat-reply-form .form-group {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+.chat-reply-form textarea {
+    flex-grow: 1;
+    padding: 12px 15px;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-family: "Poppins", sans-serif;
+    resize: none;
+    min-height: 50px;
+}
+.btn-send {
+    flex-shrink: 0;
+    width: 50px;
+    height: 50px;
+    background-color: #00a94f;
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+.btn-send:hover { background-color: #008a3f; }
+.btn-send:disabled { background-color: #aaa; }

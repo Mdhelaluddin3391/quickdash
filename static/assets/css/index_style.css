@@ -1,0 +1,798 @@
+/* --- Root Variables (QuickMart se) --- */
+:root {
+    --primary: #32CD32;
+    /* Main green color */
+    --secondary: #FFD700;
+    --dark: #2d3436;
+    /* Dark text color */
+    --light: #f5f6fa;
+    /* Light gray for backgrounds */
+    --gray: #074d04;
+    /* Lighter text color */
+    --shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+    /* Softer shadow */
+}
+
+/* --- Global Styles --- */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: "Poppins", sans-serif;
+    /* QuickDash ka font */
+}
+
+/* NAYA HERO SECTION STYLE */
+.hero-section {
+    padding: 0;
+    margin: 0;
+    background-color: #fff;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+body {
+    background-color: #f9f9f9;
+    color: var(--dark);
+    line-height: 1.6;
+}
+
+/* Scrollbar styles (QuickDash se) */
+.header-nav-row::-webkit-scrollbar,
+.scroll-banner::-webkit-scrollbar,
+.categories::-webkit-scrollbar,
+.scroll-container::-webkit-scrollbar {
+    height: 0px;
+    width: 0px;
+    display: none;
+}
+
+/* Common container (QuickMart se) */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+/* Common section padding (QuickDash se) */
+section {
+    padding: 20px;
+    margin-bottom: 10px;
+    background-color: #fff;
+}
+
+/* section:first-of-type { 
+            padding-top: 10px;
+        } */
+
+main section {
+    box-shadow: var(--shadow);
+    border-radius: 10px;
+    margin: 15px;
+}
+
+main {
+    padding-top: 10px;
+    background-color: var(--light);
+}
+
+/* ============================== */
+/* ====== 1. HEADER STYLES ====== */
+/* ============================== */
+
+.new-header {
+    background-color: #fff;
+    padding: 10px 20px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    /* Thoda strong shadow */
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+/* --- Row 1: Top Row (Logo, Location, Icons) --- */
+.header-top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 15px;
+}
+
+.logo-location-group {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--primary);
+    text-decoration: none;
+}
+
+.logo i {
+    font-size: 1.4rem;
+}
+
+.location {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--gray);
+    font-size: 0.85rem;
+    padding: 8px 12px;
+    background-color: var(--light);
+    border-radius: 20px;
+}
+
+.location i {
+    color: var(--primary);
+}
+
+.header-icons {
+    display: flex;
+    gap: 20px;
+}
+
+.icon-link {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-decoration: none;
+    color: var(--dark);
+    font-size: 12px;
+    position: relative;
+}
+
+.icon-link i {
+    font-size: 1.4rem;
+    margin-bottom: 2px;
+    color: var(--dark);
+}
+
+.icon-link:hover i,
+.icon-link:hover .icon-text {
+    color: var(--primary);
+}
+
+/* Cart Count Styling (QuickMart style) */
+.cart-link {
+    position: relative;
+}
+
+.cart-count {
+    position: absolute;
+    top: -5px;
+    right: 0px;
+    background-color: #e74c3c;
+    color: white;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: bold;
+    border: 1px solid white;
+}
+
+/* --- Row 2: Search Bar (QuickMart style) --- */
+.search-bar-row {
+    margin-top: 10px;
+    position: relative;
+    width: 100%;
+}
+
+.search-bar-row input {
+    width: 100%;
+    padding: 12px 20px;
+    border: none;
+    background-color: var(--light);
+    border-radius: 30px;
+    font-size: 0.95rem;
+    padding-left: 45px;
+    outline: none;
+    border: 1px solid var(--light);
+    transition: border-color 0.2s ease;
+}
+
+.search-bar-row input:focus {
+    border-color: var(--primary);
+}
+
+.search-bar-row i {
+    position: absolute;
+    left: 18px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--gray);
+}
+
+/* --- Row 3: Navigation (QuickMart style) --- */
+.header-nav-row {
+    display: flex;
+    gap: 15px;
+    margin: 10px -20px 0;
+    padding: 10px 20px 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    scrollbar-width: none;
+}
+
+.nav-item {
+    text-decoration: none;
+    color: var(--dark);
+    font-weight: 500;
+    font-size: 0.95rem;
+    padding: 6px 15px;
+    border-radius: 20px;
+    transition: all 0.3s ease;
+    flex-shrink: 0;
+}
+
+.nav-item:hover {
+    background-color: var(--light);
+    color: var(--primary);
+}
+
+.nav-item.active {
+    background-color: var(--primary);
+    color: white;
+    font-weight: 600;
+}
+
+/* =================================== */
+/* ====== 2. MAIN BODY STYLES ====== */
+/* =================================== */
+
+/* Section Title (QuickMart style) */
+.section-title {
+    font-size: 1.3rem;
+    font-weight: 700;
+    margin: 0 0 15px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.view-all {
+    color: var(--primary);
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+/* --- Promo Banner (BADLAAV KIYA GAYA) --- */
+.scroll-banner {
+    display: flex;
+    gap: 0;
+    /* NAYA: Gap hata diya */
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 0;
+    /* NAYA: Padding hata di */
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+}
+
+.promo-card {
+    flex-shrink: 0;
+    width: 100%;
+    /* NAYA: Full screen width */
+    max-width: 100%;
+    /* NAYA: max-width hataya */
+    height: 200px;
+    /* NAYA: Thoda lamba kiya */
+    border-radius: 0;
+    /* NAYA: Border radius hataya */
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
+    display: block;
+    padding: 20px 25px;
+    /* NAYA: Padding adjust ki */
+    box-shadow: none;
+    /* NAYA: Shadow hataya */
+    position: relative;
+    overflow: hidden;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    scroll-snap-align: center;
+    /* NAYA: Center mein snap hoga */
+    text-decoration: none;
+}
+
+.promo-card.dark-theme {
+    background: linear-gradient(135deg, #485461, var(--dark));
+}
+
+.promo-content {
+    position: relative;
+    z-index: 2;
+    width: 50%;
+    /* NAYA: Text ke liye 50% jagah */
+}
+
+.promo-content h3 {
+    font-size: 1.5rem;
+    /* NAYA: Thoda bada text */
+    margin-bottom: 5px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.promo-content p {
+    font-size: 1.1rem;
+    /* NAYA: Thoda bada text */
+    font-weight: 500;
+}
+
+.promo-image {
+    position: absolute;
+    top: 0;
+    right: 25px;
+    /* NAYA: Position adjust ki */
+    width: 40%;
+    /* NAYA: Responsive width */
+    max-width: 180px;
+    /* NAYA: Max size */
+    height: 100%;
+    object-fit: contain;
+    z-index: 1;
+    opacity: 0.3;
+    /* NAYA: Thoda zyada dikhega */
+}
+
+
+/* --- Categories (QuickMart structure & style) --- */
+.categories {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 15px;
+}
+
+.category-card {
+    background: white;
+    border-radius: 10px;
+    padding: 15px 10px;
+    text-align: center;
+    box-shadow: var(--shadow);
+    transition: transform 0.3s;
+    cursor: pointer;
+    text-decoration: none;
+    color: var(--dark);
+}
+
+.category-card:hover {
+    transform: translateY(-5px);
+}
+
+.category-icon {
+    width: 60px;
+    height: 60px;
+    background-color: var(--light);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 10px;
+    font-size: 24px;
+    color: var(--primary);
+}
+
+.category-card h3 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+/* --- Product Scroller (QuickDash) + Product Cards (QuickMart) --- */
+.scroll-container {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 10px;
+}
+
+.product-grid {
+    display: flex;
+    gap: 15px;
+    flex-wrap: nowrap;
+}
+
+/* QuickMart Product Card Style */
+.product-card {
+    background: white;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    transition: transform 0.3s;
+    width: 160px;
+    /* Fixed width from QuickDash */
+    flex-shrink: 0;
+    /* From QuickDash */
+    display: flex;
+    /* From QuickDash */
+    flex-direction: column;
+    /* From QuickDash */
+    border: 1px solid #f0f0f0;
+}
+
+.product-card:hover {
+    transform: translateY(-5px);
+}
+
+.product-card a {
+    text-decoration: none;
+    color: inherit;
+}
+
+.product-image {
+    height: 130px;
+    /* From QuickDash */
+    width: 100%;
+    background-color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    padding: 10px;
+}
+
+.product-image img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+.discount-badge {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background-color: #e74c3c;
+    color: white;
+    padding: 3px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.product-info {
+    padding: 10px;
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.product-title {
+    font-size: 0.95rem;
+    font-weight: 500;
+    margin-bottom: 4px;
+    /* Fixed height for name (from QuickDash) */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    height: 2.5em;
+}
+
+.product-weight {
+    color: var(--gray);
+    font-size: 0.85rem;
+    margin-bottom: 10px;
+    flex-grow: 1;
+    /* Pushes price to bottom */
+}
+
+.product-price {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.price {
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: var(--dark);
+}
+
+.price .original-price {
+    text-decoration: line-through;
+    color: var(--gray);
+    font-size: 0.9rem;
+    margin-right: 5px;
+    font-weight: 400;
+}
+
+.add-to-cart {
+    background-color: var(--primary);
+    color: white;
+    border: none;
+    width: 35px;
+    height: 35px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    font-size: 1rem;
+}
+
+.add-to-cart:hover {
+    background-color: #00a085;
+}
+
+/* Out of Stock Button */
+.out-of-stock-btn {
+    background-color: #e9ecef;
+    color: #6c757d;
+    border: 1px solid #ced4da;
+    font-weight: bold;
+    font-size: 14px;
+    padding: 8px 16px;
+    border-radius: 20px;
+    cursor: not-allowed;
+    text-align: center;
+}
+
+
+/* --- App/Trust Banners (QuickDash structure, QuickMart colors) --- */
+.app-download-banner {
+    background-color: #e6f7ef;
+    /* Light green */
+    padding: 30px 20px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    border-radius: 10px;
+    margin: 15px;
+    box-shadow: var(--shadow);
+}
+
+.app-download-banner .app-icon {
+    width: 80px;
+    height: 80px;
+    object-fit: contain;
+    flex-shrink: 0;
+    font-size: 50px;
+    color: var(--primary);
+    text-align: center;
+}
+
+.app-download-content h3 {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--dark);
+    margin-bottom: 5px;
+}
+
+.app-download-content p {
+    font-size: 0.9rem;
+    color: #555;
+    margin-bottom: 15px;
+}
+
+.app-stores {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.app-stores a {
+    display: inline-block;
+}
+
+.app-stores img {
+    height: 35px;
+    cursor: pointer;
+}
+
+/* --- Trust Badges --- */
+.trust-badge-section {
+    background-color: #fff;
+    padding: 30px 20px;
+    display: flex;
+    justify-content: space-around;
+    gap: 15px;
+    flex-wrap: wrap;
+    border-radius: 10px;
+    margin: 15px;
+    box-shadow: var(--shadow);
+}
+
+.trust-badge {
+    flex: 1;
+    min-width: 100px;
+    text-align: center;
+    color: var(--dark);
+}
+
+.trust-badge i {
+    font-size: 2.5rem;
+    color: var(--primary);
+    margin-bottom: 10px;
+}
+
+.trust-badge h5 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+/* ============================ */
+/* ====== 3. FOOTER STYLES ====== */
+/* ============================ */
+
+footer {
+    background-color: var(--dark);
+    color: white;
+    padding: 40px 0 20px;
+}
+
+.footer-content {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 30px;
+    margin-bottom: 30px;
+}
+
+.footer-column h3 {
+    font-size: 18px;
+    margin-bottom: 20px;
+    position: relative;
+    padding-bottom: 10px;
+}
+
+.footer-column h3::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 40px;
+    height: 2px;
+    background-color: var(--primary);
+}
+
+.footer-column p {
+    color: #b2bec3;
+    margin-bottom: 15px;
+}
+
+.footer-links {
+    list-style: none;
+}
+
+.footer-links li {
+    margin-bottom: 10px;
+}
+
+.footer-links a {
+    color: #b2bec3;
+    text-decoration: none;
+    transition: color 0.3s;
+}
+
+.footer-links a:hover {
+    color: white;
+}
+
+.app-download {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+.app-download img {
+    height: 40px;
+    border-radius: 7px;
+}
+
+.social-icons {
+    display: flex;
+    gap: 15px;
+    margin-top: 15px;
+}
+
+.social-icons a {
+    color: white;
+    font-size: 20px;
+    transition: color 0.3s;
+}
+
+.social-icons a:hover {
+    color: var(--primary);
+}
+
+.copyright {
+    text-align: center;
+    padding-top: 20px;
+    border-top: 1px solid #444;
+    color: #b2bec3;
+    font-size: 14px;
+}
+
+
+/* =================================== */
+/* ====== 4. RESPONSIVE STYLES ====== */
+/* =================================== */
+
+@media (max-width: 768px) {
+
+    /* .promo-card {
+                width: 82vw;
+            } */
+    .categories {
+        grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+        gap: 10px;
+    }
+
+    .category-card h3 {
+        font-size: 0.8rem;
+    }
+
+    .app-download-banner {
+        flex-direction: column;
+        text-align: center;
+    }
+}
+
+@media (max-width: 600px) {
+    .new-header {
+        padding: 10px 15px;
+    }
+
+    .logo {
+        font-size: 1.3rem;
+    }
+
+    .location {
+        display: none;
+        /* Jagah banane ke liye hide kar raha hoon */
+    }
+
+    /* Mobile par icon text hide karein */
+    .icon-text {
+        display: none;
+    }
+
+    .icon-link i {
+        font-size: 1.5rem;
+        /* 24px */
+    }
+
+    .cart-count {
+        top: -3px;
+        right: -6px;
+    }
+
+    .header-nav-row {
+        margin: 10px -15px 0;
+        padding: 10px 15px 0;
+    }
+
+    main section,
+    .app-download-banner,
+    .trust-badge-section {
+        margin: 10px;
+        padding: 15px;
+    }
+
+    .section-title {
+        font-size: 1.1rem;
+        margin-bottom: 10px;
+    }
+
+    .promo-content h3 {
+        font-size: 1.3rem;
+        /* Mobile par text chhota */
+    }
+
+    .promo-content p {
+        font-size: 1rem;
+    }
+}

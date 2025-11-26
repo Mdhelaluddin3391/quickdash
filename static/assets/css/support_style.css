@@ -1,0 +1,128 @@
+/* Yeh file profile_style.css ke saath load hogi.
+   Hum sirf extra styles add kar rahe hain.
+*/
+
+/* --- 1. Layout --- */
+.support-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+/* --- 2. Form Styles --- */
+#new-ticket-form {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: #333;
+}
+
+.form-group input[type="text"],
+.form-group select,
+.form-group textarea {
+    padding: 12px 15px;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-family: "Poppins", sans-serif;
+}
+
+.form-group textarea {
+    resize: vertical;
+}
+
+/* Button style profile.css se reuse ho jayega (.btn-primary) */
+
+/* --- 3. Ticket Card Styles (profile.css ke .order-card jaisa) --- */
+.ticket-card {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 15px;
+}
+
+.ticket-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f9f9f9;
+}
+
+.ticket-id {
+    font-weight: 600;
+    color: #333;
+    font-size: 0.95rem;
+}
+
+.ticket-status {
+    font-size: 0.9rem;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 4px;
+    text-transform: capitalize;
+}
+
+/* Status colors (Aapke models.py ke status ke hisaab se) */
+.ticket-card.open .ticket-status,
+.ticket-card.in_progress .ticket-status {
+    background-color: #fff3e0; /* Orange */
+    color: #ff9800;
+}
+.ticket-card.pending .ticket-status {
+    background-color: #e3f2fd; /* Blue */
+    color: #2196f3;
+}
+.ticket-card.resolved .ticket-status {
+    background-color: #e6f7ef; /* Green */
+    color: #00a94f;
+}
+
+
+.ticket-details .ticket-subject {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 8px;
+}
+
+.ticket-details .ticket-category,
+.ticket-details .ticket-updated {
+    font-size: 0.85rem;
+    color: #777;
+    margin-bottom: 4px;
+}
+
+.ticket-actions {
+    margin-top: 15px;
+}
+
+/* --- 4. Desktop View --- */
+@media (min-width: 900px) {
+    .support-layout {
+        flex-direction: row;
+        align-items: flex-start;
+    }
+
+    #create-ticket-section {
+        flex: 1; /* Form chhota */
+        position: sticky;
+        top: 90px;
+    }
+
+    #ticket-list-section {
+        flex: 1.5; /* List badi */
+    }
+}
