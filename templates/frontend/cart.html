@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Cart - QuickDash</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link rel="stylesheet" href="assets/css/cart_style.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="container header-container">
+            <a href="index.html" class="back-link"><i class="fas fa-arrow-left"></i> Continue Shopping</a>
+            <div class="logo">QuickDash</div>
+        </div>
+    </header>
+
+    <main class="container">
+        <h1>Your Cart</h1>
+        <div class="cart-layout">
+            <div class="cart-items-list">
+                <div class="cart-header">
+                    <h2 class="cart-title">Items in your cart</h2>
+                    </div>
+                <div class="empty-cart-message" style="display:none;">
+                    <img src="https://cdn-icons-png.flaticon.com/512/11329/11329060.png" alt="Empty Cart">
+                    <h3>Your cart is empty!</h3>
+                    <a href="index.html" class="start-shopping-btn"><i class="fas fa-shopping-bag"></i> Start Shopping</a>
+                </div>
+            </div>
+
+            <div class="order-summary-container">
+                <h2>Order Summary</h2>
+                <div class="summary-row"><span>Subtotal</span><span id="summary-subtotal">₹0.00</span></div>
+                <div class="summary-row"><span>Delivery Fee</span><span id="summary-delivery">₹20.00</span></div>
+                <div class="summary-divider"></div>
+                <div class="summary-row total"><span>Total</span><span id="summary-total">₹0.00</span></div>
+                <a href="checkout.html" class="checkout-button"><i class="fas fa-lock"></i> Proceed to Checkout</a>
+            </div>
+        </div>
+    </main>
+
+    <script src="assets/js/utils/api.js"></script>
+    <script src="assets/js/utils/cart.js"></script> <script src="assets/js/pages/cart.js"></script> </body>
+</html>

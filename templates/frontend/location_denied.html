@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Location Required - QuickDash</title>
+    <link rel="stylesheet" href="static/css/location_denied_style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    
+</head>
+<body>
+    <div class="denied-container">
+        <div class="denied-card">
+            <i class="fas fa-map-marker-slash"></i>
+            <h1>Location Access Required</h1>
+            <p>
+                QuickDash aapke nearest store ko automatically detect karne ke liye 
+                aapki location ka istemaal karta hai.
+            </p>
+            <p>
+                App ko istemaal karne ke liye, please apni browser ya phone ki 
+                <strong>settings</strong> mein jaakar location permission ko "Allow" karein.
+            </p>
+            
+            <button class="reload-btn" onclick="window.location.reload()">
+                <i class="fas fa-redo"></i>
+                Retry Permission
+            </button>
+        </div>
+    </div>
+</body>
+</html>

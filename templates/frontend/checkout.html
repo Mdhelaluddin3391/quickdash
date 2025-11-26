@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checkout - QuickDash</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link rel="stylesheet" href="assets/css/checkout_style.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="container header-container">
+            <a href="cart.html" class="back-link"><i class="fas fa-arrow-left"></i> Back to Cart</a>
+            <div class="logo">Checkout</div>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="checkout-layout">
+            <div class="checkout-details">
+                <section class="checkout-section">
+                    <h2 class="section-title">Delivery Address</h2>
+                    <button class="add-new-address-btn"><i class="fas fa-plus"></i> Add New Address</button>
+                </section>
+
+                <section class="checkout-section">
+                    <h2 class="section-title">Payment Method</h2>
+                    <div class="payment-option selected">
+                        <input type="radio" id="payment_cod" name="payment_method" checked>
+                        <label for="payment_cod">
+                            <i class="fas fa-money-bill-wave"></i>
+                            <span><strong>Cash on Delivery (COD)</strong></span>
+                        </label>
+                    </div>
+                    <div class="payment-option">
+                        <input type="radio" id="payment_online" name="payment_method">
+                        <label for="payment_online">
+                            <i class="fas fa-credit-card"></i>
+                            <span><strong>Pay Online (Razorpay)</strong></span>
+                        </label>
+                    </div>
+                </section>
+            </div>
+
+            <div class="order-summary-container">
+                <h2>Order Summary</h2>
+                <div class="summary-items-list"></div>
+                <div class="summary-divider"></div>
+                <div class="summary-row total"><span>To Pay</span><span id="summary-total">...</span></div>
+                <button class="place-order-button"><i class="fas fa-lock"></i> Place Order</button>
+            </div>
+        </div>
+    </main>
+
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <script src="assets/js/utils/api.js"></script>
+    <script src="assets/js/utils/checkout.js"></script> <script src="assets/js/pages/checkout.js"></script> </body>
+</html>

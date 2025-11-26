@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuickDash Admin Panel</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* --- TUMHARA CSS (As it is, thoda polished) --- */
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        :root {
+            --primary-color: #1a1a1a; --secondary-color: #555; --accent-color: #00a94f; 
+            --light-color: #f4f7f6; --border-color: #e0e0e0; --hover-color: #eef2f1;
+        }
+        body { background-color: var(--light-color); color: var(--primary-color); display: flex; min-height: 100vh; }
+        
+        /* Navbar */
+        .top-nav { position: fixed; top: 0; left: 0; right: 0; height: 60px; background: #fff; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 25px; z-index: 1000; }
+        .logo { font-size: 1.4rem; font-weight: 700; color: var(--accent-color); display: flex; gap: 10px; align-items: center; }
+        
+        /* Sidebar */
+        .sidebar { width: 240px; background: #fff; height: calc(100vh - 60px); position: fixed; top: 60px; left: 0; border-right: 1px solid var(--border-color); overflow-y: auto; padding: 20px 0; }
+        .menu-item { padding: 12px 25px; cursor: pointer; display: flex; gap: 15px; color: #666; transition: 0.2s; font-size: 0.95rem; align-items: center; }
+        .menu-item:hover { background: var(--hover-color); color: var(--accent-color); }
+        .menu-item.active { background: #e6f7ef; color: var(--accent-color); border-right: 3px solid var(--accent-color); }
+        
+        /* Main Content */
+        .main-content { margin-left: 240px; margin-top: 60px; padding: 30px; width: calc(100% - 240px); }
+        .module-content { display: none; animation: fadeIn 0.3s ease; }
+        .module-content.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Widgets & Tables */
+        .content-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
+        .stats-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .stat-card { background: white; padding: 20px; border-radius: 8px; border: 1px solid var(--border-color); box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+        .stat-title { color: #888; font-size: 0.85rem; text-transform: uppercase; margin-bottom: 10px; }
+        .stat-value { font-size: 1.8rem; font-weight: 700; color: #333; }
+        
+        .data-table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+        .data-table th { background: #fafafa; color: #666; font-weight: 600; padding: 15px; text-align: left; border-bottom: 2px solid #eee; }
+        .data-table td { padding: 15px; border-bottom: 1px solid #eee; font-size: 0.95rem; }
+        
+        .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
+        .badge-success { background: #e6f7ef; color: #00a94f; }
+        .badge-warning { background: #fff8e1; color: #ffc107; }
+        .badge-danger { background: #fee2e2; color: #ef4444; }
+        
+        .btn { padding: 8px 16px; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; font-size: 0.9rem; }
+        .btn-primary { background: var(--accent-color); color: white; }
+        
+        @media (max-width: 768px) {
+            .sidebar { width: 60px; } .sidebar .menu-text { display: none; }
+            .main-content { margin-left: 60px; width: calc(100% - 60px); }
+        }
+    </style>
+</head>
+<body>
+
+    <nav class="top-nav">
+        <div class="logo"><i class="fas fa-bolt"></i> QuickDash Admin</div>
+        <div class="user-info" style="cursor: pointer;" onclick="logout()">
+            <span id="admin-name">Staff</span> <i class="fas fa-sign-out-alt" style="margin-left: 8px;"></i>
+        </div>
+    </nav>
+
+    <aside class="sidebar">
+        <ul class="sidebar-menu">
+            <li class="menu-item active" onclick="switchTab('dashboard')">
+                <i class="fas fa-chart-line"></i> <span class="menu-text">Dashboard</span>
+            </li>
+            <li class="menu-item" onclick="switchTab('orders')">
+                <i class="fas fa-shopping-bag"></i> <span class="menu-text">Orders</span>
+            </li>
+            <li class="menu-item" onclick="switchTab('inventory')">
+                <i class="fas fa-boxes"></i> <span class="menu-text">Inventory</span>
+            </li>
+            <li class="menu-item" onclick="switchTab('warehouses')">
+                <i class="fas fa-warehouse"></i> <span class="menu-text">Warehouses</span>
+            </li>
+        </ul>
+    </aside>
+
+    <main class="main-content">
+        
+        <div id="dashboard" class="module-content active">
+            <div class="content-header">
+                <h1 class="page-title" style="font-size: 1.6rem; font-weight: 700;">Overview</h1>
+                <div class="date-range">Today: <span id="current-date"></span></div>
+            </div>
+            
+            <div class="stats-container">
+                <div class="stat-card">
+                    <div class="stat-title">Total Revenue</div>
+                    <div class="stat-value" id="stat-revenue">Loading...</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">Orders Today</div>
+                    <div class="stat-value" id="stat-orders">Loading...</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">Avg. Order Value</div>
+                    <div class="stat-value" id="stat-aov">Loading...</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="orders" class="module-content">
+            <div class="content-header">
+                <h1 class="page-title" style="font-size: 1.6rem; font-weight: 700;">Recent Orders</h1>
+                <button class="btn btn-primary" onclick="loadOrders()">Refresh</button>
+            </div>
+            <div style="overflow-x: auto;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Order ID</th>
+                            <th>Customer</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Payment</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orders-table-body">
+                        <tr><td colspan="6" style="text-align:center; padding:20px;">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="inventory" class="module-content">
+            <div class="content-header">
+                <h1 class="page-title" style="font-size: 1.6rem; font-weight: 700;">Inventory Stock</h1>
+                <button class="btn btn-primary" onclick="loadInventory()">Refresh</button>
+            </div>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>SKU Code</th>
+                        <th>Product Name</th>
+                        <th>Warehouse</th>
+                        <th>Available</th>
+                        <th>Reserved</th>
+                    </tr>
+                </thead>
+                <tbody id="inventory-table-body">
+                    <tr><td colspan="5" style="text-align:center; padding:20px;">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="warehouses" class="module-content">
+            <div class="content-header">
+                <h1 class="page-title" style="font-size: 1.6rem; font-weight: 700;">Warehouses</h1>
+                <button class="btn btn-primary" onclick="loadWarehouses()">Refresh</button>
+            </div>
+            <div id="warehouse-list" class="stats-container">
+                </div>
+        </div>
+
+    </main>
+
+    <script>
+        const API_BASE = "{{ api_base }}"; // Django se aayega (/api/v1)
+        let token = localStorage.getItem('adminAccessToken');
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // Auth Check
+            if(!token) {
+                window.location.href = "{% url 'staff-login' %}";
+                return;
+            }
+            
+            // Set User Name
+            const user = JSON.parse(localStorage.getItem('adminUser') || '{}');
+            document.getElementById('admin-name').innerText = user.full_name || user.phone || "Staff";
+            document.getElementById('current-date').innerText = new Date().toLocaleDateString();
+
+            // Load Initial Data
+            loadDashboardData();
+        });
+
+        // --- Navigation Logic ---
+        function switchTab(tabId) {
+            document.querySelectorAll('.module-content').forEach(el => el.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            
+            document.querySelectorAll('.menu-item').forEach(el => el.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+
+            if(tabId === 'orders') loadOrders();
+            if(tabId === 'inventory') loadInventory();
+            if(tabId === 'warehouses') loadWarehouses();
+        }
+
+        // --- Generic API Fetcher ---
+        async function apiCall(endpoint) {
+            try {
+                const res = await fetch(`${API_BASE}${endpoint}`, {
+                    headers: { 
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                if(res.status === 401) {
+                    logout();
+                    return null;
+                }
+                return await res.json();
+            } catch(e) {
+                console.error("API Error:", e);
+                return null;
+            }
+        }
+
+        // --- Data Loaders ---
+
+        async function loadDashboardData() {
+            // Analytics API se data layenge (Last 1 day)
+            const data = await apiCall('/analytics/sales/daily/?days=1');
+            
+            if(data && data.length > 0) {
+                const today = data[0]; // API list return karta hai
+                document.getElementById('stat-revenue').innerText = `₹${today.total_revenue}`;
+                document.getElementById('stat-orders').innerText = today.total_orders;
+                document.getElementById('stat-aov').innerText = `₹${today.avg_order_value}`;
+            } else {
+                document.getElementById('stat-revenue').innerText = "₹0.00";
+                document.getElementById('stat-orders').innerText = "0";
+                document.getElementById('stat-aov').innerText = "₹0.00";
+            }
+        }
+
+        async function loadOrders() {
+            const tbody = document.getElementById('orders-table-body');
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px;">Fetching...</td></tr>';
+            
+            const data = await apiCall('/orders/'); // Uses OrderViewSet
+            const orders = data.results || data; // Handle pagination if present
+
+            if(!orders || orders.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px;">No orders found.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = orders.map(o => `
+                <tr>
+                    <td style="font-weight:600">#${o.id.slice(0,8).toUpperCase()}</td>
+                    <td>${o.customer_phone || 'Guest'}</td>
+                    <td>₹${o.final_amount}</td>
+                    <td><span class="badge ${getStatusBadge(o.status)}">${o.status.toUpperCase()}</span></td>
+                    <td>${o.payment_status}</td>
+                    <td>${new Date(o.created_at).toLocaleDateString()}</td>
+                </tr>
+            `).join('');
+        }
+
+        async function loadInventory() {
+            const tbody = document.getElementById('inventory-table-body');
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px;">Fetching...</td></tr>';
+            
+            const data = await apiCall('/inventory/stock/');
+            const stocks = data.results || data;
+
+            tbody.innerHTML = stocks.map(s => `
+                <tr>
+                    <td style="font-weight:600">${s.sku_code}</td>
+                    <td>${s.sku_name}</td>
+                    <td>${s.warehouse_name}</td>
+                    <td style="color: ${s.available_qty < 10 ? '#ef4444' : '#00a94f'}">${s.available_qty}</td>
+                    <td>${s.reserved_qty}</td>
+                </tr>
+            `).join('');
+        }
+
+        async function loadWarehouses() {
+            const container = document.getElementById('warehouse-list');
+            container.innerHTML = 'Loading...';
+            
+            const data = await apiCall('/wms/warehouses/');
+            const whs = data.results || data;
+
+            container.innerHTML = whs.map(w => `
+                <div class="stat-card">
+                    <div class="stat-title" style="color:var(--accent-color); font-weight:bold;">${w.code}</div>
+                    <div class="stat-value" style="font-size:1.3rem">${w.name}</div>
+                    <p style="color:#666; font-size:0.9rem; margin-top:5px;">${w.address}</p>
+                    <div style="margin-top:10px;">
+                        <span class="badge badge-success">ACTIVE</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function getStatusBadge(status) {
+            if(['delivered', 'completed', 'paid'].includes(status)) return 'badge-success';
+            if(['cancelled', 'failed'].includes(status)) return 'badge-danger';
+            return 'badge-warning';
+        }
+
+        function logout() {
+            localStorage.removeItem('adminAccessToken');
+            localStorage.removeItem('adminUser');
+            window.location.href = "{% url 'staff-login' %}";
+        }
+    </script>
+</body>
+</html>
