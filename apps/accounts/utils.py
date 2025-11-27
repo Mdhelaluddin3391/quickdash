@@ -1,12 +1,16 @@
 # apps/accounts/utils.py
 import random
+import logging
+from django.conf import settings
 from django.utils import timezone
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
+from django.core.cache import cache
 from .models import PhoneOTP, UserSession
-from django.core.cache import cache # <-- Redis Cache Import
 from .tasks import send_sms_task
+
+logger = logging.getLogger(__name__)
 
 def normalize_phone(phone: str) -> str:
     phone = phone.strip().replace(" ", "")
@@ -15,13 +19,28 @@ def normalize_phone(phone: str) -> str:
     return phone
 
 def create_and_send_otp(phone: str, login_type: str):
+    """
+    Creates OTP and decides how to send it based on Environment.
+    """
     phone = normalize_phone(phone)
+    # 6-digit random code
     otp_code = "".join(str(random.randint(0, 9)) for _ in range(6))
+    
+    # Save to DB
     otp = PhoneOTP.create_otp(phone=phone, login_type=login_type, code=otp_code)
     
-    # [FIX] Uncommented execution
-    # Call the Celery task asynchronously
-    send_sms_task.delay(phone=phone, otp_code=otp_code, login_type=login_type)
+    # --- [SECURITY LOGIC] ---
+    if settings.DEBUG:
+        # TESTING MODE:
+        # SMS mat bhejo (paise bachao), bas console mein print karo.
+        print(f"\n========================================")
+        print(f" [TESTING] OTP for {phone}: {otp_code}")
+        print(f"========================================\n")
+        logger.info(f"Test OTP generated for {phone}: {otp_code}")
+    else:
+        # PRODUCTION MODE:
+        # Asli SMS bhejo (Celery Task). Console mein mat dikhao.
+        send_sms_task.delay(phone=phone, otp_code=otp_code, login_type=login_type)
     
     return otp
 
@@ -31,29 +50,17 @@ def get_client_ip(request):
     return x_forwarded_for.split(",")[0].strip() if x_forwarded_for else request.META.get("REMOTE_ADDR")
 
 def check_otp_rate_limit(phone: str, login_type: str, ip=None):
-    """
-    Redis-based Rate Limiter.
-    Rules:
-    1. 1 Minute mein sirf 1 OTP request allowed.
-    2. (Optional) 1 Hour mein max 10 OTPs allowed.
-    """
-    # Keys generate karein
     rate_limit_key = f"otp_limit:{login_type}:{phone}"
-    
-    # Check karein agar key exist karti hai (matlab user ne abhi request ki thi)
     if cache.get(rate_limit_key):
-        # Calculate remaining time
         ttl = cache.ttl(rate_limit_key) if hasattr(cache, 'ttl') else 60
         raise ValidationError(f"Please wait {ttl} seconds before requesting another OTP.")
 
-    # Agar key nahi hai, toh set karein (60 seconds expiry)
     cache.set(rate_limit_key, "locked", timeout=60)
     
-    # Optional: IP based blocking bhi add kar sakte hain agar spam ho raha ho
     if ip:
         ip_key = f"otp_spam_ip:{ip}"
         request_count = cache.get(ip_key, 0)
-        if request_count > 20: # 20 requests per hour limit
+        if request_count > 20: 
              raise ValidationError("Too many requests from this IP. Try again later.")
         cache.set(ip_key, request_count + 1, timeout=3600)
 
@@ -69,12 +76,10 @@ def create_tokens_with_session(user, role, client, extra_claims=None, request=No
     
     with transaction.atomic():
         if single_session_for_client:
-            # Purani sessions ko revoke karein (e.g., Rider/Employee single device policy)
             UserSession.objects.filter(
                 user=user, client=client, is_active=True
             ).update(is_active=False, revoked_at=timezone.now())
 
-        # Naya session banayein
         UserSession.objects.create(
             user=user, role=role, client=client, jti=jti,
             ip_address=get_client_ip(request)

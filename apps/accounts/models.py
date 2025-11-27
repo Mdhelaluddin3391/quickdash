@@ -311,7 +311,7 @@ class UserSession(models.Model):
         related_name="sessions",
     )
     role = models.CharField(max_length=16, choices=Role.choices)
-    client = models.CharField(max_length=32)
+    client = models.CharField(max_length=255)
 
     jti = models.CharField(max_length=255, db_index=True)
 
