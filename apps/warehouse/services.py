@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from apps.accounts.models import EmployeeProfile
-
+from .signals import inventory_change_required
 from .models import (
     Warehouse,
     Bin,
@@ -43,15 +43,11 @@ from .notifications import (
 # OUTBOUND (ORDER → RESERVATION → PICK → PACK → DISPATCH)
 # =========================================================
 
+
 @transaction.atomic
 def reserve_stock_for_order(order_id, warehouse_id, items_needed):
     """
-    GREEDY ALLOCATION LOGIC:
-    - Chooses bins with highest qty first
-    - Reserves (locks) stock by increasing reserved_qty
-    - Creates PickingTask + PickItems
-
-    items_needed = [{ "sku_id": <int>, "qty": <int> }, ...]
+    Allocates stock from bins and UPDATES CENTRAL INVENTORY.
     """
     warehouse = Warehouse.objects.select_for_update().get(id=warehouse_id)
     task = PickingTask.objects.create(
@@ -64,7 +60,7 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
         sku_id = item["sku_id"]
         qty_needed = int(item["qty"])
 
-        # 1. find candidate bins
+        # 1. Find candidate bins
         bin_qs = (
             BinInventory.objects
             .select_for_update()
@@ -88,8 +84,22 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
                 continue
 
             to_reserve = min(available, qty_remaining)
+            
+            # A. Physical Reservation (Bin Level)
             bin_inv.reserved_qty += to_reserve
             bin_inv.save()
+
+            # B. Signal Central Inventory (InventoryStock Level) - [NEW FIX]
+            # Available kam hoga, Reserved badhega
+            inventory_change_required.send(
+                sender=Warehouse,
+                sku_id=str(sku_id),
+                warehouse_id=str(warehouse.id),
+                delta_available=-to_reserve,  # Available ghatao
+                delta_reserved=to_reserve,    # Reserved badhao
+                reference=str(order_id),
+                change_type="order_reservation",
+            )
 
             PickItem.objects.create(
                 task=task,
@@ -98,7 +108,6 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
                 qty_to_pick=to_reserve,
             )
 
-            # Internal movement log
             StockMovement.objects.create(
                 sku_id=sku_id,
                 warehouse=warehouse,
@@ -111,18 +120,15 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
             qty_remaining -= to_reserve
 
         if qty_remaining > 0:
-            # Rollback whole reservation
             raise OutOfStockError(
                 f"Not enough stock for SKU ID {sku_id}. Missing {qty_remaining}"
             )
 
-    # Auto-create empty PackingTask; packer will fill later
     PackingTask.objects.get_or_create(
         picking_task=task,
         defaults={"status": PackingTask.PackStatus.PENDING},
     )
     return task
-
 
 @transaction.atomic
 def scan_pick(task_id, pick_item_id, qty_scanned, user):

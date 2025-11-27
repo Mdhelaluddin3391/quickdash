@@ -3,8 +3,33 @@ from django.db import transaction
 from apps.payments.models import Payment
 from apps.payments.signals import payment_succeeded as payments_payment_succeeded
 from apps.orders.signals import send_order_created # <--- FIXED IMPORT
-
+from apps.warehouse.models import Warehouse
+from apps.delivery.utils import haversine_distance  # Import utility
+from django.conf import settings
 logger = logging.getLogger(__name__)
+
+
+
+def get_nearest_warehouse(lat, lng):
+    MAX_RADIUS_KM = 15.0  # Max service radius
+    warehouses = Warehouse.objects.filter(is_active=True)
+    
+    best_wh = None
+    min_dist = float('inf')
+
+    for wh in warehouses:
+        if wh.lat is None or wh.lng is None:
+            continue
+            
+        # Calculate distance using your utility
+        dist = haversine_distance(float(lat), float(lng), float(wh.lat), float(wh.lng))
+        
+        if dist <= MAX_RADIUS_KM and dist < min_dist:
+            min_dist = dist
+            best_wh = wh
+            
+    return best_wh, min_dist
+
 
 def process_successful_payment(order):
     try:
@@ -56,10 +81,36 @@ def process_successful_payment(order):
 # ... (Rest of the file remains unchanged)
 
 def create_order_from_cart(user, warehouse_id, delivery_address_json, delivery_lat=None, delivery_lng=None, payment_method='RAZORPAY'):
-    from .models import Order, OrderItem
-    # [FIX] Corrected import
-    from apps.orders.models import Cart
+    from .models import Order, OrderItem, Cart
     from apps.payments.models import Payment
+
+    # --- [NEW] Automatic Warehouse Selection Logic ---
+    if delivery_lat and delivery_lng:
+        # Agar coordinates aaye hain, to nearest warehouse dhundo
+        nearest_wh, distance = get_nearest_warehouse(delivery_lat, delivery_lng)
+        
+        if not nearest_wh:
+            return None, None, "We do not deliver to this location (No warehouse nearby)."
+            
+        # Agar warehouse_id frontend ne nahi bheja, ya galat bheja, to nearest use karo
+        if not warehouse_id:
+            warehouse_id = nearest_wh.id
+        else:
+            # Optional: Validate ki jo warehouse bheja gaya wo range mein hai ya nahi
+            # Filhal hum nearest ko hi preference dete hain logic simplify karne ke liye
+            warehouse_id = nearest_wh.id
+    else:
+        # Fallback: Agar location nahi hai, to warehouse_id compulsory hona chahiye
+        if not warehouse_id:
+            return None, None, "Delivery location or Warehouse ID is required."
+
+    # Validate Warehouse existence
+    try:
+        warehouse = Warehouse.objects.get(id=warehouse_id, is_active=True)
+    except Warehouse.DoesNotExist:
+        return None, None, "Selected warehouse does not exist or is inactive."
+
+    # --- End Selection Logic ---
 
     try:
         cart = Cart.objects.prefetch_related('items__sku').get(customer=user)
@@ -71,7 +122,7 @@ def create_order_from_cart(user, warehouse_id, delivery_address_json, delivery_l
 
     order = Order.objects.create(
         customer=user,
-        warehouse_id=warehouse_id,
+        warehouse=warehouse,  # Use selected warehouse
         delivery_address_json=delivery_address_json,
         delivery_lat=delivery_lat,
         delivery_lng=delivery_lng,

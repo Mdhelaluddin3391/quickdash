@@ -3,18 +3,26 @@
 let selectedAddress = null;
 let selectedPaymentMethod = 'COD';
 let cartTotal = 0;
+let globalConfig = {}; // Config store karne ke liye
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (!isLoggedIn()) window.location.href = 'auth.html';
 
+    // 1. Load Global Config (Keys & Fees)
+    try {
+        globalConfig = await apiCall('/utils/config/', 'GET');
+    } catch (e) {
+        console.error("Config load failed", e);
+    }
+
     await loadAddresses();
     await loadCartSummary();
 
-    // Payment method selection
+    // Payment method selection logic
     document.querySelectorAll('input[name="payment_method"]').forEach(input => {
         input.addEventListener('change', (e) => {
             selectedPaymentMethod = e.target.id === 'payment_cod' ? 'COD' : 'RAZORPAY';
-            // Visual update logic (from your css)
+            // Visual update
             document.querySelectorAll('.payment-option').forEach(opt => opt.classList.remove('selected'));
             e.target.closest('.payment-option').classList.add('selected');
         });
@@ -29,19 +37,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function loadAddresses() {
     const addressContainer = document.querySelector('.checkout-section:first-child'); 
-    // Clear old static cards except title
     const title = addressContainer.querySelector('.section-title');
     const addBtn = addressContainer.querySelector('.add-new-address-btn');
     
-    // Temporarily remove content to rebuild
     addressContainer.innerHTML = '';
     addressContainer.appendChild(title);
 
     try {
+        // Fetch Addresses from API
         const addresses = await apiCall('/auth/customer/addresses/', 'GET', null, true);
         
         if(addresses.length === 0) {
-            addressContainer.innerHTML += '<p>No address found. Please add one.</p>';
+            const msg = document.createElement('p');
+            msg.innerText = 'No address found. Please add one.';
+            addressContainer.appendChild(msg);
         } else {
             addresses.forEach((addr, index) => {
                 const isSelected = addr.is_default || index === 0;
@@ -58,13 +67,14 @@ async function loadAddresses() {
                     </div>
                     <div class="address-details">
                         <span class="address-tag">${addr.address_type}</span>
-                        <p class="address-name">${addr.city}</p> <p class="address-full">${addr.full_address}, ${addr.city} - ${addr.pincode}</p>
+                        <p class="address-name">${addr.city}</p> 
+                        <p class="address-full">${addr.full_address}, ${addr.city} - ${addr.pincode}</p>
                     </div>
                 `;
                 addressContainer.appendChild(div);
             });
         }
-        addressContainer.appendChild(addBtn); // Add button wapas lagaya
+        if(addBtn) addressContainer.appendChild(addBtn);
 
     } catch (e) {
         console.error(e);
@@ -73,12 +83,12 @@ async function loadAddresses() {
 
 function selectAddress(addr, divElement) {
     selectedAddress = addr;
-    // UI Update
     document.querySelectorAll('.address-card').forEach(c => c.classList.remove('selected'));
     document.querySelectorAll('input[name="delivery_address"]').forEach(i => i.checked = false);
     
     divElement.classList.add('selected');
-    divElement.querySelector('input').checked = true;
+    const radio = divElement.querySelector('input');
+    if(radio) radio.checked = true;
 }
 
 async function loadCartSummary() {
@@ -86,7 +96,6 @@ async function loadCartSummary() {
         const cart = await apiCall('/orders/cart/', 'GET', null, true);
         cartTotal = cart.total_amount;
         
-        // Render items summary
         const listContainer = document.querySelector('.summary-items-list');
         if(listContainer) {
             listContainer.innerHTML = cart.items.map(item => `
@@ -97,10 +106,13 @@ async function loadCartSummary() {
             `).join('');
         }
 
-        // Update Totals
-        document.getElementById('summary-subtotal').innerText = `₹${cart.total_amount}`;
-        const deliveryFee = 20; // Hardcoded for now, or fetch from config
-        const total = parseFloat(cart.total_amount) + deliveryFee;
+        // Calculations using API values
+        const deliveryFee = parseFloat(globalConfig.base_delivery_fee || 20.00); 
+        const subTotal = parseFloat(cart.total_amount);
+        const total = subTotal + deliveryFee;
+
+        document.getElementById('summary-subtotal').innerText = `₹${subTotal.toFixed(2)}`;
+        document.getElementById('summary-delivery').innerText = `₹${deliveryFee.toFixed(2)}`;
         document.getElementById('summary-total').innerText = `₹${total.toFixed(2)}`;
 
     } catch (e) {
@@ -116,67 +128,67 @@ async function handlePlaceOrder(e) {
         return;
     }
 
-    // 1. Find Warehouse (Auto-select logic or simple fetch)
-    let warehouseId = null;
-    try {
-        const whs = await apiCall('/wms/warehouses/', 'GET', null, true);
-        if(whs && whs.length > 0) warehouseId = whs[0].id; 
-    } catch(e) {
-        console.error("WH fetch failed", e);
-    }
-
-    if(!warehouseId) {
-        alert("Sorry, service not available (No warehouse found).");
-        return;
-    }
-
+    // [Logic] Warehouse selection ab backend handle karega based on lat/lng (agar available hain)
+    // Lekin agar logic client side rakhna hai toh pehle warehouse fetch karo.
+    // Behtar ye hai ki hum lat/lng bhejein aur backend decide kare.
+    
     const placeBtn = document.querySelector('.place-order-button');
+    const originalText = placeBtn.innerHTML;
     placeBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
     placeBtn.disabled = true;
 
-    // 2. Create Order Payload
+    // Payload construction - Ab coordinates bhi bhej rahe hain
     const payload = {
-        warehouse_id: warehouseId,
+        // warehouse_id: auto-selected by backend if lat/lng present
         payment_method: selectedPaymentMethod,
         delivery_address_json: {
             full_address: selectedAddress.full_address,
             city: selectedAddress.city,
             pincode: selectedAddress.pincode,
             type: selectedAddress.address_type
-        }
-        // Note: delivery_lat/lng can be added if address model has it
+        },
+        // [NEW] Backend needs coordinates for Rider & Warehouse matching
+        delivery_lat: selectedAddress.location ? selectedAddress.location.coordinates[1] : null, 
+        delivery_lng: selectedAddress.location ? selectedAddress.location.coordinates[0] : null
     };
 
     try {
+        // Step 1: Create Order
         const resp = await apiCall('/orders/create/', 'POST', payload, true);
         
         if (selectedPaymentMethod === 'COD') {
-            // COD Success
             window.location.href = 'order_success.html';
         } else if (selectedPaymentMethod === 'RAZORPAY') {
-            // Handle Razorpay Payment
+            // Step 2: Handle Online Payment
             handleRazorpay(resp);
         }
 
     } catch (error) {
         alert("Order Failed: " + error.message);
-        placeBtn.innerHTML = 'Place Order';
+        placeBtn.innerHTML = originalText;
         placeBtn.disabled = false;
     }
 }
 
 function handleRazorpay(orderData) {
-    // Razorpay integration options
+    // Check if SDK loaded
+    if(!window.Razorpay) {
+        alert("Razorpay SDK failed to load. Please check your internet.");
+        window.location.reload();
+        return;
+    }
+
+    // [FIXED] Key is now dynamic from API
     var options = {
-        "key": "YOUR_RAZORPAY_KEY_ID", // Config se aana chahiye
-        "amount": orderData.amount * 100, // Paise
+        "key": globalConfig.razorpay_key_id, 
+        "amount": orderData.amount * 100, // Amount in paise
         "currency": "INR",
         "name": "QuickDash",
         "description": "Order Payment",
         "order_id": orderData.razorpay_order_id, 
         "handler": async function (response){
-            // Verify Payment on Backend
             try {
+                // Step 3: Verify Payment
                 const verifyResp = await apiCall('/orders/payment/verify/', 'POST', {
                     razorpay_order_id: response.razorpay_order_id,
                     razorpay_payment_id: response.razorpay_payment_id,
@@ -188,6 +200,8 @@ function handleRazorpay(orderData) {
                 }
             } catch (e) {
                 alert("Payment Verification Failed: " + e.message);
+                // Redirect to orders page so user can retry payment or see status
+                window.location.href = 'profile.html';
             }
         },
         "prefill": {
@@ -198,11 +212,9 @@ function handleRazorpay(orderData) {
         }
     };
     
-    // Razorpay script load check
-    if(window.Razorpay) {
-        var rzp1 = new Razorpay(options);
-        rzp1.open();
-    } else {
-        alert("Razorpay SDK not loaded. Please check internet connection.");
-    }
+    var rzp1 = new Razorpay(options);
+    rzp1.on('payment.failed', function (response){
+        alert("Payment Failed: " + response.error.description);
+    });
+    rzp1.open();
 }
