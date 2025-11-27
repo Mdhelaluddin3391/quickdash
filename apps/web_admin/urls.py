@@ -3,5 +3,5 @@ from .views import AdminLoginView, AdminDashboardView
 
 urlpatterns = [
     path('login/', AdminLoginView.as_view(), name='admin-login'),
-    path('', AdminDashboardView.as_view(), name='admin-dashboard'),
+    path('', AdminDashboardView.as_view(), name='admin-panel'),
 ]

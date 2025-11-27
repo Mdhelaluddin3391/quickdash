@@ -1,4 +1,4 @@
-// assets/js/auth.js
+// assets/js/utils/auth.js
 
 document.addEventListener('DOMContentLoaded', () => {
     const phoneForm = document.getElementById('phone-form');
@@ -9,6 +9,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const phoneDisplay = document.getElementById('phone-display');
     
     let userPhone = "";
+
+    // Helper: URL se 'next' parameter nikalo (e.g. ?next=cart.html)
+    function getNextUrl() {
+        const params = new URLSearchParams(window.location.search);
+        return params.get('next') || 'index.html';
+    }
 
     // --- 1. Send OTP ---
     if(phoneForm) {
@@ -32,7 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     phone: phoneVal
                 });
 
-                // Dev mode mein OTP alert karein (testing ke liye)
+                // Dev mode alert
                 if(resp.dev_hint) alert("OTP is: " + resp.dev_hint);
 
                 userPhone = phoneVal;
@@ -78,8 +84,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 localStorage.setItem('refreshToken', data.refresh);
                 if(data.user) localStorage.setItem('user', JSON.stringify(data.user));
 
-                // Redirect
-                window.location.href = 'index.html';
+                // --- FIX: Redirect to 'next' page if exists, else index ---
+                const nextUrl = getNextUrl();
+                console.log("Login successful, redirecting to:", nextUrl);
+                window.location.href = nextUrl;
 
             } catch (error) {
                 alert(error.message);
