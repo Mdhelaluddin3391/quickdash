@@ -2,12 +2,10 @@ import hashlib
 import json
 import logging
 from datetime import timedelta
-
 from django.utils.deprecation import MiddlewareMixin
 from django.http import JsonResponse
 from django.utils import timezone
 from django.conf import settings
-
 from .models import IdempotencyKey
 
 logger = logging.getLogger(__name__)
@@ -15,7 +13,7 @@ logger = logging.getLogger(__name__)
 IDEMPOTENCY_HEADER = "HTTP_IDEMPOTENCY_KEY"
 
 # Safety limits
-MAX_RESPONSE_BYTES = 10_000  # 10KB
+MAX_RESPONSE_BYTES = 1024 * 1024  
 ALLOWED_CONTENT_TYPES = {"application/json"}
 
 

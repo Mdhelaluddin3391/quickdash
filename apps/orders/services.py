@@ -1,41 +1,48 @@
 import logging
 from django.db import transaction
+from django.contrib.gis.geos import Point
+from django.contrib.gis.db.models.functions import Distance
+from django.contrib.gis.measure import D
+
 from apps.payments.models import Payment
 from apps.payments.signals import payment_succeeded as payments_payment_succeeded
-from apps.orders.signals import send_order_created # <--- FIXED IMPORT
+from apps.orders.signals import send_order_created
 from apps.warehouse.models import Warehouse
-from apps.delivery.utils import haversine_distance  # Import utility
-from django.conf import settings
-from django.db import transaction
-from .models import Order, OrderItem, Cart
-from apps.payments.models import Payment
-from apps.warehouse.models import Warehouse
+from apps.orders.models import Order, OrderItem, Cart
 from apps.inventory.services import check_and_lock_inventory
-from apps.delivery.utils import haversine_distance
+
 
 logger = logging.getLogger(__name__)
 
 
 
 def get_nearest_warehouse(lat, lng):
-    MAX_RADIUS_KM = 15.0  # Max service radius
-    warehouses = Warehouse.objects.filter(is_active=True)
+    """
+    [PERFORMANCE FIX] Uses PostGIS Database Distance calculation.
+    """
+    MAX_RADIUS_KM = 15.0
     
-    best_wh = None
-    min_dist = float('inf')
+    if not lat or not lng:
+        return None, float('inf')
 
-    for wh in warehouses:
-        if wh.lat is None or wh.lng is None:
-            continue
+    user_location = Point(float(lng), float(lat), srid=4326)
+
+    # 1. Filter active warehouses
+    # 2. Filter within radius (D_within uses spatial index)
+    # 3. Annotate with precise distance
+    # 4. Order by distance
+    nearest_wh = Warehouse.objects.filter(
+        is_active=True,
+        location__distance_lte=(user_location, D(km=MAX_RADIUS_KM))
+    ).annotate(
+        distance=Distance('location', user_location)
+    ).order_by('distance').first()
+
+    if nearest_wh:
+        # distance.km returns a float
+        return nearest_wh, nearest_wh.distance.km
             
-        # Calculate distance using your utility
-        dist = haversine_distance(float(lat), float(lng), float(wh.lat), float(wh.lng))
-        
-        if dist <= MAX_RADIUS_KM and dist < min_dist:
-            min_dist = dist
-            best_wh = wh
-            
-    return best_wh, min_dist
+    return None, float('inf')
 
 
 def process_successful_payment(order):

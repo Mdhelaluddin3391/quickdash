@@ -8,6 +8,8 @@ from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.db.models import Sum
 from apps.catalog.models import SKU
+from django.contrib.gis.db import models as gis_models
+
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +24,7 @@ class Warehouse(models.Model):
     name = models.CharField(max_length=255)
     code = models.CharField(max_length=50, unique=True, db_index=True)
     address = models.TextField()
-    lat = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-    lng = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    location = gis_models.PointField(srid=4326, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

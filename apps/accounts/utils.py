@@ -1,5 +1,6 @@
 # apps/accounts/utils.py
 import random
+import secrets
 import logging
 from django.conf import settings
 from django.utils import timezone
@@ -24,22 +25,16 @@ def create_and_send_otp(phone: str, login_type: str):
     """
     phone = normalize_phone(phone)
     # 6-digit random code
-    otp_code = "".join(str(random.randint(0, 9)) for _ in range(6))
+    otp_code = "".join(str(secrets.randbelow(10)) for _ in range(6))
     
     # Save to DB
     otp = PhoneOTP.create_otp(phone=phone, login_type=login_type, code=otp_code)
     
     # --- [SECURITY LOGIC] ---
     if settings.DEBUG:
-        # TESTING MODE:
-        # SMS mat bhejo (paise bachao), bas console mein print karo.
-        print(f"\n========================================")
-        print(f" [TESTING] OTP for {phone}: {otp_code}")
-        print(f"========================================\n")
+        print(f"\n [TESTING] OTP for {phone}: {otp_code} \n")
         logger.info(f"Test OTP generated for {phone}: {otp_code}")
     else:
-        # PRODUCTION MODE:
-        # Asli SMS bhejo (Celery Task). Console mein mat dikhao.
         send_sms_task.delay(phone=phone, otp_code=otp_code, login_type=login_type)
     
     return otp

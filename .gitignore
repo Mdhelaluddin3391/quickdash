@@ -31,3 +31,18 @@ ENV/
 # --- Logs & System ---
 *.log
 Thumbs.db
+
+
+# --- Logs & System ---
+*.log
+Thumbs.db
+
+# --- Celery ---
+celerybeat-schedule
+celerybeat.pid
+
+celerybeat-schedule
+celerybeat.pid
+celery.log
+celery.pid
+celery. beat.log        
