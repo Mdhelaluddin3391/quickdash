@@ -53,9 +53,9 @@ class CreateOrderSerializer(serializers.Serializer):
         max_digits=9, decimal_places=6, required=False, allow_null=True
     )
     payment_method = serializers.ChoiceField(
-        choices=(("RAZORPAY", "Razorpay"), ("COD", "Cash on Delivery")),
-        required=False,
-        default="RAZORPAY",
+        choices=[("RAZORPAY", "Razorpay"), ("COD", "Cash on Delivery")],
+        required=True, # Make this explicit
+        error_messages={'invalid_choice': 'Invalid payment method selected.'}
     )
 
     def validate_warehouse_id(self, value):

@@ -3,12 +3,14 @@
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{% static 'assets/css/index_style.css' %}">
-    <title>QuickDash - Home</title>
+    <script>
+        window.APP_CONFIG = {
+            API_BASE: "/api/v1", // Or use {% url 'api-root' %} if you have a named URL
+            LOGIN_URL: "{% url 'auth' %}", // Dynamic URL from Django
+            CART_URL: "{% url 'cart' %}",
+            USER_LOGGED_IN: {{ request.user.is_authenticated|yesno:"true,false" }}
+        };
+    </script>
 </head>
 
 <body>

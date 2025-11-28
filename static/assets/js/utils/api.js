@@ -1,7 +1,7 @@
 // assets/js/utils/api.js
 
-// [PRODUCTION FIX] Use relative path. Nginx handles the proxy to backend.
-const API_BASE = "/api/v1"; 
+// Use the config injected from HTML, or fallback for safety
+const CONFIG = window.APP_CONFIG || { API_BASE: "/api/v1", LOGIN_URL: "auth.html" };
 
 async function apiCall(endpoint, method = 'GET', body = null, requireAuth = false) {
     const headers = {
@@ -13,37 +13,29 @@ async function apiCall(endpoint, method = 'GET', body = null, requireAuth = fals
         if (token) {
             headers['Authorization'] = `Bearer ${token}`;
         } else {
-            // [PRODUCTION FIX] Smart Redirect: Save current page to return after login
-            if (window.location.pathname.indexOf('auth.html') === -1) {
+            // Smart Redirect using dynamic URL
+            if (window.location.pathname.indexOf(CONFIG.LOGIN_URL) === -1) {
                 const currentPath = window.location.pathname + window.location.search;
-                window.location.href = `auth.html?next=${encodeURIComponent(currentPath)}`;
+                window.location.href = `${CONFIG.LOGIN_URL}?next=${encodeURIComponent(currentPath)}`;
             }
             throw new Error("Authentication required");
         }
     }
 
-    const config = {
-        method: method,
-        headers: headers
-    };
-
-    if (body) {
-        config.body = JSON.stringify(body);
-    }
+    const config = { method, headers };
+    if (body) config.body = JSON.stringify(body);
 
     try {
-        const response = await fetch(`${API_BASE}${endpoint}`, config);
+        const response = await fetch(`${CONFIG.API_BASE}${endpoint}`, config);
 
-        // Token expire hone par logout
         if (response.status === 401 && requireAuth) {
             logout();
             throw new Error("Session expired");
         }
 
         const data = await response.json();
-
         if (!response.ok) {
-            throw new Error(data.detail || data.error || JSON.stringify(data) || "Something went wrong");
+            throw new Error(data.detail || data.error || "Something went wrong");
         }
         return data;
     } catch (error) {
@@ -60,8 +52,9 @@ function logout() {
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
-    window.location.href = 'auth.html';
+    window.location.href = CONFIG.LOGIN_URL;
 }
+
 
 // Global Cart Count Update
 async function updateGlobalCartCount() {

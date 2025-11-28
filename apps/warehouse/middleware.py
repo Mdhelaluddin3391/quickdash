@@ -11,43 +11,36 @@ from .models import IdempotencyKey
 logger = logging.getLogger(__name__)
 
 IDEMPOTENCY_HEADER = "HTTP_IDEMPOTENCY_KEY"
-
-# Safety limits
 MAX_RESPONSE_BYTES = 1024 * 1024  
 ALLOWED_CONTENT_TYPES = {"application/json"}
 
 
 class IdempotencyMiddleware(MiddlewareMixin):
-    """
-    Safe production-ready Idempotency middleware.
-
-    - Works for POST only
-    - Clients send Idempotency-Key header
-    - Middleware returns old response if exists
-    - Only stores JSON responses <= 10KB
-    - View must set header: X-STORE-IDEMPOTENCY = 1
-    """
-
     def process_request(self, request):
-        if request.method != "POST":
+        if request.method not in ('POST', 'PATCH'):
             return None
 
         key = request.META.get(IDEMPOTENCY_HEADER)
         if not key:
             return None
 
-        # Hash request body safely
+        # SKIP if this is a file upload (multipart) to prevent memory issues
+        if request.content_type.startswith("multipart/form-data"):
+            return None
+
         try:
+            # Safe access to body
             body = request.body or b""
             h = hashlib.sha256(body).hexdigest()
         except Exception:
-            logger.exception("Failed to hash request body")
-            h = ""
+            logger.warning("Idempotency: Could not read request body, skipping.")
+            return None
 
         try:
             rec = IdempotencyKey.objects.filter(key=key).first()
             if rec and not rec.is_expired():
-                if rec.response_body is not None and rec.response_status is not None:
+                # Hash check ensures we don't return cached response for a DIFFERENT body with same key
+                if rec.request_hash == h and rec.response_body is not None:
                     return JsonResponse(
                         rec.response_body,
                         status=rec.response_status,
