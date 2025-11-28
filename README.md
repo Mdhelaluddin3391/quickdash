@@ -1,80 +1,173 @@
-```markdown
-# QuickDash API
+<div align="center">
 
-QuickDash offers comprehensive backend solutions for an e-commerce and delivery platform, featuring functionalities for user management, product catalog, inventory, orders, payments, delivery, and notifications. The project is built with Django and Django REST Framework, using a modular architecture with various Django apps catering to different services.
+# ⚡ QuickDash API ⚡
 
-## Features
+**A robust, scalable, and feature-rich backend for modern e-commerce and delivery platforms.**
 
-1. **User Authentication:** JWT-based authentication ensures secure access.
-2. **Role-Based Access Control:** Different permissions are assigned for user roles ensuring proper authorization and security.
-3. **Product Catalog Management:** This includes management of products and categories.
-4. **Inventory Management:** Tracking stock levels and warehouse information here allows efficient inventory tracking.
-5. **Order Processing:** The entire order lifecycle from creation to completion is managed in this module.
-6. **Payment Integration:** Support for payment gateways like Razorpay ensures seamless transactions.
-7. **Real-time Delivery Tracking:** Real-time location updates are provided via WebSockets for real-time delivery tracking.
-8. **Notifications:** Push notifications and SMS alerts (via Twilio) ensure timely communication with users.
-9. **Analytics:** Tracking and reporting of key metrics helps in data driven decision making.
-10. **Background Tasks:** Asynchronous task processing with Celery and Redis ensures efficient resource utilization.
+</div>
 
-## Technologies Used
+<p align="center">
+  <img alt="GitHub language count" src="https://img.shields.io/github/languages/count/Mdhelaluddin3391/quickdash?style=for-the-badge&color=blue">
+  <img alt="GitHub top language" src="https://img.shields.io/github/languages/top/Mdhelaluddin3391/quickdash?style=for-the-badge&color=blueviolet">
+  <img alt="GitHub" src="https://img.shields.io/github/license/Mdhelaluddin3391/quickdash?style=for-the-badge&color=brightgreen">
+  <img alt="GitHub repo size" src="https://img.shields.io/github/repo-size/Mdhelaluddin3391/quickdash?style=for-the-badge&color=orange">
+</p>
 
-- Backend: Django, Django REST Framework
-- Database: PostgreSQL
-- Asynchronous Tasks: Celery, Redis
-- Real-time Communication: Django Channels, WebSockets
-- Authentication: djangorestframework-simplejwt
-- Payments: Razorpay
-- SMS/Notifications: Twilio
-- Deployment: Docker, Gunicorn, Daphne
+QuickDash provides a comprehensive and modular backend solution designed to power sophisticated e-commerce and on-demand delivery services. Built with Django and the Django REST Framework, it features a clean, organized architecture that separates concerns into dedicated applications. From user management and payment processing to real-time delivery tracking, QuickDash is engineered for performance, scalability, and developer efficiency.
 
-## Project Structure
+---
 
-The project is organized into several Django apps each handling a specific domain. 
+## 📋 Table of Contents
+
+- [Key Features](#-key-features)
+- [System Architecture & Tech Stack](#-system-architecture--tech-stack)
+- [Getting Started (Docker)](#-getting-started-docker)
+- [API Documentation](#-api-documentation)
+- [Running Tests](#-running-tests)
+- [Project Structure](#-project-structure)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+---
+
+## ✨ Key Features
+
+- **Authentication & Security:** Secure JWT-based authentication with role-based access control (RBAC) to protect endpoints.
+- **Full E-commerce Flow:** Complete management of products, categories, inventory, and the entire order lifecycle.
+- **Payment Gateway Integration:** Seamless and secure payment processing via Razorpay.
+- **Real-time Delivery Tracking:** Live location updates for deliveries powered by Django Channels and WebSockets.
+- **Multi-channel Notifications:** Keep users informed with push notifications via Firebase Cloud Messaging (FCM) and SMS alerts via Twilio.
+- **Advanced Analytics:** Built-in hooks for tracking key metrics to drive data-informed decisions.
+- **Asynchronous Task Processing:** Efficiently handles long-running and periodic tasks (like sending emails or processing data) using Celery and Redis, preventing API slowdowns.
+- **Geospatial Capabilities:** Utilizes PostGIS for location-based queries and mapping features.
+- **Automated API Docs:** Comes with auto-generated, interactive API documentation using `drf-spectacular`.
+
+---
+
+## 🏗️ System Architecture & Tech Stack
+
+The project runs as a set of containerized services orchestrated by Docker Compose, ensuring a consistent development and production environment.
+
+| Service        | Technology                                                                                                         | Purpose                                                       |
+|----------------|--------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------|
+| **Web Server** | [Nginx](https://www.nginx.com/)                                                                                    | High-performance HTTP reverse proxy and static file server.     |
+| **App Server** | [Daphne](https://github.com/django/daphne) / [Django](https://www.djangoproject.com/)                               | Serves the Django application and handles WebSocket connections.  |
+| **Database**   | [PostgreSQL](https://www.postgresql.org/) + [PostGIS](https://postgis.net/)                                        | Primary relational database with geospatial capabilities.       |
+| **Caching**    | [Redis](https://redis.io/)                                                                                         | In-memory data store for caching and WebSocket channel layers.  |
+| **Task Queue** | [Celery](https://docs.celeryq.dev/) / [Redis](https://redis.io/)                                                     | Manages and executes background tasks asynchronously.         |
+| **Frameworks** | [Django REST Framework](https://www.django-rest-framework.org/), [Django Channels](https://channels.readthedocs.io/) | Building APIs and handling real-time protocols.               |
+
+---
+
+## 🚀 Getting Started (Docker)
+
+Running the project with Docker is the recommended approach. It handles all dependencies, services, and configurations automatically.
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/)
+- [Docker Compose](https://docs.docker.com/compose/install/)
+
+### Installation Steps
+
+1.  **Clone the Repository**
+    ```bash
+    git clone https://github.com/Mdhelaluddin3391/quickdash
+    cd quickdash
+    ```
+
+2.  **Configure Environment Variables**
+    Create a `.env` file in the project root. You can copy the example file if one is provided, or create it from scratch.
+    ```bash
+    # .env
+    SECRET_KEY='your-strong-secret-key'
+    DEBUG=1
+    ALLOWED_HOSTS='localhost,127.0.0.1'
+
+    # Database Credentials
+    DB_NAME=quickdash
+    DB_USER=admin
+    DB_PASSWORD=admin
+    DB_HOST=db
+    DB_PORT=5432
+
+    # Redis URL
+    REDIS_URL='redis://redis:6379/1'
+    CELERY_BROKER_URL='redis://redis:6379/0'
+
+    # Add other credentials for Razorpay, Twilio, etc.
+    ```
+
+3.  **Build and Run the Containers**
+    This single command will build the images, start all services, and run the database migrations as defined in `start.sh`.
+    ```bash
+    docker-compose up --build
+    ```
+
+The application will be accessible at `http://localhost:80`.
+
+---
+
+## 📖 API Documentation
+
+Thanks to `drf-spectacular`, interactive API documentation is automatically generated. Once the application is running, you can access:
+
+-   **Swagger UI:** `http://localhost/api/schema/swagger-ui/`
+-   **ReDoc:** `http://localhost/api/schema/redoc/`
+-   **Schema File:** `http://localhost/api/schema/`
+
+---
+
+## ✅ Running Tests
+
+To run the test suite, execute the following command while the Docker containers are running. This command runs `pytest` inside the `web` container.
+
+```bash
+docker-compose exec web python manage.py test
+```
+
+---
+
+## 📂 Project Structure
+
+The project follows a modular structure where each Django app is responsible for a specific domain.
 
 ```
 /
 ├── apps/
-│   ├── accounts        # User management, authentication, and roles
-│   ├── analytics       # Data tracking and analytics
-│   ├── catalog         # Product and category management
-│   ├── delivery        # Delivery tracking and logistics
-│   ├── inventory       # Inventory and stock management
-│   ├── notifications   # Manages notifications  (FCM, SMS)
-│   ├── orders          # Order processing and management
-│   ├── payments        # Payment processing and integration
-│   ├── utils           # Shared utilities, middleware, and helpers
-│   └── warehouse       # Warehouse management
-├── config              # Django project configuration, settings, and URLs
-├── manage.py           # Django's command-line utility
-├── requirements.txt    # Python dependencies
-├── Dockerfile          # Docker configuration for the application
-└── docker-compose.yml  # Docker Compose for multi-container setup
+│   ├── accounts/        # User management, auth, and roles
+│   ├── analytics/       # Data tracking and analytics
+│   ├── catalog/         # Product and category management
+│   ├── delivery/        # Delivery tracking and logistics
+│   ├── inventory/       # Stock and warehouse management
+│   ├── notifications/   # FCM & SMS notifications
+│   ├── orders/          # Order processing and lifecycle
+│   ├── payments/        # Payment integration
+│   ├── utils/           # Shared utilities and helpers
+│   └── warehouse/       # Multi-warehouse logic
+├── config/              # Django project settings, ASGI/WSGI, and root URLs
+├── nginx/               # Nginx configuration
+├── start.sh             # Startup script for the Django container
+├── docker-compose.yml   # Defines and orchestrates all services
+├── Dockerfile           # Defines the application container
+└── requirements.txt     # Python dependencies
 ```
 
-## Setup and Installation
+---
 
-1. **Clone the repository:** ```bash git clone https://github.com/Mdhelaluddin3391/quickdash cd quickdash ```
-2. **Create a virtual environment and install dependencies:** 
-    ```bash python -m venv .venv source .venv/bin/activate pip install -r requirements.txt ```
-3. **Set up environment variables:** Create a `.env` file in the root directory with necessary environment variables. Consider using `.env.example` as a template.
-4. **Run database migrations:** ```bash python manage.py migrate ```
+## 🤝 Contributing
 
-## Running the Application
+Contributions are welcome! Please follow these steps to contribute:
 
-1. **Development Server:** ```bash python manage.py runserver ```
-2. **Using Docker Compose:** ```bash docker-compose up --build ```
+1.  Fork the repository.
+2.  Create a new feature branch (`git checkout -b feature/your-awesome-feature`).
+3.  Make your changes.
+4.  Commit your changes (`git commit -m 'Add some awesome feature'`).
+5.  Push to the branch (`git push origin feature/your-awesome-feature`).
+6.  Open a Pull Request.
 
-The full documentation of API endpoints is yet to be added in this README, and it's recommended to use tools like Swagger or Redoc for better API documentation. 
+---
 
-## Contributing
-We welcome contributions! Please follow these steps:
-1. Fork the repository.
-2. Create a new branch (`git checkout -b feature/your-feature`).
-3. Make your changes.
-4. Commit your changes (`git commit -m 'Add some feature'`).
-5. Push to the branch (`git push origin feature/your-feature`).
-6. Open a pull request.
+## 📜 License
 
-## License
-This project is licensed under the MIT License. See `LICENSE` for details.
-```
+This project is licensed under the MIT License. See the `LICENSE` file for more details.

@@ -5,7 +5,7 @@ from .models import DispatchRecord
 from .signals import send_order_created
 from .tasks import orchestrate_order_fulfilment_from_order_payload
 from apps.orders.signals import send_order_created  # <--- FIXED IMPORT
-
+from apps.orders.signals import send_order_created
 
 logger = logging.getLogger(__name__)
 
