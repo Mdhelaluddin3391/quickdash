@@ -128,18 +128,13 @@ async function handlePlaceOrder(e) {
         return;
     }
 
-    // [Logic] Warehouse selection ab backend handle karega based on lat/lng (agar available hain)
-    // Lekin agar logic client side rakhna hai toh pehle warehouse fetch karo.
-    // Behtar ye hai ki hum lat/lng bhejein aur backend decide kare.
-    
     const placeBtn = document.querySelector('.place-order-button');
     const originalText = placeBtn.innerHTML;
     placeBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
     placeBtn.disabled = true;
 
-    // Payload construction - Ab coordinates bhi bhej rahe hain
+    // [PRODUCTION FIX] Payload construction updated for new serializer structure
     const payload = {
-        // warehouse_id: auto-selected by backend if lat/lng present
         payment_method: selectedPaymentMethod,
         delivery_address_json: {
             full_address: selectedAddress.full_address,
@@ -147,9 +142,9 @@ async function handlePlaceOrder(e) {
             pincode: selectedAddress.pincode,
             type: selectedAddress.address_type
         },
-        // [NEW] Backend needs coordinates for Rider & Warehouse matching
-        delivery_lat: selectedAddress.location ? selectedAddress.location.coordinates[1] : null, 
-        delivery_lng: selectedAddress.location ? selectedAddress.location.coordinates[0] : null
+        // Use the flat fields we added to serializer
+        delivery_lat: selectedAddress.lat, 
+        delivery_lng: selectedAddress.lng
     };
 
     try {
@@ -171,24 +166,21 @@ async function handlePlaceOrder(e) {
 }
 
 function handleRazorpay(orderData) {
-    // Check if SDK loaded
     if(!window.Razorpay) {
         alert("Razorpay SDK failed to load. Please check your internet.");
         window.location.reload();
         return;
     }
 
-    // [FIXED] Key is now dynamic from API
     var options = {
         "key": globalConfig.razorpay_key_id, 
-        "amount": orderData.amount * 100, // Amount in paise
+        "amount": orderData.amount * 100, 
         "currency": "INR",
         "name": "QuickDash",
         "description": "Order Payment",
         "order_id": orderData.razorpay_order_id, 
         "handler": async function (response){
             try {
-                // Step 3: Verify Payment
                 const verifyResp = await apiCall('/orders/payment/verify/', 'POST', {
                     razorpay_order_id: response.razorpay_order_id,
                     razorpay_payment_id: response.razorpay_payment_id,
@@ -200,7 +192,6 @@ function handleRazorpay(orderData) {
                 }
             } catch (e) {
                 alert("Payment Verification Failed: " + e.message);
-                // Redirect to orders page so user can retry payment or see status
                 window.location.href = 'profile.html';
             }
         },

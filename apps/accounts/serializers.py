@@ -1,6 +1,5 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-# [FIX] Removed duplicate import line here
 from .models import RiderProfile, EmployeeProfile, Address, CustomerProfile
 
 User = get_user_model()
@@ -85,6 +84,10 @@ class RiderProfileSerializer(serializers.ModelSerializer):
 # ======================
 
 class AddressSerializer(serializers.ModelSerializer):
+    # [PRODUCTION FIX] Explicitly extract lat/lng to avoid GeoJSON parsing issues in frontend
+    lat = serializers.SerializerMethodField()
+    lng = serializers.SerializerMethodField()
+
     class Meta:
         model = Address
         fields = [
@@ -96,7 +99,15 @@ class AddressSerializer(serializers.ModelSerializer):
             'pincode',
             'location',
             'is_default',
+            'lat',
+            'lng',
         ]
+
+    def get_lat(self, obj):
+        return obj.location.y if obj.location else None
+
+    def get_lng(self, obj):
+        return obj.location.x if obj.location else None
 
 
 class CustomerProfileSerializer(serializers.ModelSerializer):

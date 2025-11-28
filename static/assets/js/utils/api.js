@@ -1,5 +1,7 @@
 // assets/js/utils/api.js
-const API_BASE = "http://127.0.0.1/api/v1";
+
+// [PRODUCTION FIX] Use relative path. Nginx handles the proxy to backend.
+const API_BASE = "/api/v1"; 
 
 async function apiCall(endpoint, method = 'GET', body = null, requireAuth = false) {
     const headers = {
@@ -11,8 +13,11 @@ async function apiCall(endpoint, method = 'GET', body = null, requireAuth = fals
         if (token) {
             headers['Authorization'] = `Bearer ${token}`;
         } else {
-            // Redirect to login if token is missing but required
-            window.location.href = 'auth.html';
+            // [PRODUCTION FIX] Smart Redirect: Save current page to return after login
+            if (window.location.pathname.indexOf('auth.html') === -1) {
+                const currentPath = window.location.pathname + window.location.search;
+                window.location.href = `auth.html?next=${encodeURIComponent(currentPath)}`;
+            }
             throw new Error("Authentication required");
         }
     }
