@@ -6,6 +6,13 @@ from apps.orders.signals import send_order_created # <--- FIXED IMPORT
 from apps.warehouse.models import Warehouse
 from apps.delivery.utils import haversine_distance  # Import utility
 from django.conf import settings
+from django.db import transaction
+from .models import Order, OrderItem, Cart
+from apps.payments.models import Payment
+from apps.warehouse.models import Warehouse
+from apps.inventory.services import check_and_lock_inventory
+from apps.delivery.utils import haversine_distance
+
 logger = logging.getLogger(__name__)
 
 
@@ -80,38 +87,33 @@ def process_successful_payment(order):
 
 # ... (Rest of the file remains unchanged)
 
-def create_order_from_cart(user, warehouse_id, delivery_address_json, delivery_lat=None, delivery_lng=None, payment_method='RAZORPAY'):
-    from .models import Order, OrderItem, Cart
-    from apps.payments.models import Payment
 
-    # --- [NEW] Automatic Warehouse Selection Logic ---
+
+def create_order_from_cart(user, warehouse_id, delivery_address_json, delivery_lat=None, delivery_lng=None, payment_method='RAZORPAY'):
+    # 1. Warehouse Selection Logic
+    selected_warehouse = None
+    
     if delivery_lat and delivery_lng:
-        # Agar coordinates aaye hain, to nearest warehouse dhundo
+        # Automatic: Find nearest warehouse
         nearest_wh, distance = get_nearest_warehouse(delivery_lat, delivery_lng)
         
+        # Logic: If nearest is found, use it. 
+        # Optional: You could check if provided 'warehouse_id' matches nearest_wh for consistency.
         if not nearest_wh:
             return None, None, "We do not deliver to this location (No warehouse nearby)."
-            
-        # Agar warehouse_id frontend ne nahi bheja, ya galat bheja, to nearest use karo
-        if not warehouse_id:
-            warehouse_id = nearest_wh.id
-        else:
-            # Optional: Validate ki jo warehouse bheja gaya wo range mein hai ya nahi
-            # Filhal hum nearest ko hi preference dete hain logic simplify karne ke liye
-            warehouse_id = nearest_wh.id
+        selected_warehouse = nearest_wh
+        
     else:
-        # Fallback: Agar location nahi hai, to warehouse_id compulsory hona chahiye
+        # Fallback: Manual ID (Ensure it's valid)
         if not warehouse_id:
             return None, None, "Delivery location or Warehouse ID is required."
+            
+        try:
+            selected_warehouse = Warehouse.objects.get(id=warehouse_id, is_active=True)
+        except Warehouse.DoesNotExist:
+            return None, None, "Selected warehouse does not exist or is inactive."
 
-    # Validate Warehouse existence
-    try:
-        warehouse = Warehouse.objects.get(id=warehouse_id, is_active=True)
-    except Warehouse.DoesNotExist:
-        return None, None, "Selected warehouse does not exist or is inactive."
-
-    # --- End Selection Logic ---
-
+    # 2. Get Cart
     try:
         cart = Cart.objects.prefetch_related('items__sku').get(customer=user)
     except Cart.DoesNotExist:
@@ -120,38 +122,62 @@ def create_order_from_cart(user, warehouse_id, delivery_address_json, delivery_l
     if not cart.items.exists():
         return None, None, "Cart empty"
 
-    order = Order.objects.create(
-        customer=user,
-        warehouse=warehouse,  # Use selected warehouse
-        delivery_address_json=delivery_address_json,
-        delivery_lat=delivery_lat,
-        delivery_lng=delivery_lng,
-        status='pending',
-        payment_status='pending',
-    )
+    # 3. Create Order (Atomic Transaction with Inventory Lock)
+    try:
+        with transaction.atomic():
+            # [CRITICAL] Check & Lock Inventory BEFORE creating order
+            # This prevents race conditions where 2 users buy the last item
+            for item in cart.items.all():
+                try:
+                    check_and_lock_inventory(selected_warehouse.id, item.sku.id, item.quantity)
+                except ValueError as e:
+                    # Stock unavailable
+                    return None, None, f"Out of Stock: {str(e)}"
 
-    items_to_create = []
-    for c_item in cart.items.all():
-        unit_price = c_item.sku.sale_price if c_item.sku.sale_price else 0
-        items_to_create.append(
-            OrderItem(
-                order=order,
-                sku=c_item.sku,
-                quantity=c_item.quantity,
-                unit_price=unit_price,
-                total_price=unit_price * c_item.quantity,
-                sku_name_snapshot=c_item.sku.name,
+            # Create Order
+            order = Order.objects.create(
+                customer=user,
+                warehouse=selected_warehouse,
+                delivery_address_json=delivery_address_json,
+                delivery_lat=delivery_lat,
+                delivery_lng=delivery_lng,
+                status='pending',
+                payment_status='pending',
             )
-        )
 
-    OrderItem.objects.bulk_create(items_to_create)
-    order.recalculate_totals(save=True)
+            # Create Order Items
+            items_to_create = []
+            for c_item in cart.items.all():
+                unit_price = c_item.sku.sale_price if c_item.sku.sale_price else 0
+                items_to_create.append(
+                    OrderItem(
+                        order=order,
+                        sku=c_item.sku,
+                        quantity=c_item.quantity,
+                        unit_price=unit_price,
+                        total_price=unit_price * c_item.quantity,
+                        sku_name_snapshot=c_item.sku.name,
+                    )
+                )
+            OrderItem.objects.bulk_create(items_to_create)
+            
+            # Update Totals
+            order.recalculate_totals(save=True)
 
-    payment = None
-    if payment_method == 'COD':
-        payment = Payment.objects.create(order=order, payment_method=Payment.PaymentMethod.COD, amount=order.final_amount)
+            # Create Payment Record if COD
+            payment = None
+            if payment_method == 'COD':
+                payment = Payment.objects.create(
+                    order=order, 
+                    payment_method=Payment.PaymentMethod.COD, 
+                    amount=order.final_amount
+                )
+                
+            return order, payment, None
 
-    return order, payment, None
+    except Exception as e:
+        # Catch any other DB errors
+        return None, None, f"Order creation failed: {str(e)}"
 
 def cancel_order(order, cancelled_by=None, reason=""):
     from .models import OrderTimeline, OrderCancellation

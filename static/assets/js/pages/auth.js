@@ -1,3 +1,14 @@
+(function checkSession() {
+    const token = localStorage.getItem('accessToken');
+    if (token) {
+        console.log("User already logged in. Redirecting...");
+        // Check if there is a 'next' param in URL (e.g. ?next=cart.html)
+        const params = new URLSearchParams(window.location.search);
+        const nextUrl = params.get('next') || 'profile.html';
+        window.location.replace(nextUrl); // Use replace so they can't 'back' into login
+    }
+})();
+
 document.addEventListener('DOMContentLoaded', () => {
     const phoneForm = document.getElementById('phone-form');
     const otpForm = document.getElementById('otp-form');
