@@ -44,20 +44,38 @@ def get_client_ip(request):
     x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
     return x_forwarded_for.split(",")[0].strip() if x_forwarded_for else request.META.get("REMOTE_ADDR")
 
+
 def check_otp_rate_limit(phone: str, login_type: str, ip=None):
+    # 1. Phone based throttling
     rate_limit_key = f"otp_limit:{login_type}:{phone}"
+    
+    # Check if key exists
     if cache.get(rate_limit_key):
         ttl = cache.ttl(rate_limit_key) if hasattr(cache, 'ttl') else 60
         raise ValidationError(f"Please wait {ttl} seconds before requesting another OTP.")
 
-    cache.set(rate_limit_key, "locked", timeout=60)
-    
+    # 2. IP based throttling (Spam protection)
     if ip:
         ip_key = f"otp_spam_ip:{ip}"
-        request_count = cache.get(ip_key, 0)
+        # Increment returns the new value. If key missing, starts at 1.
+        try:
+            # Using atomic increment for thread safety
+            request_count = cache.incr(ip_key)
+        except ValueError:
+            # Key might not exist or expired, set it
+            cache.set(ip_key, 1, timeout=3600)
+            request_count = 1
+            
         if request_count > 20: 
+             logger.warning(f"OTP Spam detected from IP: {ip}")
              raise ValidationError("Too many requests from this IP. Try again later.")
-        cache.set(ip_key, request_count + 1, timeout=3600)
+        
+        # Ensure timeout is set on first request
+        if request_count == 1:
+            cache.expire(ip_key, 3600)
+
+    # Lock the phone for 60 seconds
+    cache.set(rate_limit_key, "locked", timeout=60)
 
 def create_tokens_with_session(user, role, client, extra_claims=None, request=None, single_session_for_client=False):
     extra_claims = extra_claims or {}

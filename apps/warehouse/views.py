@@ -89,8 +89,13 @@ class PickingTaskViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        return PickingTask.objects.filter(picker=user).order_by("-created_at")
-
+        return (
+            PickingTask.objects
+            .filter(picker=user)
+            .select_related('warehouse', 'picker') # Foreign Keys
+            .prefetch_related('items', 'items__sku', 'items__bin') # Reverse/Nested relations
+            .order_by("-created_at")
+        )
 
 class ScanPickAPIView(views.APIView):
     """

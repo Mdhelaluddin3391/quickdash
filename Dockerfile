@@ -26,21 +26,32 @@ COPY requirements.txt /code/
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
+
+
+
 # Copy project files
 COPY . /code
 
 # Permission fixes for scripts
 COPY wait-for-db.sh /wait-for-db.sh
 COPY start.sh /start.sh
-RUN chmod +x /wait-for-db.sh /start.sh
+# Fix line endings just in case and make executable
+RUN sed -i 's/\r$//g' /wait-for-db.sh /start.sh && \
+    chmod +x /wait-for-db.sh /start.sh
 
-# --- FIX: REMOVED USER CREATION FOR DEV ENVIRONMENT ---
-# Development mein Root user use karna safe aur aasan hai taaki permission issues na aayein.
+# Create a non-root user
+RUN addgroup --system appgroup && adduser --system --group appuser
+
+# Chown all files to the new user
+RUN chown -R appuser:appgroup /code
+
+# Switch to non-root user
+USER appuser
 
 EXPOSE 8000
 
 # Healthcheck
-HEALTHCHECK CMD curl --fail http://localhost:8000/ || exit 1
+HEALTHCHECK CMD curl --fail http://localhost:8000/api/v1/utils/health/ || exit 1
 
 # Start command
 CMD ["/start.sh"]

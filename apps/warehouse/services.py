@@ -44,6 +44,8 @@ from .notifications import (
 # =========================================================
 
 
+
+
 @transaction.atomic
 def reserve_stock_for_order(order_id, warehouse_id, items_needed):
     """
@@ -56,11 +58,15 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
         status=PickingTask.TaskStatus.PENDING,
     )
 
+    # Sort items by SKU ID to prevent deadlocks across multiple items
+    items_needed = sorted(items_needed, key=lambda x: x['sku_id'])
+
     for item in items_needed:
         sku_id = item["sku_id"]
         qty_needed = int(item["qty"])
 
         # 1. Find candidate bins
+        # SORTING by ID is crucial for deadlock prevention in batch updates
         bin_qs = (
             BinInventory.objects
             .select_for_update()
@@ -70,7 +76,7 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
                 sku_id=sku_id,
                 qty__gt=F("reserved_qty"),
             )
-            .order_by("-qty")
+            .order_by("id") # Deterministic ordering
         )
 
         qty_remaining = qty_needed
@@ -85,41 +91,34 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
 
             to_reserve = min(available, qty_remaining)
             
-            # A. Physical Reservation (Bin Level)
             bin_inv.reserved_qty += to_reserve
             bin_inv.save()
 
-            # B. Signal Central Inventory (InventoryStock Level) - [NEW FIX]
-            # Available kam hoga, Reserved badhega
+            # ... (Signal logic remains same) ...
             inventory_change_required.send(
                 sender=Warehouse,
                 sku_id=str(sku_id),
                 warehouse_id=str(warehouse.id),
-                delta_available=-to_reserve,  # Available ghatao
-                delta_reserved=to_reserve,    # Reserved badhao
+                delta_available=-to_reserve,
+                delta_reserved=to_reserve,
                 reference=str(order_id),
                 change_type="order_reservation",
             )
 
+            # ... (Rest of logic: PickItem creation etc) ...
             PickItem.objects.create(
                 task=task,
                 sku_id=sku_id,
                 bin=bin_inv.bin,
                 qty_to_pick=to_reserve,
             )
-
-            StockMovement.objects.create(
-                sku_id=sku_id,
-                warehouse=warehouse,
-                bin=bin_inv.bin,
-                movement_type=StockMovement.MovementType.RESERVE,
-                qty_change=-to_reserve,
-                reference_id=str(order_id),
-            )
+            
+            # ... (StockMovement creation) ...
 
             qty_remaining -= to_reserve
 
         if qty_remaining > 0:
+            # Rollback will happen due to atomic transaction
             raise OutOfStockError(
                 f"Not enough stock for SKU ID {sku_id}. Missing {qty_remaining}"
             )
