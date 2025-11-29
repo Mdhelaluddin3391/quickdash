@@ -1,6 +1,7 @@
 # apps/payments/views.py
 import json
 import logging
+import razorpay
 
 from django.conf import settings
 from django.db import transaction
@@ -9,7 +10,6 @@ from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
-import razorpay
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -27,22 +27,12 @@ from .services import razorpay_client, create_razorpay_order, verify_payment_sig
 
 logger = logging.getLogger(__name__)
 
-
 class CreatePaymentIntentAPIView(APIView):
-    """
-    Step 1: Customer sends order_id, we create Razorpay Order & PaymentIntent.
-
-    POST /api/v1/payments/create-intent/
-    body: { "order_id": "..." }
-    """
     permission_classes = [IsAuthenticated, IsCustomer]
 
     def post(self, request, *args, **kwargs):
         if not razorpay_client:
-            return Response(
-                {"detail": "Payment gateway is not configured."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+            return Response({"detail": "Payment gateway unavailable."}, status=503)
 
         serializer = CreatePaymentIntentSerializer(
             data=request.data,
@@ -54,15 +44,8 @@ class CreatePaymentIntentAPIView(APIView):
         try:
             gateway_order_id = create_razorpay_order(order, order.final_amount)
         except Exception as e:
-            logger.error(
-                "Error creating Razorpay order for Order %s: %s",
-                order.id,
-                e,
-            )
-            return Response(
-                {"detail": f"Payment gateway error: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            logger.error(f"Razorpay Order Create Error: {e}")
+            return Response({"detail": "Gateway error."}, status=500)
 
         intent = PaymentIntent.objects.create(
             order=order,
@@ -72,26 +55,13 @@ class CreatePaymentIntentAPIView(APIView):
             status=PaymentIntent.IntentStatus.PENDING,
         )
 
-        response_serializer = PaymentIntentSerializer(intent)
-        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+        return Response(PaymentIntentSerializer(intent).data, status=201)
 
 
 class VerifyPaymentAPIView(APIView):
-    """
-    Step 2: Frontend sends Razorpay payment details, we verify signature
-    and mark PaymentIntent paid.
-
-    POST /api/v1/payments/verify/
-    """
     permission_classes = [IsAuthenticated, IsCustomer]
 
     def post(self, request, *args, **kwargs):
-        if not razorpay_client:
-            return Response(
-                {"detail": "Payment gateway is not configured."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
         serializer = VerifyPaymentSerializer(
             data=request.data,
             context={"request": request},
@@ -102,7 +72,6 @@ class VerifyPaymentAPIView(APIView):
         intent = serializer.context["payment_intent"]
         order = intent.order
 
-        # Signature verify
         ok = verify_payment_signature(
             order_id=str(order.id),
             gateway_order_id=data["gateway_order_id"],
@@ -111,24 +80,17 @@ class VerifyPaymentAPIView(APIView):
         )
 
         if not ok:
-            logger.warning(
-                "Payment verification FAILED for Order %s. Signature mismatch.",
-                order.id,
-            )
+            logger.warning(f"Signature Mismatch for Order {order.id}")
             intent.status = PaymentIntent.IntentStatus.FAILED
-            intent.save(update_fields=["status"])
-            return Response(
-                {"detail": "Payment verification failed. Invalid signature."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            intent.save()
+            return Response({"detail": "Invalid signature."}, status=400)
 
-        # Signature OK: mark intent + create Payment (idempotent)
+        # Idempotent Success Handling
         with transaction.atomic():
             intent.status = PaymentIntent.IntentStatus.PAID
             intent.gateway_payment_id = data["gateway_payment_id"]
-            intent.save(update_fields=["status", "gateway_payment_id"])
+            intent.save()
 
-            # Idempotent Payment creation
             payment, created = Payment.objects.get_or_create(
                 transaction_id=data["gateway_payment_id"],
                 defaults={
@@ -141,121 +103,77 @@ class VerifyPaymentAPIView(APIView):
                     "gateway_order_id": data["gateway_order_id"],
                 },
             )
+            
             if not created and payment.status != Payment.PaymentStatus.SUCCESSFUL:
                 payment.status = Payment.PaymentStatus.SUCCESSFUL
-                payment.gateway_order_id = data["gateway_order_id"]
-                payment.save(update_fields=["status", "gateway_order_id"])
+                payment.save()
 
-        # Inform Orders app via signal
-        try:
-            payment_succeeded.send(sender=PaymentIntent, order=order)
-            logger.info("Sent payment_succeeded signal for order %s", order.id)
-        except Exception as e:
-            logger.error(
-                "Error sending payment_succeeded signal for order %s: %s",
-                order.id,
-                e,
-            )
+        # Signal outside atomic block (or on_commit if configured)
+        payment_succeeded.send(sender=PaymentIntent, order=order)
 
-        return Response(
-            {
-                "status": "success",
-                "order_id": str(order.id),
-                "payment_status": "paid",
-            },
-            status=status.HTTP_200_OK,
-        )
+        return Response({"status": "success", "order_id": str(order.id)})
 
 
 @method_decorator(csrf_exempt, name="dispatch")
 class RazorpayWebhookView(View):
     """
-    Razorpay webhook endpoint.
-
-    Configure URL + secret in Razorpay dashboard.
-
-    - Verifies webhook signature.
-    - On `payment.captured`, ensures Payment row is marked SUCCESSFUL.
+    Handles 'payment.captured' events from Razorpay.
     """
     def post(self, request, *args, **kwargs):
         webhook_secret = getattr(settings, "RAZORPAY_WEBHOOK_SECRET", "")
-        webhook_signature = request.headers.get("X-Razorpay-Signature")
+        signature = request.headers.get("X-Razorpay-Signature")
 
-        if not (settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET):
-            return JsonResponse(
-                {"error": "Razorpay not configured."},
-                status=503,
-            )
+        if not webhook_secret or not signature:
+            return JsonResponse({"error": "Configuration missing"}, status=500)
 
-        client = razorpay.Client(
-            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
-        )
+        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
         try:
-            body = request.body.decode("utf-8")
-            client.utility.verify_webhook_signature(
-                body,
-                webhook_signature,
-                webhook_secret,
-            )
-
-            payload = json.loads(body)
+            body_str = request.body.decode("utf-8")
+            client.utility.verify_webhook_signature(body_str, signature, webhook_secret)
+            
+            payload = json.loads(body_str)
             event = payload.get("event")
 
             if event == "payment.captured":
-                payment_entity = payload["payload"]["payment"]["entity"]
-                gateway_order_id = payment_entity["order_id"]
-                gateway_payment_id = payment_entity["id"]
+                entity = payload["payload"]["payment"]["entity"]
+                gateway_order_id = entity["order_id"]
+                gateway_payment_id = entity["id"]
 
-                intent = PaymentIntent.objects.filter(gateway_order_id=gateway_order_id).order_by("-created_at").first()
+                # 1. Find Intent (Critical Check)
+                intent = PaymentIntent.objects.filter(gateway_order_id=gateway_order_id).first()
+                
+                if not intent:
+                    logger.critical(f"Webhook: Payment {gateway_payment_id} captured but NO INTENT found for Order {gateway_order_id}")
+                    # We return 400 so Razorpay knows something is wrong, or 200 to suppress if we can't handle it manually
+                    return JsonResponse({"error": "Intent not found"}, status=400)
 
-                if intent:
-                    order = intent.order
-                else:
-                    logger.error(f"Webhook Critical: Payment captured but PaymentIntent not found for gateway_order_id: {gateway_order_id}")
-                    order = None
-                    intent = None
+                order = intent.order
 
-                payment, created = Payment.objects.get_or_create(
+                # 2. Idempotent Payment Record
+                Payment.objects.get_or_create(
                     transaction_id=gateway_payment_id,
                     defaults={
                         "order": order,
-                        "user": getattr(order, "customer", None)
-                        if order
-                        else None,
+                        "user": order.customer,
                         "payment_method": Payment.PaymentMethod.RAZORPAY,
-                        "amount": (
-                            intent.amount
-                            if intent is not None
-                            else payment_entity["amount"] / 100
-                        ),
-                        "currency": payment_entity.get("currency", "INR"),
+                        "amount": intent.amount,
+                        "currency": entity.get("currency", "INR"),
                         "status": Payment.PaymentStatus.SUCCESSFUL,
                         "gateway_order_id": gateway_order_id,
-                        "gateway_response": payment_entity,
-                    },
+                        "gateway_response": entity,
+                    }
                 )
-                if not created:
-                    payment.status = Payment.PaymentStatus.SUCCESSFUL
-                    payment.gateway_order_id = gateway_order_id
-                    payment.gateway_response = payment_entity
-                    payment.save(
-                        update_fields=[
-                            "status",
-                            "gateway_order_id",
-                            "gateway_response",
-                            "updated_at",
-                        ]
-                    )
+                
+                # Update Intent
+                if intent.status != PaymentIntent.IntentStatus.PAID:
+                    intent.status = PaymentIntent.IntentStatus.PAID
+                    intent.save()
 
-                logger.info(
-                    "Webhook: Payment Successful for gateway_order %s / pay %s",
-                    gateway_order_id,
-                    gateway_payment_id,
-                )
+                logger.info(f"Webhook: Payment {gateway_payment_id} synced for Order {order.id}")
 
             return JsonResponse({"status": "ok"})
 
         except Exception as e:
-            logger.exception("Webhook Error: %s", e)
+            logger.exception(f"Webhook Error: {e}")
             return JsonResponse({"error": str(e)}, status=400)

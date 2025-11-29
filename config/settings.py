@@ -1,12 +1,12 @@
 """
 Django settings for quickdash project.
-Production-ready with environment-based configuration.
+Production-ready with environment-based configuration and Hardened Security.
 """
 
 import logging
 from pathlib import Path
 import os
-from decouple import config
+from decouple import config, Csv
 from datetime import timedelta
 from decimal import Decimal
 import dj_database_url
@@ -18,16 +18,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY & CONFIGURATION
 # ==========================================
 SECRET_KEY = config("SECRET_KEY")
-DEBUG = config("DEBUG", default=True, cast=bool)
-GOOGLE_CLIENT_ID = config("GOOGLE_CLIENT_ID", default="")
-ALLOWED_HOSTS = config(
-    "ALLOWED_HOSTS",
-    default="127.0.0.1,localhost",
-).split(",")
+DEBUG = config("DEBUG", default=False, cast=bool)
 
+# Allowed Hosts should be strict list
+ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="127.0.0.1,localhost", cast=Csv())
+
+CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="http://localhost:3000", cast=Csv())
+CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="http://localhost:3000", cast=Csv())
 
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
-
 
 # Separate JWT signing key (can rotate independently)
 JWT_SIGNING_KEY = config("JWT_SIGNING_KEY", default=SECRET_KEY)
@@ -74,6 +73,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Custom Middleware
     "apps.warehouse.middleware.IdempotencyMiddleware",
     "apps.utils.middleware.RequestLogMiddleware",
 ]
@@ -96,34 +96,23 @@ TEMPLATES = [
 ]
 
 ASGI_APPLICATION = "config.asgi.application"
-# WSGI_APPLICATION = "config.wsgi.application"
 
 # ==========================================
-# DATABASE
+# DATABASE (PostGIS)
 # ==========================================
 DATABASES = {
-    "default": {
-        "ENGINE": "django.contrib.gis.db.backends.postgis",
-        "NAME": config("DB_NAME", default="quickdash_db"),
-        "USER": config("DB_USER", default="postgres"),
-        "PASSWORD": config("DB_PASSWORD", default="postgres"),
-        "HOST": config("DB_HOST", default="localhost"),
-        "PORT": config("DB_PORT", default="5432"),
-    }
-}
-
-DATABASE_URL = os.getenv("DATABASE_URL") or config("DATABASE_URL", default=None)
-if DATABASE_URL:
-    DATABASES["default"] = dj_database_url.parse(
-        DATABASE_URL,
+    "default": dj_database_url.parse(
+        config("DATABASE_URL", default="postgis://postgres:postgres@db:5432/quickdash_db"),
         conn_max_age=600,
-        engine="django.contrib.gis.db.backends.postgis"  # [ADD THIS] Engine explicitly pass karein
+        ssl_require=not DEBUG  # Force SSL in Prod
     )
+}
 DATABASES["default"]["ENGINE"] = "django.contrib.gis.db.backends.postgis"
+
 # ==========================================
 # REDIS / CACHE / CHANNELS / CELERY
 # ==========================================
-DEFAULT_REDIS_URL = config("REDIS_URL", default="redis://127.0.0.1:6379")
+DEFAULT_REDIS_URL = config("REDIS_URL", default="redis://redis:6379")
 
 CACHES = {
     "default": {
@@ -131,6 +120,7 @@ CACHES = {
         "LOCATION": f"{DEFAULT_REDIS_URL}/1",
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "IGNORE_EXCEPTIONS": True,  # Prevent crash if Redis is down
         },
     }
 }
@@ -148,15 +138,17 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 mins max
 
 CELERY_BEAT_SCHEDULE = {
     "run-daily-analytics": {
         "task": "apps.analytics.tasks.run_daily_analytics_for_date",
-        "schedule": 60 * 60 * 24,  # daily
-        "args": (),  # "today" by default
+        "schedule": crontab(hour=0, minute=5), # Run at 00:05 UTC
+        "args": (),
     },
     "orders-auto-cancel-every-5-mins": {
-        "task": "auto_cancel_unpaid_orders",  # make sure Celery task name matches
+        "task": "auto_cancel_unpaid_orders",
         "schedule": crontab(minute="*/5"),
     },
 }
@@ -186,13 +178,7 @@ USE_TZ = True
 # ==========================================
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-
-
-STATICFILES_DIRS = [
-    BASE_DIR / "static",
-]
-
-
+STATICFILES_DIRS = [BASE_DIR / "static"]
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -207,19 +193,20 @@ REST_FRAMEWORK = {
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.IsAuthenticated",  # secure default
+        "rest_framework.permissions.IsAuthenticated",
     ),
     "DEFAULT_THROTTLE_CLASSES": [
         "apps.utils.throttle.BurstRateThrottle",
         "apps.utils.throttle.SustainedRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
-        "burst": "20/min",
-        "sustained": "300/hour",
+        "burst": "60/min",
+        "sustained": "1000/hour",
     },
+    # Better Exception Handling
+    "EXCEPTION_HANDLER": "rest_framework.views.exception_handler",
 }
 
-# Browsable API only in DEBUG
 if not DEBUG:
     REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = [
         "rest_framework.renderers.JSONRenderer",
@@ -239,20 +226,6 @@ SIMPLE_JWT = {
 }
 
 # ==========================================
-# CORS / CSRF
-# ==========================================
-CORS_ALLOWED_ORIGINS = config(
-    "CORS_ALLOWED_ORIGINS",
-    default="http://localhost:3000,http://127.0.0.1:3000",
-).split(",")
-
-CSRF_TRUSTED_ORIGINS = (
-    config("CSRF_TRUSTED_ORIGINS", default="").split(",")
-    if config("CSRF_TRUSTED_ORIGINS", default="")
-    else []
-)
-
-# ==========================================
 # THIRD PARTY KEYS
 # ==========================================
 RAZORPAY_KEY_ID = config("RAZORPAY_KEY_ID", default=None)
@@ -263,76 +236,76 @@ TWILIO_ACCOUNT_SID = config("TWILIO_ACCOUNT_SID", default=None)
 TWILIO_AUTH_TOKEN = config("TWILIO_AUTH_TOKEN", default=None)
 TWILIO_FROM_NUMBER = config("TWILIO_FROM_NUMBER", default=None)
 
+GOOGLE_CLIENT_ID = config("GOOGLE_CLIENT_ID", default="")
 FIREBASE_CREDENTIALS_PATH = config("FIREBASE_CREDENTIALS_PATH", default=None)
 
 # ==========================================
 # BUSINESS CONSTANTS
 # ==========================================
 BASE_DELIVERY_FEE = config("BASE_DELIVERY_FEE", default="20.00", cast=Decimal)
-FEE_PER_KM = config("FEE_PER_KM", default="5.00", cast=Decimal)
-MIN_DELIVERY_FEE = config("MIN_DELIVERY_FEE", default="20.00", cast=Decimal)
-MAX_DELIVERY_FEE = config("MAX_DELIVERY_FEE", default="100.00", cast=Decimal)
-ORDER_CANCELLATION_WINDOW = config(
-    "ORDER_CANCELLATION_WINDOW", default=300, cast=int
-)
+ORDER_CANCELLATION_WINDOW = config("ORDER_CANCELLATION_WINDOW", default=300, cast=int)
 RIDER_BASE_FEE = config("RIDER_BASE_FEE", default="30.00", cast=Decimal)
-AUTO_CANCEL_PENDING_MINUTES = config(
-    "AUTO_CANCEL_PENDING_MINUTES", default=30, cast=int
-)
-
-# ==========================================
-# IDEMPOTENCY SETTINGS
-# ==========================================
 IDEMPOTENCY_KEY_TTL = config("IDEMPOTENCY_KEY_TTL", default=30, cast=int)
 
 # ==========================================
-# GeoDjango
+# LOGGING CONFIGURATION (Fixed)
 # ==========================================
-if os.name == "posix":
-    GDAL_LIBRARY_PATH = os.getenv(
-        "GDAL_LIBRARY_PATH",
-        "/usr/lib/x86_64-linux-gnu/libgdal.so",
-    )
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {module} {message}",
+            "style": "{",
+        },
+        "simple": {
+            "format": "{levelname} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": True,
+        },
+        "request_logger": {  # Explicitly defined for middleware
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "apps": {  # Catch-all for project apps
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": True,
+        },
+        "celery": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": True,
+        }
+    },
+}
 
 # ==========================================
-# SECURITY HARDENING IN PRODUCTION
+# SECURITY HARDENING
 # ==========================================
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
-
-    SECURE_HSTS_SECONDS = 60 * 60 * 24 * 365  # 1 year
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = "DENY"
+    
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
-
+    
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-
-# ==========================================
-# LOGGING
-# ==========================================
-logger = logging.getLogger(__name__)
-
-LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "standard": {
-            "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-        }
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "standard",
-        }
-    },
-    "root": {
-        "handlers": ["console"],
-        "level": "INFO",
-    },
-    "loggers": {
-        "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
-        "": {"handlers": ["console"], "level": "INFO"},
-    },
-}

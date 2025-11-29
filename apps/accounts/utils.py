@@ -1,5 +1,4 @@
 # apps/accounts/utils.py
-import random
 import secrets
 import logging
 from django.conf import settings
@@ -20,20 +19,14 @@ def normalize_phone(phone: str) -> str:
     return phone
 
 def create_and_send_otp(phone: str, login_type: str):
-    """
-    Creates OTP and decides how to send it based on Environment.
-    """
     phone = normalize_phone(phone)
-    # 6-digit random code
+    # Crypto-secure 6 digit OTP
     otp_code = "".join(str(secrets.randbelow(10)) for _ in range(6))
     
-    # Save to DB
     otp = PhoneOTP.create_otp(phone=phone, login_type=login_type, code=otp_code)
     
-    # --- [SECURITY LOGIC] ---
     if settings.DEBUG:
-        print(f"\n [TESTING] OTP for {phone}: {otp_code} \n")
-        logger.info(f"Test OTP generated for {phone}: {otp_code}")
+        logger.info(f"[TEST OTP] {phone}: {otp_code}")
     else:
         send_sms_task.delay(phone=phone, otp_code=otp_code, login_type=login_type)
     
@@ -44,38 +37,34 @@ def get_client_ip(request):
     x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
     return x_forwarded_for.split(",")[0].strip() if x_forwarded_for else request.META.get("REMOTE_ADDR")
 
-
 def check_otp_rate_limit(phone: str, login_type: str, ip=None):
-    # 1. Phone based throttling
+    """
+    Prevents OTP spam using Redis atomic operations.
+    """
+    # 1. Phone Throttle (1 request per 60s)
     rate_limit_key = f"otp_limit:{login_type}:{phone}"
     
-    # Check if key exists
-    if cache.get(rate_limit_key):
-        ttl = cache.ttl(rate_limit_key) if hasattr(cache, 'ttl') else 60
+    # set(key, val, nx=True, ex=60) returns True if key was set (lock acquired), False if already exists
+    is_allowed = cache.set(rate_limit_key, "locked", timeout=60, nx=True)
+    
+    if not is_allowed:
+        ttl = cache.ttl(rate_limit_key)
         raise ValidationError(f"Please wait {ttl} seconds before requesting another OTP.")
 
-    # 2. IP based throttling (Spam protection)
+    # 2. IP Throttle (Max 20 requests per hour)
     if ip:
         ip_key = f"otp_spam_ip:{ip}"
-        # Increment returns the new value. If key missing, starts at 1.
         try:
-            # Using atomic increment for thread safety
+            # Atomic increment
             request_count = cache.incr(ip_key)
         except ValueError:
-            # Key might not exist or expired, set it
+            # If key doesn't exist, set it to 1
             cache.set(ip_key, 1, timeout=3600)
             request_count = 1
             
         if request_count > 20: 
              logger.warning(f"OTP Spam detected from IP: {ip}")
              raise ValidationError("Too many requests from this IP. Try again later.")
-        
-        # Ensure timeout is set on first request
-        if request_count == 1:
-            cache.expire(ip_key, 3600)
-
-    # Lock the phone for 60 seconds
-    cache.set(rate_limit_key, "locked", timeout=60)
 
 def create_tokens_with_session(user, role, client, extra_claims=None, request=None, single_session_for_client=False):
     extra_claims = extra_claims or {}
@@ -108,7 +97,6 @@ def create_tokens_with_session(user, role, client, extra_claims=None, request=No
         "refresh": str(refresh),
         "refresh_jti": jti,
     }
-
 
 @transaction.atomic
 def rotate_refresh_token(old_refresh_token_str: str, request=None):
