@@ -6,7 +6,8 @@ class OrdersConfig(AppConfig):
     name = 'apps.orders'
 
     def ready(self):
+        import apps.orders.receivers
         try:
-            import apps.orders.receivers  # noqa: F401
+            import apps.orders.receivers 
         except ImportError as e:
             logging.error(f"Failed to load orders receivers: {e}")   

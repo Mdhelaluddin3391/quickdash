@@ -39,11 +39,7 @@ class DeliveryTask(TimestampedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     # Primary link
-    order = models.OneToOneField(
-        Order,
-        on_delete=models.CASCADE,
-        related_name="delivery_task",
-    )
+    order = models.OneToOneField('orders.Order', on_delete=models.CASCADE, related_name='delivery_task')
 
     # Assigned rider (optional before assignment)
     rider = models.ForeignKey(
