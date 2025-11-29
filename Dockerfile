@@ -53,7 +53,7 @@ COPY start.sh /start.sh
 RUN sed -i 's/\r$//g' /wait-for-db.sh /start.sh && \
     chmod +x /wait-for-db.sh /start.sh
 
-# User Setup
+# User Setup (Security Best Practice)
 RUN addgroup --system appgroup && adduser --system --group appuser
 RUN chown -R appuser:appgroup /code
 

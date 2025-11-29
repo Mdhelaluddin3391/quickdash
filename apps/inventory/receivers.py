@@ -18,28 +18,28 @@ def handle_inventory_change_signal(
     **kwargs,
 ):
     """
-    Transactional integration between Warehouse (Physical) and Inventory (Logical).
-    Ensures inventory updates only happen if the warehouse transaction commits.
+    Robust signal handler.
+    Guarantees task scheduling only after the Warehouse transaction commits.
     """
-    logger.info(
-        "INVENTORY SIGNAL: Ref=%s, Type=%s, SKU=%s, WH=%s",
-        reference, change_type, sku_id, warehouse_id
-    )
-
-    # Helper function to execute the update
-    def _do_update():
-        # Call the task synchronously or asynchronously depending on configuration.
-        # Ideally, this runs after the physical movement is committed.
+    
+    def _schedule_task():
         try:
-            update_inventory_stock_task(
+            # Use delay() to offload to Celery
+            update_inventory_stock_task.delay(
                 sku_id=str(sku_id),
                 warehouse_id=str(warehouse_id),
-                delta_available=delta_available,
-                delta_reserved=delta_reserved
+                delta_available=int(delta_available),
+                delta_reserved=int(delta_reserved),
+                reference=str(reference),
+                change_type=str(change_type)
             )
+            logger.info(f"Inventory update queued for SKU {sku_id} @ WH {warehouse_id}")
         except Exception as e:
-            logger.critical(f"INVENTORY SYNC FAILED after commit! Manual Reconcile needed for SKU {sku_id} in WH {warehouse_id}. Error: {e}")
+            # This runs in the web process, so we log critical errors
+            logger.critical(
+                f"FAILED to queue inventory update! Ref: {reference}. Error: {e}", 
+                exc_info=True
+            )
 
-    # Hook into the transaction commit lifecycle
-    # If the main transaction rolls back, this will NOT run, preventing phantom stock updates.
-    transaction.on_commit(_do_update)
+    # Only run if the transaction causing this signal successfully commits
+    transaction.on_commit(_schedule_task)

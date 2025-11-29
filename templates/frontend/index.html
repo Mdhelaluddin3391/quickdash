@@ -1,92 +1,52 @@
+{% extends "base.html" %}
 {% load static %}
-<!DOCTYPE html>
-<html lang="en">
 
-<head>
-    <script>
-        window.APP_CONFIG = {
-            API_BASE: "/api/v1", // Or use {% url 'api-root' %} if you have a named URL
-            LOGIN_URL: "{% url 'auth' %}", // Dynamic URL from Django
-            CART_URL: "{% url 'cart' %}",
-            USER_LOGGED_IN: {{ request.user.is_authenticated|yesno:"true,false" }}
-        };
-    </script>
-</head>
+{% block title %}Home - QuickDash{% endblock %}
 
-<body>
-    <header class="new-header">
-        <div class="header-top-row">
-            <div class="logo-location-group">
-                <a href="index.html" class="logo">
-                    <i class="fas fa-bolt"></i><span>QuickDash</span>
-                </a>
-                <div class="location">
-                    <i class="fas fa-map-marker-alt"></i>
-                    <span id="header-location">Fastest Delivery • Dharmanagar</span>
-                </div>
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'assets/css/index_style.css' %}">
+{% endblock %}
+
+{% block content %}
+<section class="hero-section">
+    <div class="scroll-banner">
+        <a href="{% url 'product' %}" class="promo-card">
+            <div class="promo-content">
+                <h3>Fresh Apples</h3>
+                <p>Upto 30% OFF</p>
             </div>
-            <div class="header-icons">
-                <a href="auth.html" class="icon-link"><i class="far fa-user"></i><span
-                        class="icon-text">Account</span></a>
-                <a href="cart.html" class="icon-link cart-link">
-                    <i class="fas fa-shopping-cart"></i><span class="icon-text">Cart</span><span
-                        class="cart-count">0</span>
-                </a>
+            <i class="fas fa-apple-alt promo-image"></i>
+        </a>
+        <a href="{% url 'product' %}" class="promo-card dark-theme">
+            <div class="promo-content">
+                <h3>Snack Combo</h3>
+                <p>Only at ₹99</p>
             </div>
+            <i class="fas fa-cookie-bite promo-image"></i>
+        </a>
+    </div>
+</section>
+
+<section>
+    <div class="section-title">
+        <h2>Shop By Category</h2><a href="{% url 'category' %}" class="view-all">View All</a>
+    </div>
+    <div class="categories">
         </div>
-        <form class="search-bar-row" method="GET" action="search_results.html">
-            <i class="fas fa-search"></i>
-            <input type="text" name="q" placeholder="Search for items..." value="">
-        </form>
-        <nav class="header-nav-row">
-            <a href="index.html" class="nav-item active">All</a>
-            <a href="category.html" class="nav-item">Groceries</a>
-            <a href="category.html" class="nav-item">Vegetables</a>
-        </nav>
-    </header>
+</section>
 
-    <section class="hero-section">
-        <div class="scroll-banner">
-            <a href="product.html" class="promo-card">
-                <div class="promo-content">
-                    <h3>Fresh Apples</h3>
-                    <p>Upto 30% OFF</p>
-                </div>
-                <i class="fas fa-apple-alt promo-image"></i>
-            </a>
-            <a href="product.html" class="promo-card dark-theme">
-                <div class="promo-content">
-                    <h3>Snack Combo</h3>
-                    <p>Only at ₹99</p>
-                </div>
-                <i class="fas fa-cookie-bite promo-image"></i>
-            </a>
-        </div>
-    </section>
-
-    <main>
-        <section>
-            <div class="section-title">
-                <h2>Shop By Category</h2><a href="category.html" class="view-all">View All</a>
+<section>
+    <div class="section-title">
+        <h2>Featured Products</h2><a href="#" class="view-all">See All</a>
+    </div>
+    <div class="scroll-container">
+        <div class="product-grid">
             </div>
-            <div class="categories">
-            </div>
-        </section>
+    </div>
+</section>
+{% endblock %}
 
-        <section>
-            <div class="section-title">
-                <h2>Featured Products</h2><a href="#" class="view-all">See All</a>
-            </div>
-            <div class="scroll-container">
-                <div class="product-grid">
-                </div>
-            </div>
-        </section>
-    </main>
-
-    <script src="{% static 'assets/js/utils/api.js' %}"></script>
-    <script src="{% static 'assets/js/utils/home.js' %}"></script>
-    <script src="{% static 'assets/js/pages/index.js' %}"></script>
-</body>
-
-</html>
+{% block extra_js %}
+<script src="{% static 'assets/js/utils/home.js' %}"></script>
+<script src="{% static 'assets/js/pages/index.js' %}"></script>
+{% endblock %}

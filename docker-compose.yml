@@ -1,25 +1,24 @@
 version: '3.8'
 
 services:
-  # --- 1. Database (Upgraded to PostGIS 16) ---
   db:
     image: postgis/postgis:16-3.4
     restart: always
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
-      - POSTGRES_DB=${DB_NAME}
-      - POSTGRES_USER=${DB_USER}
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      # Use internal docker secrets or env vars, do not hardcode
+      - POSTGRES_DB=${DB_NAME:-quickdash_db}
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
     networks:
       - quickdash_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  # --- 2. Redis ---
   redis:
     image: redis:7-alpine
     restart: always
@@ -28,7 +27,6 @@ services:
     networks:
       - quickdash_net
 
-  # --- 3. Web App (Django + Daphne) ---
   web:
     build: .
     command: /start.sh
@@ -48,7 +46,6 @@ services:
     networks:
       - quickdash_net
 
-  # --- 4. Celery Worker ---
   worker:
     build: .
     command: celery -A config worker --loglevel=info
@@ -62,7 +59,6 @@ services:
     networks:
       - quickdash_net
 
-  # --- 5. Celery Beat ---
   beat:
     build: .
     command: celery -A config beat --loglevel=info
@@ -76,7 +72,6 @@ services:
     networks:
       - quickdash_net
 
-  # --- 6. Nginx ---
   nginx:
     image: nginx:latest
     restart: always

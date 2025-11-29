@@ -87,6 +87,16 @@ class BinInventory(models.Model):
 
     class Meta:
         unique_together = ("bin", "sku")
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(qty__gte=0), 
+                name="bin_inventory_qty_gte_0"
+            ),
+            models.CheckConstraint(
+                check=models.Q(reserved_qty__gte=0), 
+                name="bin_inventory_reserved_qty_gte_0"
+            ),
+        ]
 
     @property
     def available_qty(self) -> int:

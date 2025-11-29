@@ -102,12 +102,13 @@ ASGI_APPLICATION = "config.asgi.application"
 # ==========================================
 DATABASES = {
     "default": dj_database_url.parse(
-        config("DATABASE_URL", default="postgis://postgres:postgres@db:5432/quickdash_db"),
+        config("DATABASE_URL"),
         conn_max_age=600,
         ssl_require=not DEBUG  # Force SSL in Prod
     )
 }
 DATABASES["default"]["ENGINE"] = "django.contrib.gis.db.backends.postgis"
+
 
 # ==========================================
 # REDIS / CACHE / CHANNELS / CELERY
@@ -144,12 +145,16 @@ CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 mins max
 CELERY_BEAT_SCHEDULE = {
     "run-daily-analytics": {
         "task": "apps.analytics.tasks.run_daily_analytics_for_date",
-        "schedule": crontab(hour=0, minute=5), # Run at 00:05 UTC
+        "schedule": crontab(hour=0, minute=5), 
         "args": (),
     },
     "orders-auto-cancel-every-5-mins": {
         "task": "auto_cancel_unpaid_orders",
         "schedule": crontab(minute="*/5"),
+    },
+    "nightly-inventory-reconciliation": {
+        "task": "apps.inventory.tasks.run_reconciliation",
+        "schedule": crontab(hour=3, minute=0), # Run at 3 AM
     },
 }
 

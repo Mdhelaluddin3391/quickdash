@@ -3,33 +3,24 @@ from django.db import models
 from apps.catalog.models import SKU
 
 
+from django.db import models
+from django.db.models import CheckConstraint, Q
+from apps.catalog.models import SKU
+
 class InventoryStock(models.Model):
-    """
-    Central aggregated stock for an SKU in a specific Warehouse.
-
-    - Warehouse/Bin me jo bhi physical movement hota hai (GRN, RESERVE, DISPATCH,
-      CYCLE_COUNT, etc.), Warehouse app 'inventory_change_required' signal fire karta hai.
-    - Inventory app sirf un signals ko consume karke is table ko update karta hai.
-    - Isko direct manually change nahi karna (except emergency tools).
-    """
     id = models.BigAutoField(primary_key=True)
-
-    # Warehouse ko app label se refer (micro-service like decoupling)
     warehouse = models.ForeignKey(
         "warehouse.Warehouse",
         on_delete=models.CASCADE,
         related_name="stocks",
     )
-
     sku = models.ForeignKey(
         SKU,
         on_delete=models.CASCADE,
         related_name="warehouse_stocks",
     )
-
     available_qty = models.IntegerField(default=0)
     reserved_qty = models.IntegerField(default=0)
-
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -37,24 +28,24 @@ class InventoryStock(models.Model):
         indexes = [
             models.Index(fields=["warehouse", "sku"]),
             models.Index(fields=["sku"]),
-            models.Index(fields=["available_qty"]),
-            models.Index(fields=["updated_at"]),
         ]
         verbose_name = "Inventory Stock"
         verbose_name_plural = "Inventory Stocks"
+        constraints = [
+            CheckConstraint(
+                check=Q(available_qty__gte=0), 
+                name="inventory_stock_available_qty_gte_0"
+            ),
+            CheckConstraint(
+                check=Q(reserved_qty__gte=0), 
+                name="inventory_stock_reserved_qty_gte_0"
+            ),
+        ]
 
     def __str__(self):
-        return (
-            f"{self.warehouse_id} / {self.sku.sku_code}: "
-            f"Avl={self.available_qty} (Res={self.reserved_qty})"
-        )
+        return f"{self.warehouse_id} / {self.sku.sku_code}: Avl={self.available_qty}"
 
-    @property
-    def total_qty(self) -> int:
-        """
-        Total physical qty = available + reserved.
-        """
-        return self.available_qty + self.reserved_qty
+# ... InventoryHistory remains same ...
 
 
 class InventoryHistory(models.Model):

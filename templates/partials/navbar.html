@@ -1,0 +1,37 @@
+{% load static %}
+<header class="new-header">
+    {% block header_content %}
+    <div class="header-top-row">
+        <div class="logo-location-group">
+            <a href="{% url 'home' %}" class="logo">
+                <i class="fas fa-bolt"></i><span>QuickDash</span>
+            </a>
+            <div class="location">
+                <i class="fas fa-map-marker-alt"></i>
+                <span id="header-location">Fastest Delivery • Dharmanagar</span>
+            </div>
+        </div>
+        <div class="header-icons">
+            <a href="{% url 'profile' %}" class="icon-link">
+                <i class="far fa-user"></i><span class="icon-text">Account</span>
+            </a>
+            <a href="{% url 'cart' %}" class="icon-link cart-link">
+                <i class="fas fa-shopping-cart"></i>
+                <span class="icon-text">Cart</span>
+                <span class="cart-count">0</span>
+            </a>
+        </div>
+    </div>
+    
+    <form class="search-bar-row" method="GET" action="{% url 'search' %}">
+        <i class="fas fa-search"></i>
+        <input type="text" name="q" placeholder="Search for items..." value="{{ request.GET.q|default:'' }}">
+    </form>
+
+    <nav class="header-nav-row">
+        <a href="{% url 'home' %}" class="nav-item {% if request.path == '/' %}active{% endif %}">All</a>
+        <a href="{% url 'category' %}" class="nav-item">Groceries</a>
+        <a href="{% url 'category' %}" class="nav-item">Vegetables</a>
+    </nav>
+    {% endblock %}
+</header>
