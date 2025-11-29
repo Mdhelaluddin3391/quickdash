@@ -1,7 +1,12 @@
 #!/bin/sh
 set -e
 
-# Wait for DB (Uses python snippet instead of netcat for portability)
+# Fix ownership of static and media directories (Run as Root)
+echo "Fixing permissions..."
+mkdir -p /code/staticfiles /code/media
+chown -R appuser:appgroup /code/staticfiles /code/media
+
+# Wait for DB
 python << END
 import sys
 import os
@@ -27,17 +32,19 @@ END
 
 echo "DB Connected."
 
-# Only migrate in explicit deployment tasks, or careful dev envs.
-# For simplicity in this setup, we keep it, but in high-scale, this runs in a separate job.
+# Run Migrations (as appuser)
 echo "Applying migrations..."
-python manage.py migrate --noinput
+gosu appuser python manage.py migrate --noinput
 
+# Collect Static (as appuser)
 echo "Collecting static..."
-python manage.py collectstatic --noinput
+gosu appuser python manage.py collectstatic --noinput
 
+# Create Superuser if needed
 if [ "$create_superuser" = "true" ]; then
-    python manage.py create_admin
+    gosu appuser python manage.py create_admin
 fi
 
 echo "Starting Daphne..."
-exec daphne -b 0.0.0.0 -p 8000 config.asgi:application
+# Switch user to appuser and run daphne
+exec gosu appuser daphne -b 0.0.0.0 -p 8000 config.asgi:application

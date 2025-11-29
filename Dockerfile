@@ -6,7 +6,6 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Install build dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
@@ -25,7 +24,7 @@ WORKDIR /code
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Runtime Dependencies (PostGIS/GDAL needed for GeoDjango)
+# Install runtime dependencies & gosu (for user switching)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     libpq-dev \
@@ -34,33 +33,29 @@ RUN apt-get update && \
     gdal-bin \
     libgdal-dev \
     curl \
+    netcat-openbsd \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy wheels from builder
 COPY --from=builder /app/wheels /wheels
 COPY --from=builder /app/requirements.txt .
-
 RUN pip install --no-cache-dir /wheels/*
 
-# Copy Code
 COPY . /code
 
-# Copy Scripts & Permissions
 COPY wait-for-db.sh /wait-for-db.sh
 COPY start.sh /start.sh
 
-# Fix line endings & executable
+# Fix line endings & executable permissions
 RUN sed -i 's/\r$//g' /wait-for-db.sh /start.sh && \
     chmod +x /wait-for-db.sh /start.sh
 
-# User Setup (Security Best Practice)
+# Create User but DO NOT switch to it yet
 RUN addgroup --system appgroup && adduser --system --group appuser
-RUN chown -R appuser:appgroup /code
-
-USER appuser
 
 EXPOSE 8000
 
+# Updated Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD curl --fail http://localhost:8000/api/v1/utils/health/ || exit 1
 

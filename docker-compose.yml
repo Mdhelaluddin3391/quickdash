@@ -7,14 +7,14 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
-      # Use internal docker secrets or env vars, do not hardcode
       - POSTGRES_DB=${DB_NAME:-quickdash_db}
       - POSTGRES_USER=${DB_USER:-postgres}
       - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
     networks:
       - quickdash_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      # FIX: Added -d to specify database name explicitly
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-quickdash_db}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -26,6 +26,11 @@ services:
       - redis_data:/data
     networks:
       - quickdash_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   web:
     build: .
@@ -42,7 +47,7 @@ services:
       db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     networks:
       - quickdash_net
 

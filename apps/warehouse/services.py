@@ -164,11 +164,11 @@ def scan_pick(task_id, pick_item_id, qty_scanned, user):
     return item
 
 
+# apps/warehouse/services.py (Partial - showing fixed method)
 @transaction.atomic
 def complete_packing(packing_task_id, packer_user):
     """
-    Finalizes the order packing process.
-    Moves stock from 'Reserved' to 'Outward' (Gone).
+    Finalizes order packing. Moves stock from 'Reserved' to 'Outward'.
     """
     pack_task = PackingTask.objects.select_for_update().select_related(
         "picking_task__warehouse"
@@ -180,36 +180,32 @@ def complete_packing(packing_task_id, packer_user):
     picking_task = pack_task.picking_task
     warehouse = picking_task.warehouse
 
-    # Deduct Physical Stock
+    # Lock & Update Bin Inventory
     items = picking_task.items.select_related("bin", "sku").all()
     
     for pitem in items:
-        # Lock Bin Inventory to prevent concurrent modifications
+        # Lock specific bin-sku row
         bi = BinInventory.objects.select_for_update().get(
             bin=pitem.bin,
             sku=pitem.sku,
         )
         
-        # Validation: Ensure physical quantity exists
+        # Validation
         if bi.qty < pitem.picked_qty:
-            logger.critical(f"Data Integrity Error: Bin {bi.bin.bin_code} has less qty ({bi.qty}) than picked ({pitem.picked_qty}).")
-            raise ValidationError(f"Physical integrity error: Bin {bi.bin.bin_code} has insufficient quantity.")
+            logger.critical(f"Data Integrity Error: Bin {bi.bin.bin_code} insufficient qty.")
+            raise ValidationError(f"Integrity Error: Bin {bi.bin.bin_code} mismatch.")
         
-        # Decrement Physical Quantity
+        # Atomic Updates
         bi.qty = F('qty') - pitem.picked_qty
-        
-        # Decrement Reserved Quantity safely (avoid negative)
-        # Using Case/When to clamp at 0 if data was slightly off
+        # Ensure reserved doesn't go negative
         bi.reserved_qty = Case(
             When(reserved_qty__gte=pitem.picked_qty, then=F('reserved_qty') - pitem.picked_qty),
             default=Value(0),
             output_field=models.IntegerField()
         )
-        
         bi.save()
-        bi.refresh_from_db() # Reload to ensure consistent state if needed
 
-        # Update Inventory Logic (Available unchanged, Reserved decreases)
+        # Emit Signal for logical inventory sync (async)
         inventory_change_required.send(
             sender=Warehouse,
             sku_id=str(pitem.sku.id),
@@ -220,7 +216,6 @@ def complete_packing(packing_task_id, packer_user):
             change_type="sale_dispatch",
         )
 
-        # Audit Log
         StockMovement.objects.create(
             sku=pitem.sku,
             warehouse=warehouse,
@@ -231,12 +226,12 @@ def complete_packing(packing_task_id, packer_user):
             performed_by=packer_user,
         )
 
-    # Update Pack Task
+    # Update Task State
     pack_task.packer = packer_user
     pack_task.status = PackingTask.PackStatus.PACKED
     pack_task.save(update_fields=['packer', 'status'])
 
-    # Create Dispatch Record
+    # Generate OTP & Dispatch Record
     pickup_otp = "".join(str(random.randint(0, 9)) for _ in range(4))
     dispatch = DispatchRecord.objects.create(
         packing_task=pack_task,
@@ -246,17 +241,16 @@ def complete_packing(packing_task_id, packer_user):
         pickup_otp=pickup_otp,
     )
 
-    # Notify Delivery System & WebSocket
-    dispatch_ready_for_delivery.send(
+    # Notify Delivery Service
+    transaction.on_commit(lambda: dispatch_ready_for_delivery.send(
         sender=DispatchRecord,
         dispatch_id=dispatch.id,
         order_id=str(picking_task.order_id),
         warehouse_id=warehouse.id,
         pickup_otp=pickup_otp,
-    )
+    ))
     
     notify_dispatch_ready(dispatch)
-
     return dispatch
 
 @transaction.atomic
