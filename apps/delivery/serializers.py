@@ -1,4 +1,3 @@
-# apps/delivery/serializers.py
 from rest_framework import serializers
 
 from apps.orders.serializers import OrderSerializer
@@ -37,21 +36,26 @@ class DeliveryTaskSerializer(serializers.ModelSerializer):
             "id",
             "status",
             "order_details",
-            "pickup_otp",   # optionally hide in production
-            "delivery_otp", # ideally NOT sent to rider app; here for debugging
+            "pickup_otp",   
+            "delivery_otp", 
             "created_at",
             "accepted_at",
             "picked_up_at",
             "delivered_at",
         ]
         read_only_fields = [
-            "pickup_otp",
-            "delivery_otp",
             "created_at",
             "accepted_at",
             "picked_up_at",
             "delivered_at",
         ]
+        extra_kwargs = {
+            # SECURITY: Never send delivery_otp to the client/rider app.
+            # It is write_only, meaning it can be accepted in requests (if needed)
+            # but will never appear in API responses.
+            'delivery_otp': {'write_only': True},
+            'pickup_otp': {'read_only': True} 
+        }
 
 
 class RiderEarningSerializer(serializers.ModelSerializer):

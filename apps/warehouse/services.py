@@ -184,21 +184,30 @@ def complete_packing(packing_task_id, packer_user):
     items = picking_task.items.select_related("bin", "sku").all()
     
     for pitem in items:
-        # Lock Bin Inventory
+        # Lock Bin Inventory to prevent concurrent modifications
         bi = BinInventory.objects.select_for_update().get(
             bin=pitem.bin,
             sku=pitem.sku,
         )
         
-        # Validation
-        if bi.reserved_qty < pitem.picked_qty:
-            logger.critical(f"Data Integrity Error: Bin {bi.id} has less reserved stock than picked.")
-            # We fix it silently or raise error? For now, clamp to 0 to prevent negative
+        # Validation: Ensure physical quantity exists
+        if bi.qty < pitem.picked_qty:
+            logger.critical(f"Data Integrity Error: Bin {bi.bin.bin_code} has less qty ({bi.qty}) than picked ({pitem.picked_qty}).")
+            raise ValidationError(f"Physical integrity error: Bin {bi.bin.bin_code} has insufficient quantity.")
         
+        # Decrement Physical Quantity
         bi.qty = F('qty') - pitem.picked_qty
-        bi.reserved_qty = F('reserved_qty') - pitem.picked_qty
+        
+        # Decrement Reserved Quantity safely (avoid negative)
+        # Using Case/When to clamp at 0 if data was slightly off
+        bi.reserved_qty = Case(
+            When(reserved_qty__gte=pitem.picked_qty, then=F('reserved_qty') - pitem.picked_qty),
+            default=Value(0),
+            output_field=models.IntegerField()
+        )
+        
         bi.save()
-        bi.refresh_from_db() # Reload to ensure no negatives if needed
+        bi.refresh_from_db() # Reload to ensure consistent state if needed
 
         # Update Inventory Logic (Available unchanged, Reserved decreases)
         inventory_change_required.send(
@@ -249,10 +258,6 @@ def complete_packing(packing_task_id, packer_user):
     notify_dispatch_ready(dispatch)
 
     return dispatch
-
-# Note: Other functions (skips, cycle counts) can remain as is, 
-# provided they use similar transaction.atomic() blocks.
-
 
 @transaction.atomic
 def verify_dispatch_otp(dispatch_id, otp, user=None):

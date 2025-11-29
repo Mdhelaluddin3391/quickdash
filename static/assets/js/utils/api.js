@@ -1,11 +1,27 @@
 // assets/js/utils/api.js
 
-// Use the config injected from HTML, or fallback for safety
 const CONFIG = window.APP_CONFIG || { API_BASE: "/api/v1", LOGIN_URL: "auth.html" };
+
+// Helper to get CSRF token from cookies
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
 
 async function apiCall(endpoint, method = 'GET', body = null, requireAuth = false) {
     const headers = {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCookie('csrftoken') // Add CSRF support for Django compatibility
     };
 
     if (requireAuth) {
@@ -13,11 +29,9 @@ async function apiCall(endpoint, method = 'GET', body = null, requireAuth = fals
         if (token) {
             headers['Authorization'] = `Bearer ${token}`;
         } else {
-            // Smart Redirect using dynamic URL
-            if (window.location.pathname.indexOf(CONFIG.LOGIN_URL) === -1) {
-                const currentPath = window.location.pathname + window.location.search;
-                window.location.href = `${CONFIG.LOGIN_URL}?next=${encodeURIComponent(currentPath)}`;
-            }
+            // Smart Redirect: Save current path to return after login
+            const currentPath = window.location.pathname + window.location.search;
+            window.location.href = `${CONFIG.LOGIN_URL}?next=${encodeURIComponent(currentPath)}`;
             throw new Error("Authentication required");
         }
     }
@@ -29,13 +43,19 @@ async function apiCall(endpoint, method = 'GET', body = null, requireAuth = fals
         const response = await fetch(`${CONFIG.API_BASE}${endpoint}`, config);
 
         if (response.status === 401 && requireAuth) {
-            logout();
+            // Token expired or invalid
+            console.warn("Session expired or unauthorized. Redirecting to login.");
+            localStorage.removeItem('accessToken'); // Clear invalid token
+            const currentPath = window.location.pathname + window.location.search;
+            window.location.href = `${CONFIG.LOGIN_URL}?next=${encodeURIComponent(currentPath)}`;
             throw new Error("Session expired");
         }
 
         const data = await response.json();
+        
         if (!response.ok) {
-            throw new Error(data.detail || data.error || "Something went wrong");
+            // Provide specific error message from backend if available
+            throw new Error(data.detail || data.error || JSON.stringify(data) || "Something went wrong");
         }
         return data;
     } catch (error) {
@@ -43,6 +63,8 @@ async function apiCall(endpoint, method = 'GET', body = null, requireAuth = fals
         throw error;
     }
 }
+
+
 
 function isLoggedIn() {
     return !!localStorage.getItem('accessToken');

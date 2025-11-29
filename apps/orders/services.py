@@ -1,16 +1,13 @@
 import logging
+from decimal import Decimal
 from django.db import transaction
-from django.contrib.gis.geos import Point
-from django.contrib.gis.db.models.functions import Distance
-from django.contrib.gis.measure import D
+from django.conf import settings
 
-from apps.payments.models import Payment
-from apps.payments.signals import payment_succeeded as payments_payment_succeeded
-from apps.orders.signals import send_order_created
-from apps.warehouse.models import Warehouse
 from apps.orders.models import Order, OrderItem, Cart
+from apps.payments.models import Payment
+from apps.warehouse.models import Warehouse
 from apps.inventory.services import check_and_lock_inventory
-
+from .services import get_nearest_warehouse  # Assuming local import for helper
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +93,7 @@ def process_successful_payment(order):
 
 
 
+
 def create_order_from_cart(user, warehouse_id, delivery_address_json, delivery_lat=None, delivery_lng=None, payment_method='RAZORPAY'):
     # 1. Warehouse Selection Logic
     selected_warehouse = None
@@ -104,8 +102,6 @@ def create_order_from_cart(user, warehouse_id, delivery_address_json, delivery_l
         # Automatic: Find nearest warehouse
         nearest_wh, distance = get_nearest_warehouse(delivery_lat, delivery_lng)
         
-        # Logic: If nearest is found, use it. 
-        # Optional: You could check if provided 'warehouse_id' matches nearest_wh for consistency.
         if not nearest_wh:
             return None, None, "We do not deliver to this location (No warehouse nearby)."
         selected_warehouse = nearest_wh
@@ -120,28 +116,28 @@ def create_order_from_cart(user, warehouse_id, delivery_address_json, delivery_l
         except Warehouse.DoesNotExist:
             return None, None, "Selected warehouse does not exist or is inactive."
 
-    # 2. Get Cart
+    # 2. Get Cart with related SKU data to prevent N+1
     try:
-        cart = Cart.objects.prefetch_related('items__sku').get(customer=user)
+        cart = Cart.objects.select_related('customer').prefetch_related('items__sku').get(customer=user)
     except Cart.DoesNotExist:
         return None, None, "Cart not found"
 
     if not cart.items.exists():
         return None, None, "Cart empty"
 
-    # 3. Create Order (Atomic Transaction with Inventory Lock)
     try:
         with transaction.atomic():
-            # [CRITICAL] Check & Lock Inventory BEFORE creating order
-            # This prevents race conditions where 2 users buy the last item
+            # 3. Lock Inventory First (Critical for avoiding Race Conditions)
             for item in cart.items.all():
                 try:
+                    # check_and_lock_inventory must handle 'select_for_update' on InventoryStock
                     check_and_lock_inventory(selected_warehouse.id, item.sku.id, item.quantity)
                 except ValueError as e:
-                    # Stock unavailable
+                    # Specific business logic error (Stock unavailable)
+                    logger.warning(f"Stock checkout failed for user {user.id}: {e}")
                     return None, None, f"Out of Stock: {str(e)}"
 
-            # Create Order
+            # 4. Create Order
             order = Order.objects.create(
                 customer=user,
                 warehouse=selected_warehouse,
@@ -152,10 +148,12 @@ def create_order_from_cart(user, warehouse_id, delivery_address_json, delivery_l
                 payment_status='pending',
             )
 
-            # Create Order Items
+            # 5. Create Order Items
             items_to_create = []
             for c_item in cart.items.all():
-                unit_price = c_item.sku.sale_price if c_item.sku.sale_price else 0
+                # Priority: Use current SKU price to ensure accuracy at moment of purchase
+                unit_price = c_item.sku.sale_price or Decimal("0.00")
+                
                 items_to_create.append(
                     OrderItem(
                         order=order,
@@ -168,23 +166,30 @@ def create_order_from_cart(user, warehouse_id, delivery_address_json, delivery_l
                 )
             OrderItem.objects.bulk_create(items_to_create)
             
-            # Update Totals
+            # 6. Update Totals (Calculates taxes, delivery fees, discounts)
             order.recalculate_totals(save=True)
 
-            # Create Payment Record if COD
+            # 7. Handle COD Payment
             payment = None
             if payment_method == 'COD':
                 payment = Payment.objects.create(
                     order=order, 
                     payment_method=Payment.PaymentMethod.COD, 
-                    amount=order.final_amount
+                    amount=order.final_amount,
+                    status=Payment.PaymentStatus.PENDING 
                 )
+            
+            # Note: Cart is NOT deleted here. 
+            # It should be deleted only after Payment Confirmation (in views/webhooks).
                 
             return order, payment, None
 
     except Exception as e:
-        # Catch any other DB errors
-        return None, None, f"Order creation failed: {str(e)}"
+        logger.exception(f"Critical error during order creation for user {user.id}")
+        return None, None, "An internal error occurred while placing the order."
+
+
+
 
 def cancel_order(order, cancelled_by=None, reason=""):
     from .models import OrderTimeline, OrderCancellation
