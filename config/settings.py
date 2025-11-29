@@ -100,11 +100,14 @@ ASGI_APPLICATION = "config.asgi.application"
 # ==========================================
 # DATABASE (PostGIS)
 # ==========================================
+
+DB_SSL = config("DB_SSL_REQUIRE", default=False, cast=bool)
+
 DATABASES = {
     "default": dj_database_url.parse(
-        config("DATABASE_URL"),
+        config("DATABASE_URL", default="postgis://postgres:postgres@db:5432/quickdash_db"),
         conn_max_age=600,
-        ssl_require=not DEBUG  # Force SSL in Prod
+        ssl_require=DB_SSL  # [FIX] Do not force SSL based on DEBUG flag alone
     )
 }
 DATABASES["default"]["ENGINE"] = "django.contrib.gis.db.backends.postgis"

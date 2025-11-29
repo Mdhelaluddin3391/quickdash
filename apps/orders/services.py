@@ -2,15 +2,18 @@ import logging
 from decimal import Decimal
 from django.db import transaction
 from django.conf import settings
+from django.contrib.gis.geos import Point
+from django.contrib.gis.db.models.functions import Distance
+from django.contrib.gis.measure import D
 
 from apps.orders.models import Order, OrderItem, Cart
 from apps.payments.models import Payment
 from apps.warehouse.models import Warehouse
 from apps.inventory.services import check_and_lock_inventory
-from .services import get_nearest_warehouse  # Assuming local import for helper
+from apps.orders.signals import send_order_created
+from apps.payments.signals import payment_succeeded as payments_payment_succeeded
 
 logger = logging.getLogger(__name__)
-
 
 
 def get_nearest_warehouse(lat, lng):
@@ -22,10 +25,11 @@ def get_nearest_warehouse(lat, lng):
     if not lat or not lng:
         return None, float('inf')
 
+    # Create Point object
     user_location = Point(float(lng), float(lat), srid=4326)
 
     # 1. Filter active warehouses
-    # 2. Filter within radius (D_within uses spatial index)
+    # 2. Filter within radius (distance_lte uses spatial index)
     # 3. Annotate with precise distance
     # 4. Order by distance
     nearest_wh = Warehouse.objects.filter(
@@ -36,8 +40,10 @@ def get_nearest_warehouse(lat, lng):
     ).order_by('distance').first()
 
     if nearest_wh:
-        # distance.km returns a float
-        return nearest_wh, nearest_wh.distance.km
+        # distance.km property might be available depending on Django version/backend
+        # safely return distance object or float
+        dist_val = nearest_wh.distance.km if hasattr(nearest_wh.distance, 'km') else 0.0
+        return nearest_wh, dist_val
             
     return None, float('inf')
 
@@ -78,7 +84,7 @@ def process_successful_payment(order):
                 except Exception:
                     logger.exception("Failed to send WMS signal")
 
-            # 5. Execute ONLY after commit [FIX]
+            # 5. Execute ONLY after commit
             transaction.on_commit(trigger_wms_signal)
 
             # 6. Notify Payments App
@@ -88,10 +94,6 @@ def process_successful_payment(order):
     except Exception as e:
         logger.exception(f"Payment processing failed: {e}")
         return False, str(e)
-
-# ... (Rest of the file remains unchanged)
-
-
 
 
 def create_order_from_cart(user, warehouse_id, delivery_address_json, delivery_lat=None, delivery_lng=None, payment_method='RAZORPAY'):
@@ -187,8 +189,6 @@ def create_order_from_cart(user, warehouse_id, delivery_address_json, delivery_l
     except Exception as e:
         logger.exception(f"Critical error during order creation for user {user.id}")
         return None, None, "An internal error occurred while placing the order."
-
-
 
 
 def cancel_order(order, cancelled_by=None, reason=""):

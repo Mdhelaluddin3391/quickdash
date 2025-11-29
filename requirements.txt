@@ -26,9 +26,9 @@ twilio>=8.0.0
 firebase-admin>=6.2.0
 
 # --- Google Auth (New) ---
-google-auth>=2.0.0
-google-auth-oauthlib>=1.0.0
-google-auth-httplib2>=0.1.0
+google-auth==2.41.0
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
 
 # --- GeoSpatial / GIS (Maps & Location) ---
 # Windows par iska error aa sakta hai bina binary wheels ke. Docker mein ye perfectly chalega.
