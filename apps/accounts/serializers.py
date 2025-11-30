@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from django.contrib.gis.geos import Point
+from django.contrib.gis.geos import Point 
 from .models import RiderProfile, EmployeeProfile, Address, CustomerProfile
 
 User = get_user_model()
@@ -80,15 +80,15 @@ class RiderProfileSerializer(serializers.ModelSerializer):
 
 
 # ======================
-# CUSTOMER SERIALIZERS
+# CUSTOMER SERIALIZERS (ADDRESS FIX HERE)
 # ======================
 
 class AddressSerializer(serializers.ModelSerializer):
-    # Allow writing lat/lng explicitly
+    # Frontend se data LENE ke liye (Write)
     lat = serializers.FloatField(write_only=True, required=False)
     lng = serializers.FloatField(write_only=True, required=False)
     
-    # Read-only fields for frontend consumption
+    # Frontend ko data DENE ke liye (Read)
     latitude = serializers.SerializerMethodField()
     longitude = serializers.SerializerMethodField()
 
@@ -101,12 +101,12 @@ class AddressSerializer(serializers.ModelSerializer):
             'landmark',
             'city',
             'pincode',
-            'location', # PointField (usually read-only in simple DRF usage)
+            'location', 
             'is_default',
-            'lat',      # Write input
-            'lng',      # Write input
-            'latitude', # Read output
-            'longitude' # Read output
+            'lat',      
+            'lng',     
+            'latitude', 
+            'longitude' 
         ]
         read_only_fields = ['location']
 
@@ -120,7 +120,6 @@ class AddressSerializer(serializers.ModelSerializer):
         lat = validated_data.pop('lat', None)
         lng = validated_data.pop('lng', None)
         
-        # Auto-create Point from lat/lng
         if lat is not None and lng is not None:
             validated_data['location'] = Point(float(lng), float(lat), srid=4326)
             
@@ -143,12 +142,6 @@ class CustomerProfileSerializer(serializers.ModelSerializer):
 
 
 class CustomerMeSerializer(serializers.Serializer):
-    """
-    Response for /customer/me/:
-    - user basic info
-    - customer profile id
-    - addresses
-    """
     user = UserProfileSerializer()
     customer = CustomerProfileSerializer()
     addresses = AddressSerializer(many=True)
@@ -189,10 +182,7 @@ class AdminChangeEmployeeStatusSerializer(serializers.Serializer):
 
 
 class AdminForgotPasswordSerializer(serializers.Serializer):
-    identifier = serializers.CharField(
-        max_length=255,
-        help_text="Email or phone",
-    )
+    identifier = serializers.CharField(max_length=255, help_text="Email or phone")
 
 
 class AdminResetPasswordSerializer(serializers.Serializer):
@@ -212,15 +202,8 @@ class RiderAdminListSerializer(serializers.ModelSerializer):
     class Meta:
         model = RiderProfile
         fields = [
-            "id",
-            "phone",
-            "full_name",
-            "rider_code",
-            "approval_status",
-            "status",
-            "vehicle_type",
-            "on_duty",
-            "on_delivery",
+            "id", "phone", "full_name", "rider_code", "approval_status",
+            "status", "vehicle_type", "on_duty", "on_delivery",
         ]
 
 
@@ -231,11 +214,6 @@ class EmployeeAdminListSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmployeeProfile
         fields = [
-            "id",
-            "phone",
-            "full_name",
-            "employee_code",
-            "role",
-            "warehouse_code",
-            "is_active_employee",
+            "id", "phone", "full_name", "employee_code", "role",
+            "warehouse_code", "is_active_employee",
         ]

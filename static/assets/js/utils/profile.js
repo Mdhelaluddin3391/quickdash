@@ -6,10 +6,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 1. Load User Info
     const userStr = localStorage.getItem('user');
     if(userStr) {
-        const user = JSON.parse(userStr);
-        document.querySelector('.user-name').innerText = user.full_name || "Guest User";
-        document.querySelector('.user-phone').innerText = user.phone || "";
-        document.querySelector('.user-avatar').innerText = (user.full_name || "U").charAt(0).toUpperCase();
+        try {
+            const user = JSON.parse(userStr);
+            document.querySelector('.user-name').innerText = user.full_name || "Guest User";
+            document.querySelector('.user-phone').innerText = user.phone || "";
+            const avatar = document.querySelector('.user-avatar');
+            if(avatar) avatar.innerText = (user.full_name || "U").charAt(0).toUpperCase();
+        } catch(e) { console.error("User data parse error", e); }
     }
 
     // 2. Load Sections
@@ -34,15 +37,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function loadOrders() {
     const container = document.getElementById('orders');
-    container.innerHTML = '<h2 class="content-title">Order History</h2><div class="loading-spinner">Loading...</div>';
+    if(!container) return;
+    
+    container.innerHTML = '<h2 class="content-title">Order History</h2><div style="padding:20px; text-align:center;">Loading...</div>';
 
     try {
         const orders = await apiCall('/orders/', 'GET', null, true);
         
-        container.innerHTML = '<h2 class="content-title">Order History</h2>'; // Clear loader
+        container.innerHTML = '<h2 class="content-title">Order History</h2>'; 
 
-        if(orders.length === 0) {
-            container.innerHTML += '<p>No orders yet.</p>';
+        if(!orders || orders.length === 0) {
+            container.innerHTML += '<p style="color:#777;">No orders placed yet.</p>';
             return;
         }
 
@@ -58,34 +63,35 @@ async function loadOrders() {
                     <span class="order-status">${order.status.toUpperCase()}</span>
                 </div>
                 <div class="order-details">
-                    <p><strong>Items:</strong> ${order.items.length} items</p>
+                    <p><strong>Items:</strong> ${order.items ? order.items.length : 0} items</p>
                     <p><strong>Total:</strong> ₹${order.final_amount}</p>
                     <p><strong>Date:</strong> ${date}</p>
                 </div>
                 <div class="order-actions">
                     <a href="track_order.html?id=${order.id}" class="btn btn-primary">Track Order</a>
-                    ${order.status === 'delivered' ? '<a href="#" class="btn btn-secondary">Invoice</a>' : ''}
                 </div>
             `;
             container.appendChild(div);
         });
 
     } catch (e) {
-        console.error(e);
-        container.innerHTML = '<h2 class="content-title">Order History</h2><p class="error">Failed to load orders.</p>';
+        console.error("Orders Load Error:", e);
+        container.innerHTML = '<h2 class="content-title">Order History</h2><p class="error">Could not load orders.</p>';
     }
 }
 
 async function loadAddresses() {
     const list = document.querySelector('.address-list');
+    if(!list) return;
+    
     list.innerHTML = '<p>Loading addresses...</p>';
 
     try {
         const addresses = await apiCall('/auth/customer/addresses/', 'GET', null, true);
         list.innerHTML = '';
 
-        if(addresses.length === 0) {
-            list.innerHTML = '<p>No saved addresses.</p>';
+        if(!addresses || addresses.length === 0) {
+            list.innerHTML = '<p style="color:#777;">No saved addresses found.</p>';
             return;
         }
 
@@ -106,8 +112,8 @@ async function loadAddresses() {
         });
 
     } catch (e) {
-        console.error(e);
-        list.innerHTML = '<p class="error">Failed to load addresses.</p>';
+        console.error("Address Load Error:", e);
+        list.innerHTML = '<p class="error">Failed to load addresses. Please check connection.</p>';
     }
 }
 
@@ -118,11 +124,9 @@ async function handleAddressSubmit(e) {
     btn.disabled = true;
     btn.innerText = "Saving...";
 
-    // 1. Simulate Geocoding (In production, use Google Maps API)
-    // We generate a random point near Bangalore for demo purposes if backend validation is strict
-    // Ideally, you use navigator.geolocation.getCurrentPosition here.
-    const mockLat = 12.97 + (Math.random() * 0.01); 
-    const mockLng = 77.59 + (Math.random() * 0.01);
+    // Mock Coordinates for now (Real app should use GPS)
+    const mockLat = 12.9716; 
+    const mockLng = 77.5946;
 
     const payload = {
         full_address: document.getElementById('full-address').value,
@@ -136,15 +140,17 @@ async function handleAddressSubmit(e) {
     try {
         await apiCall('/auth/customer/addresses/', 'POST', payload, true);
         
-        // Close modal
-        document.getElementById('address-modal').style.display = 'none';
+        // Close modal and reset
+        const modal = document.getElementById('address-modal');
+        if(modal) modal.style.display = 'none';
         document.getElementById('address-form').reset();
         
-        // Refresh List
+        // Refresh List immediately
         await loadAddresses();
         alert("Address saved successfully!");
 
     } catch (error) {
+        console.error("Save Address Error:", error);
         alert("Failed to save address: " + error.message);
     } finally {
         btn.disabled = false;
@@ -152,18 +158,18 @@ async function handleAddressSubmit(e) {
     }
 }
 
-// Global functions for inline onclick events
+// Global functions for inline HTML events
 window.deleteAddress = async (id) => {
-    if(!confirm("Are you sure?")) return;
+    if(!confirm("Are you sure you want to delete this address?")) return;
     try {
         await apiCall(`/auth/customer/addresses/${id}/`, 'DELETE', null, true);
         await loadAddresses();
-    } catch(e) { alert("Delete failed"); }
+    } catch(e) { alert("Delete failed: " + e.message); }
 };
 
 window.setDefaultAddress = async (id) => {
     try {
         await apiCall(`/auth/customer/addresses/${id}/set-default/`, 'POST', {}, true);
         await loadAddresses();
-    } catch(e) { alert("Update failed"); }
+    } catch(e) { alert("Update failed: " + e.message); }
 };
