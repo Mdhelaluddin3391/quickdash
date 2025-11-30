@@ -1,6 +1,7 @@
 # apps/catalog/views.py
 from rest_framework import viewsets, permissions, filters
 from rest_framework.permissions import SAFE_METHODS, AllowAny, IsAdminUser
+from django_filters.rest_framework import DjangoFilterBackend  # Ensure django-filter is installed
 
 from .models import Category, Brand, SKU
 from .serializers import CategorySerializer, BrandSerializer, SKUSerializer
@@ -62,13 +63,22 @@ class SKUViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
         - active category/brand
     - Staff:
         - can see/manage all
+        
+    Supports filtering by:
+    - category (slug) via ?category=slug
+    - search via ?search=query
     """
 
     serializer_class = SKUSerializer
     lookup_field = "sku_code"
 
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ["name", "sku_code", "search_keywords", "metadata"]
+    # Added DjangoFilterBackend for field-based filtering
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    
+    # Fields available for filtering
+    filterset_fields = ['category__slug', 'brand__slug', 'is_featured', 'is_active']
+    
+    search_fields = ["name", "sku_code", "search_keywords", "metadata__values"]
     ordering_fields = ["sale_price", "created_at", "name"]
     ordering = ["name"]
 
@@ -76,10 +86,12 @@ class SKUViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
         qs = SKU.objects.all().select_related("category", "brand")
         user = self.request.user
 
+        # Basic visibility filter
         if not user.is_authenticated or not user.is_staff:
             qs = qs.filter(
                 is_active=True,
                 category__is_active=True,
                 brand__is_active=True,
             )
+            
         return qs

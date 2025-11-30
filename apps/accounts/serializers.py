@@ -1,9 +1,9 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.contrib.gis.geos import Point
 from .models import RiderProfile, EmployeeProfile, Address, CustomerProfile
 
 User = get_user_model()
-
 
 # ======================
 # Helper
@@ -84,9 +84,13 @@ class RiderProfileSerializer(serializers.ModelSerializer):
 # ======================
 
 class AddressSerializer(serializers.ModelSerializer):
-    # [PRODUCTION FIX] Explicitly extract lat/lng to avoid GeoJSON parsing issues in frontend
-    lat = serializers.SerializerMethodField()
-    lng = serializers.SerializerMethodField()
+    # Allow writing lat/lng explicitly
+    lat = serializers.FloatField(write_only=True, required=False)
+    lng = serializers.FloatField(write_only=True, required=False)
+    
+    # Read-only fields for frontend consumption
+    latitude = serializers.SerializerMethodField()
+    longitude = serializers.SerializerMethodField()
 
     class Meta:
         model = Address
@@ -97,17 +101,39 @@ class AddressSerializer(serializers.ModelSerializer):
             'landmark',
             'city',
             'pincode',
-            'location',
+            'location', # PointField (usually read-only in simple DRF usage)
             'is_default',
-            'lat',
-            'lng',
+            'lat',      # Write input
+            'lng',      # Write input
+            'latitude', # Read output
+            'longitude' # Read output
         ]
+        read_only_fields = ['location']
 
-    def get_lat(self, obj):
+    def get_latitude(self, obj):
         return obj.location.y if obj.location else None
 
-    def get_lng(self, obj):
+    def get_longitude(self, obj):
         return obj.location.x if obj.location else None
+
+    def create(self, validated_data):
+        lat = validated_data.pop('lat', None)
+        lng = validated_data.pop('lng', None)
+        
+        # Auto-create Point from lat/lng
+        if lat is not None and lng is not None:
+            validated_data['location'] = Point(float(lng), float(lat), srid=4326)
+            
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        lat = validated_data.pop('lat', None)
+        lng = validated_data.pop('lng', None)
+
+        if lat is not None and lng is not None:
+            instance.location = Point(float(lng), float(lat), srid=4326)
+            
+        return super().update(instance, validated_data)
 
 
 class CustomerProfileSerializer(serializers.ModelSerializer):

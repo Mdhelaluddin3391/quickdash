@@ -26,3 +26,5 @@ gunicorn==21.2.0
 Shapely==2.0.3
 # Fix for Razorpay/Python 3.12 compatibility
 setuptools
+
+django-filter==23.5
