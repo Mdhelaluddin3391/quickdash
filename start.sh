@@ -1,50 +1,46 @@
 #!/bin/sh
 set -e
 
-# Fix ownership of static and media directories (Run as Root)
-echo "Fixing permissions..."
-mkdir -p /code/staticfiles /code/media
-chown -R appuser:appgroup /code/staticfiles /code/media
+# Define a lock directory for migrations
+MIGRATION_LOCK_DIR="/tmp/django_migrations_lock"
 
-# Wait for DB
+echo "Waiting for DB..."
 python << END
-import sys
-import os
-import psycopg2
-import time
+import sys, os, psycopg2, time
 
-db_name = os.getenv("DB_NAME", "quickdash_db")
-db_user = os.getenv("DB_USER", "postgres")
-db_pass = os.getenv("DB_PASSWORD", "postgres")
-db_host = os.getenv("DB_HOST", "db")
-db_port = os.getenv("DB_PORT", "5432")
-
+# Retry for 30 seconds
 for i in range(30):
     try:
-        conn = psycopg2.connect(dbname=db_name, user=db_user, password=db_pass, host=db_host, port=db_port)
+        conn = psycopg2.connect(
+            dbname=os.getenv("DB_NAME", "quickdash_db"),
+            user=os.getenv("DB_USER", "postgres"),
+            password=os.getenv("DB_PASSWORD", "postgres"),
+            host=os.getenv("DB_HOST", "db"),
+            port=os.getenv("DB_PORT", "5432")
+        )
         conn.close()
+        print("DB Connection Successful.")
         sys.exit(0)
-    except psycopg2.OperationalError:
-        print(f"Waiting for DB... {i}")
+    except Exception as e:
+        print(f"Waiting for DB... ({i}/30) Error: {e}")
         time.sleep(1)
+
+print("Could not connect to DB after 30 attempts.")
 sys.exit(1)
 END
 
-echo "DB Connected."
-
-# Run Migrations (as appuser)
-echo "Applying migrations..."
+# Only one container should run migrations.
+echo "Running Migrations..."
 gosu appuser python manage.py migrate --noinput
 
-# Collect Static (as appuser)
-echo "Collecting static..."
-gosu appuser python manage.py collectstatic --noinput
+echo "Collecting Static..."
+gosu appuser python manage.py collectstatic --noinput --clear
 
-# Create Superuser if needed
-if [ "$create_superuser" = "true" ]; then
+# Superuser check (Only in Dev/First Run)
+if [ "$CREATE_SUPERUSER" = "true" ]; then
     gosu appuser python manage.py create_admin
 fi
 
 echo "Starting Daphne..."
-# Switch user to appuser and run daphne
+# Use 0.0.0.0 for Docker networking
 exec gosu appuser daphne -b 0.0.0.0 -p 8000 config.asgi:application

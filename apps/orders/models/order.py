@@ -1,3 +1,4 @@
+# apps/orders/models/order.py
 import uuid
 from decimal import Decimal
 
@@ -29,13 +30,6 @@ PAYMENT_STATUS_CHOICES = [
 
 
 class Coupon(models.Model):
-    """
-    Discount Coupon Model
-    - Flat amount or percentage
-    - Min purchase amount
-    - Active window + usage counter
-    """
-
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     code = models.CharField(max_length=50, unique=True)
     discount_value = models.DecimalField(max_digits=10, decimal_places=2)
@@ -77,32 +71,26 @@ class Coupon(models.Model):
 class Order(models.Model):
     """
     Core Order aggregate.
-
-    Yeh model actual commerce ke flows ko support karta hai:
-    - Status lifecycle
-    - Payment status
-    - Totals (subtotal, discount, tax, delivery fee, final)
-    - Warehouse + customer links
     """
-
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     customer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         related_name="orders",
         on_delete=models.PROTECT,
+        db_index=True,
     )
     warehouse = models.ForeignKey(
-        "warehouse.Warehouse",  # app_label 'warehouse' assume kiya gaya
+        "warehouse.Warehouse",
         related_name="orders",
         null=True,
         blank=True,
         on_delete=models.PROTECT,
     )
 
-    status = models.CharField(max_length=20, choices=ORDER_STATUS_CHOICES, default="pending")
+    status = models.CharField(max_length=20, choices=ORDER_STATUS_CHOICES, default="pending", db_index=True)
     payment_status = models.CharField(
-        max_length=20, choices=PAYMENT_STATUS_CHOICES, default="pending"
+        max_length=20, choices=PAYMENT_STATUS_CHOICES, default="pending", db_index=True
     )
 
     # Amounts
@@ -123,11 +111,17 @@ class Order(models.Model):
     )
 
     payment_gateway_order_id = models.CharField(
-        max_length=100, null=True, blank=True, help_text="Razorpay order id (if any)"
+        max_length=100, null=True, blank=True, help_text="Razorpay order id", db_index=True
     )
 
-    # Address + geo
+    # [FIX] Flattened Address Fields for Analytics
+    # We still keep JSON for the full snapshot, but key fields are extracted
     delivery_address_json = models.JSONField(default=dict)
+    
+    delivery_city = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    delivery_pincode = models.CharField(max_length=10, null=True, blank=True, db_index=True)
+    
+    # Geo
     delivery_lat = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     delivery_lng = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
 
@@ -148,7 +142,7 @@ class Order(models.Model):
     )
 
     # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
     confirmed_at = models.DateTimeField(null=True, blank=True)
     dispatched_at = models.DateTimeField(null=True, blank=True)
@@ -161,20 +155,14 @@ class Order(models.Model):
         indexes = [
             models.Index(fields=["customer", "status"]),
             models.Index(fields=["payment_status", "created_at"]),
-            models.Index(fields=["created_at"]),
+            models.Index(fields=["delivery_city", "status"]), # Analytic Index
         ]
 
     def __str__(self):
         return f"Order {self.id}"
 
-    # ----------------------------------------------------
-    # Totals calculation
-    # ----------------------------------------------------
     def recalculate_totals(self, save: bool = False):
-        """
-        Items ke basis par subtotal nikaale, fir coupon/tax/delivery fee apply kare.
-        """
-        from .item import OrderItem  # local import to avoid circular
+        from .item import OrderItem
 
         subtotal = (
             OrderItem.objects.filter(order=self).aggregate(
@@ -185,14 +173,11 @@ class Order(models.Model):
 
         self.total_amount = subtotal
 
-        # Base discount only from coupon (agar future main aur promos ho, yahan add karo)
         discount = Decimal("0.00")
         if self.coupon and self.coupon.is_valid(subtotal):
             discount = self.coupon.calculate_discount(subtotal)
 
         self.discount_amount = discount
-
-        # Simple tax model: 0 for now (future: GST etc.)
         self.taxes_amount = self.taxes_amount or Decimal("0.00")
         self.delivery_fee = self.delivery_fee or Decimal("0.00")
         self.rider_tip = self.rider_tip or Decimal("0.00")

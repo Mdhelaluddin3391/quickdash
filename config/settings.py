@@ -1,8 +1,4 @@
-"""
-Django settings for quickdash project.
-Production-ready configuration with hardened security.
-"""
-
+# config/settings.py
 import logging
 from pathlib import Path
 import os
@@ -20,14 +16,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default=False, cast=bool)
 
-# Security: In production, ALLOWED_HOSTS must be explicit.
+# Production Security: Hosts must be explicit
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="127.0.0.1,localhost", cast=Csv())
 
-CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="http://localhost:3000", cast=Csv())
+# CORS & CSRF
+# In production, this MUST NOT be '*'
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="http://localhost:3000", cast=Csv())
-FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
+CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="http://localhost:3000", cast=Csv())
 
-# Separate JWT signing key (can rotate independently)
+# JWT Signing Key (Rotation support)
 JWT_SIGNING_KEY = config("JWT_SIGNING_KEY", default=SECRET_KEY)
 
 # ==========================================
@@ -40,7 +37,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "django.contrib.gis",  # PostGIS support
+    "django.contrib.gis",
 
     # Third Party
     "rest_framework",
@@ -48,7 +45,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "channels",
-    "drf_spectacular", # API Documentation
+    "drf_spectacular",
 
     # Project Apps
     "apps.accounts",
@@ -100,7 +97,6 @@ ASGI_APPLICATION = "config.asgi.application"
 # ==========================================
 # DATABASE (PostGIS)
 # ==========================================
-# Fix: Ensure logic correctly handles boolean cast for SSL
 DB_SSL_REQUIRE = config("DB_SSL_REQUIRE", default=not DEBUG, cast=bool)
 
 DATABASES = {
@@ -142,7 +138,7 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 CELERY_TASK_TRACK_STARTED = True
-CELERY_TASK_TIME_LIMIT = 1800  # 30 mins
+CELERY_TASK_TIME_LIMIT = 1800
 
 CELERY_BEAT_SCHEDULE = {
     "run-daily-analytics": {
@@ -161,7 +157,7 @@ CELERY_BEAT_SCHEDULE = {
 }
 
 # ==========================================
-# AUTH / USER MODEL
+# AUTH
 # ==========================================
 AUTH_USER_MODEL = "accounts.User"
 
@@ -210,7 +206,7 @@ REST_FRAMEWORK = {
         "burst": "60/min",
         "sustained": "1000/hour",
     },
-    "EXCEPTION_HANDLER": "rest_framework.views.exception_handler",
+    "EXCEPTION_HANDLER": "rest_framework.views.exception_handler", # Can be customized
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
@@ -232,9 +228,6 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
-# ==========================================
-# API DOCUMENTATION (Spectacular)
-# ==========================================
 SPECTACULAR_SETTINGS = {
     'TITLE': 'QuickDash API',
     'DESCRIPTION': 'E-commerce & Logistics API',
@@ -243,7 +236,7 @@ SPECTACULAR_SETTINGS = {
 }
 
 # ==========================================
-# BUSINESS KEYS
+# BUSINESS CONFIG
 # ==========================================
 RAZORPAY_KEY_ID = config("RAZORPAY_KEY_ID", default=None)
 RAZORPAY_KEY_SECRET = config("RAZORPAY_KEY_SECRET", default=None)
@@ -256,9 +249,6 @@ TWILIO_FROM_NUMBER = config("TWILIO_FROM_NUMBER", default=None)
 GOOGLE_CLIENT_ID = config("GOOGLE_CLIENT_ID", default="")
 FIREBASE_CREDENTIALS_PATH = config("FIREBASE_CREDENTIALS_PATH", default=None)
 
-# ==========================================
-# BUSINESS LOGIC CONSTANTS
-# ==========================================
 BASE_DELIVERY_FEE = config("BASE_DELIVERY_FEE", default=20.00, cast=Decimal)
 ORDER_CANCELLATION_WINDOW = config("ORDER_CANCELLATION_WINDOW", default=300, cast=int)
 RIDER_BASE_FEE = config("RIDER_BASE_FEE", default=30.00, cast=Decimal)
@@ -266,7 +256,7 @@ IDEMPOTENCY_KEY_TTL = config("IDEMPOTENCY_KEY_TTL", default=30, cast=int)
 RIDER_MAX_RADIUS_KM = config("RIDER_MAX_RADIUS_KM", default=10.0, cast=float)
 
 # ==========================================
-# LOGGING
+# LOGGING (Structured)
 # ==========================================
 LOGGING = {
     "version": 1,
@@ -276,11 +266,16 @@ LOGGING = {
             "format": "{levelname} {asctime} {module} {message}",
             "style": "{",
         },
+        "json": {
+            # Use json formatter for prod logs if using ELK/Datadog
+            "format": "{levelname} {asctime} {message}", 
+            "style": "{",
+        }
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "verbose",
+            "formatter": "verbose" if DEBUG else "json",
         },
     },
     "loggers": {
@@ -291,7 +286,7 @@ LOGGING = {
 }
 
 # ==========================================
-# PRODUCTION SECURITY HARDENING
+# SECURITY HARDENING
 # ==========================================
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
@@ -300,7 +295,11 @@ if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = "DENY"
-    SECURE_HSTS_SECONDS = 31536000
+    
+    # HSTS
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
+    
+    # Proxy Headers (Crucial for Nginx/Docker)
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

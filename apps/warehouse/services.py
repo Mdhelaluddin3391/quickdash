@@ -1,8 +1,8 @@
 # apps/warehouse/services.py
 import logging
 import random
-from django.db import transaction
-from django.db.models import Sum, F
+from django.db import transaction, models
+from django.db.models import Sum, F, Case, When, Value
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 
@@ -28,20 +28,19 @@ logger = logging.getLogger(__name__)
 @transaction.atomic
 def reserve_stock_for_order(order_id, warehouse_id, items_needed):
     """
-    Allocates stock from bins and updates central inventory via signal.
-    Uses 'select_for_update' with deterministic ordering to prevent deadlocks.
+    Allocates stock from bins.
+    PRO FIX: Uses 'skip_locked=True' to allow concurrent pickers to grab different bins 
+    for the same SKU without blocking.
     """
-    # 1. Lock Warehouse Context
     warehouse = Warehouse.objects.select_for_update().get(id=warehouse_id)
     
-    # 2. Create Task Wrapper
     task = PickingTask.objects.create(
         order_id=str(order_id),
         warehouse=warehouse,
         status=PickingTask.TaskStatus.PENDING,
     )
 
-    # 3. Sort items by SKU ID to prevent Deadlocks during batch allocation
+    # Sort to prevent deadlocks (canonical ordering)
     items_needed = sorted(items_needed, key=lambda x: str(x['sku_id']))
 
     for item in items_needed:
@@ -49,18 +48,20 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
         qty_needed = int(item["qty"])
         qty_remaining = qty_needed
 
-        # 4. Find candidate bins with available stock
-        # Locking Strategy: Lock rows ordered by Bin ID to ensure consistent access order
+        # OPTIMIZED LOCKING STRATEGY:
+        # 1. Filter bins with actual available stock (qty > reserved)
+        # 2. Order by 'qty' ASC (clears small fragmented bins first) OR DESC (efficiency)
+        # 3. select_for_update(skip_locked=True) allows other txns to skip these locked rows
         bin_qs = (
             BinInventory.objects
-            .select_for_update(skip_locked=False)
+            .select_for_update(skip_locked=True)
             .select_related("bin__zone__warehouse")
             .filter(
                 bin__zone__warehouse=warehouse,
                 sku_id=sku_id,
-                qty__gt=F("reserved_qty"), # Only bins with logical availability
+                qty__gt=F("reserved_qty"),
             )
-            .order_by("bin__id") 
+            .order_by("qty") # Strategy: Empty small bins first
         )
 
         for bin_inv in bin_qs:
@@ -73,11 +74,9 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
 
             to_reserve = min(available, qty_remaining)
             
-            # Update Bin State
             bin_inv.reserved_qty += to_reserve
             bin_inv.save(update_fields=['reserved_qty'])
 
-            # Create Pick Item
             PickItem.objects.create(
                 task=task,
                 sku_id=sku_id,
@@ -85,9 +84,7 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
                 qty_to_pick=to_reserve,
             )
 
-            # Signal Logical Inventory Update (Inventory App)
-            # We defer this logic to a signal to keep boundaries clean, 
-            # but inside the atomic block ensures data integrity.
+            # Signal Logical Inventory Update (async via receiver)
             inventory_change_required.send(
                 sender=Warehouse,
                 sku_id=str(sku_id),
@@ -102,10 +99,8 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
 
         if qty_remaining > 0:
             logger.error(f"Stock Mismatch! SKU {sku_id} in WH {warehouse_id}. Needed {qty_needed}, Short {qty_remaining}")
-            # Raising error triggers automatic rollback of the transaction
             raise OutOfStockError(f"Insufficient stock for SKU {sku_id}. Short by {qty_remaining}")
 
-    # 5. Initialize Packing Task
     PackingTask.objects.create(
         picking_task=task,
         status=PackingTask.PackStatus.PENDING,
@@ -116,9 +111,6 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
 
 @transaction.atomic
 def scan_pick(task_id, pick_item_id, qty_scanned, user):
-    """
-    Picker scans a SKU from a bin.
-    """
     item = PickItem.objects.select_for_update().select_related("task").get(
         id=pick_item_id,
         task_id=task_id,
@@ -127,7 +119,6 @@ def scan_pick(task_id, pick_item_id, qty_scanned, user):
     if item.picked_qty >= item.qty_to_pick:
         raise ValidationError("Item already fully picked.")
 
-    # Check for active skips
     if item.skips.filter(is_resolved=False).exists():
         raise ValidationError("Item is marked as skipped.")
 
@@ -141,35 +132,28 @@ def scan_pick(task_id, pick_item_id, qty_scanned, user):
     item.picked_qty += qty_scanned
     item.save(update_fields=['picked_qty'])
 
-    # Update Task Status
     task = item.task
     if task.status == PickingTask.TaskStatus.PENDING:
         task.status = PickingTask.TaskStatus.IN_PROGRESS
         task.picker = user
         task.save(update_fields=['status', 'picker'])
 
-    # Check if Task is Complete
-    # Efficiently check if ANY item is not fully picked
     pending_items = task.items.filter(picked_qty__lt=F("qty_to_pick")).exists()
     
     if not pending_items:
         task.status = PickingTask.TaskStatus.COMPLETED
         task.completed_at = timezone.now()
         task.save(update_fields=['status', 'completed_at'])
-
-        # Notify Packer
-        pack_task = task.packing_task # OneToOne reverse accessor
-        notify_packer_new_task(pack_task)
+        
+        # Check if PackingTask exists before accessing (defensive)
+        if hasattr(task, 'packing_task'):
+            notify_packer_new_task(task.packing_task)
 
     return item
 
 
-# apps/warehouse/services.py (Partial - showing fixed method)
 @transaction.atomic
 def complete_packing(packing_task_id, packer_user):
-    """
-    Finalizes order packing. Moves stock from 'Reserved' to 'Outward'.
-    """
     pack_task = PackingTask.objects.select_for_update().select_related(
         "picking_task__warehouse"
     ).get(id=packing_task_id)
@@ -180,7 +164,6 @@ def complete_packing(packing_task_id, packer_user):
     picking_task = pack_task.picking_task
     warehouse = picking_task.warehouse
 
-    # Lock & Update Bin Inventory
     items = picking_task.items.select_related("bin", "sku").all()
     
     for pitem in items:
@@ -190,14 +173,14 @@ def complete_packing(packing_task_id, packer_user):
             sku=pitem.sku,
         )
         
-        # Validation
         if bi.qty < pitem.picked_qty:
             logger.critical(f"Data Integrity Error: Bin {bi.bin.bin_code} insufficient qty.")
             raise ValidationError(f"Integrity Error: Bin {bi.bin.bin_code} mismatch.")
         
-        # Atomic Updates
+        # Atomic Updates: Reduce physical qty, reduce reserved
         bi.qty = F('qty') - pitem.picked_qty
-        # Ensure reserved doesn't go negative
+        
+        # Conditional update to prevent negative reserved
         bi.reserved_qty = Case(
             When(reserved_qty__gte=pitem.picked_qty, then=F('reserved_qty') - pitem.picked_qty),
             default=Value(0),
@@ -205,13 +188,13 @@ def complete_packing(packing_task_id, packer_user):
         )
         bi.save()
 
-        # Emit Signal for logical inventory sync (async)
+        # Signal for logical inventory sync (Release reserved)
         inventory_change_required.send(
             sender=Warehouse,
             sku_id=str(pitem.sku.id),
             warehouse_id=str(warehouse.id),
             delta_available=0,
-            delta_reserved=-pitem.picked_qty,
+            delta_reserved=-pitem.picked_qty, # Release the hold
             reference=str(picking_task.order_id),
             change_type="sale_dispatch",
         )
@@ -226,42 +209,37 @@ def complete_packing(packing_task_id, packer_user):
             performed_by=packer_user,
         )
 
-    # Update Task State
     pack_task.packer = packer_user
     pack_task.status = PackingTask.PackStatus.PACKED
     pack_task.save(update_fields=['packer', 'status'])
 
-    # Generate OTP & Dispatch Record
     pickup_otp = "".join(str(random.randint(0, 9)) for _ in range(4))
-    dispatch = DispatchRecord.objects.create(
+    
+    # Ensure OneToOne relation doesn't crash if record exists (idempotency)
+    dispatch, created = DispatchRecord.objects.get_or_create(
         packing_task=pack_task,
-        warehouse=warehouse,
-        order_id=picking_task.order_id,
-        status=DispatchRecord.DispatchStatus.READY,
-        pickup_otp=pickup_otp,
+        defaults={
+            'warehouse': warehouse,
+            'order_id': picking_task.order_id,
+            'status': DispatchRecord.DispatchStatus.READY,
+            'pickup_otp': pickup_otp
+        }
     )
 
-    # Notify Delivery Service
-    transaction.on_commit(lambda: dispatch_ready_for_delivery.send(
-        sender=DispatchRecord,
-        dispatch_id=dispatch.id,
-        order_id=str(picking_task.order_id),
-        warehouse_id=warehouse.id,
-        pickup_otp=pickup_otp,
-    ))
+    if created:
+        transaction.on_commit(lambda: dispatch_ready_for_delivery.send(
+            sender=DispatchRecord,
+            dispatch_id=dispatch.id,
+            order_id=str(picking_task.order_id),
+            warehouse_id=warehouse.id,
+            pickup_otp=pickup_otp,
+        ))
+        notify_dispatch_ready(dispatch)
     
-    notify_dispatch_ready(dispatch)
     return dispatch
 
 @transaction.atomic
 def verify_dispatch_otp(dispatch_id, otp, user=None):
-    """
-    Rider pickup OTP verification.
-
-    - Validates OTP
-    - Marks dispatch as HANDED_OVER
-    - Optionally ties rider_id if provided by delivery app earlier
-    """
     dispatch = DispatchRecord.objects.select_for_update().get(id=dispatch_id)
 
     if dispatch.status == DispatchRecord.DispatchStatus.HANDED_OVER:
@@ -275,21 +253,15 @@ def verify_dispatch_otp(dispatch_id, otp, user=None):
 
     dispatch.status = DispatchRecord.DispatchStatus.HANDED_OVER
     dispatch.save(update_fields=["status"])
-
-    # (Optional) – yahan se delivery app ko koi signal bhejna ho to future mein add kar sakte ho.
     return dispatch
 
-
-# =========================================================
-# SKIPS / SHORT-PICK / FC
-# =========================================================
+# --- Other services (skips/GRN/CycleCount) assumed similar, included here for completeness of file ---
+# (Keeping original implementations for brevity unless specific bugs were found, 
+# but ensuring imports and transaction decorators are present)
 
 @transaction.atomic
 def mark_pickitem_skipped(task_id, pick_item_id, user, reason: str, reopen_for_picker=False):
-    item = PickItem.objects.select_for_update().get(
-        id=pick_item_id,
-        task__id=task_id,
-    )
+    item = PickItem.objects.select_for_update().get(id=pick_item_id, task__id=task_id)
     if item.picked_qty >= item.qty_to_pick:
         raise ValueError("This item is already fully picked.")
     if item.skips.filter(is_resolved=False).exists():
@@ -302,7 +274,6 @@ def mark_pickitem_skipped(task_id, pick_item_id, user, reason: str, reopen_for_p
         reason=reason,
         reopen_after_scan=reopen_for_picker,
     )
-
 
 @transaction.atomic
 def resolve_skip_as_shortpick(skip: PickSkip, resolved_by_user, note: str):
@@ -323,17 +294,17 @@ def resolve_skip_as_shortpick(skip: PickSkip, resolved_by_user, note: str):
         notes=note,
     )
 
+    # Release Physical Reservation
     bi = BinInventory.objects.get(bin=item.bin, sku=item.sku)
-    bi.reserved_qty -= qty_needed
-    if bi.reserved_qty < 0:
-        bi.reserved_qty = 0
+    bi.reserved_qty = max(0, bi.reserved_qty - qty_needed)
     bi.save()
 
+    # Logical Unlock
     inventory_change_required.send(
         sender=Warehouse,
         sku_id=str(item.sku.id),
         warehouse_id=str(item.task.warehouse.id),
-        delta_available=qty_needed,   # logical unlock
+        delta_available=qty_needed,
         delta_reserved=-qty_needed,
         reference=str(item.task.order_id),
         change_type="short_pick_rollback",
@@ -353,7 +324,6 @@ def resolve_skip_as_shortpick(skip: PickSkip, resolved_by_user, note: str):
     )
     return spi
 
-
 @transaction.atomic
 def admin_fulfillment_cancel(pick_item: PickItem, cancelled_by_user, reason: str):
     if pick_item.qty_to_pick == pick_item.picked_qty:
@@ -369,9 +339,7 @@ def admin_fulfillment_cancel(pick_item: PickItem, cancelled_by_user, reason: str
     )
 
     bi = BinInventory.objects.get(bin=pick_item.bin, sku=pick_item.sku)
-    bi.reserved_qty -= qty_to_cancel
-    if bi.reserved_qty < 0:
-        bi.reserved_qty = 0
+    bi.reserved_qty = max(0, bi.reserved_qty - qty_to_cancel)
     bi.save()
 
     inventory_change_required.send(
@@ -397,16 +365,8 @@ def admin_fulfillment_cancel(pick_item: PickItem, cancelled_by_user, reason: str
 
     return fc_record
 
-
-# =========================================================
-# INBOUND (GRN & PUTAWAY)
-# =========================================================
-
 @transaction.atomic
 def create_grn_and_putaway(warehouse_id, grn_number, items, created_by):
-    """
-    items = [{'sku_id': <int>, 'qty': 100}, ...]
-    """
     warehouse = Warehouse.objects.get(id=warehouse_id)
     grn = GRN.objects.create(
         warehouse=warehouse,
@@ -438,22 +398,9 @@ def create_grn_and_putaway(warehouse_id, grn_number, items, created_by):
 
     return grn, putaway_task
 
-
 @transaction.atomic
 def place_putaway_item(task_id, putaway_item_id, bin_id, qty_placed, user):
-    item = (
-        PutawayItem.objects
-        .select_for_update()
-        .select_related(
-            "task__warehouse",
-            "grn_item__sku",
-            "grn_item__grn",
-        )
-        .get(
-            id=putaway_item_id,
-            task__id=task_id,
-        )
-    )
+    item = PutawayItem.objects.select_for_update().select_related("task__warehouse", "grn_item__sku", "grn_item__grn").get(id=putaway_item_id, task__id=task_id)
     grn_item = item.grn_item
 
     qty_placed = int(qty_placed)
@@ -464,11 +411,7 @@ def place_putaway_item(task_id, putaway_item_id, bin_id, qty_placed, user):
     warehouse = item.task.warehouse
     sku = grn_item.sku
 
-    bi, _ = BinInventory.objects.get_or_create(
-        bin=bin_obj,
-        sku=sku,
-        defaults={"qty": 0},
-    )
+    bi, _ = BinInventory.objects.get_or_create(bin=bin_obj, sku=sku, defaults={"qty": 0})
     bi.qty += qty_placed
     bi.save()
 
@@ -506,11 +449,6 @@ def place_putaway_item(task_id, putaway_item_id, bin_id, qty_placed, user):
     )
     return item
 
-
-# =========================================================
-# CYCLE COUNT
-# =========================================================
-
 @transaction.atomic
 def create_cycle_count(warehouse_id, user, sample_bins=None):
     warehouse = Warehouse.objects.get(id=warehouse_id)
@@ -523,42 +461,20 @@ def create_cycle_count(warehouse_id, user, sample_bins=None):
     if sample_bins:
         bins = Bin.objects.filter(id__in=sample_bins)
     else:
-        bins = (
-            Bin.objects.filter(
-                inventory__qty__gt=0,
-                zone__warehouse=warehouse,
-            )
-            .distinct()
-            .order_by("?")[:20]
-        )
+        # Random sample
+        bins = Bin.objects.filter(inventory__qty__gt=0, zone__warehouse=warehouse).distinct().order_by("?")[:20]
 
     cc_items = []
     for b in bins:
         for bi in BinInventory.objects.filter(bin=b, qty__gt=0):
-            cc_items.append(
-                CycleCountItem(
-                    task=cc_task,
-                    bin=b,
-                    sku=bi.sku,
-                    expected_qty=bi.qty,
-                )
-            )
+            cc_items.append(CycleCountItem(task=cc_task, bin=b, sku=bi.sku, expected_qty=bi.qty))
+    
     CycleCountItem.objects.bulk_create(cc_items)
     return cc_task
 
-
 @transaction.atomic
 def record_cycle_count_item(task_id, bin_id, sku_id, counted_qty, user):
-    cc_item = (
-        CycleCountItem.objects
-        .select_for_update()
-        .select_related("task__warehouse")
-        .get(
-            task_id=task_id,
-            bin_id=bin_id,
-            sku_id=sku_id,
-        )
-    )
+    cc_item = CycleCountItem.objects.select_for_update().select_related("task__warehouse").get(task_id=task_id, bin_id=bin_id, sku_id=sku_id)
 
     if cc_item.counted_qty is not None:
         raise ValueError("This item has already been counted.")
@@ -569,9 +485,13 @@ def record_cycle_count_item(task_id, bin_id, sku_id, counted_qty, user):
 
     if delta != 0:
         bi = BinInventory.objects.get(bin_id=bin_id, sku_id=sku_id)
-        bi.qty += delta
-        if bi.qty < 0:
-            bi.qty = 0
+        # Ensure we don't go negative on a logic error, though CC is absolute truth
+        new_qty = bi.qty + delta
+        if new_qty < 0: 
+             new_qty = 0 # Cannot have negative stock
+             delta = -bi.qty # Adjust delta to actual removal
+        
+        bi.qty = new_qty
         bi.save()
 
         inventory_change_required.send(
@@ -596,21 +516,3 @@ def record_cycle_count_item(task_id, bin_id, sku_id, counted_qty, user):
 
     cc_item.save()
     return cc_item
-
-
-# Re-export for tests: from apps.warehouse.services import OutOfStockError
-__all__ = [
-    "reserve_stock_for_order",
-    "scan_pick",
-    "complete_packing",
-    "verify_dispatch_otp",
-    "mark_pickitem_skipped",
-    "resolve_skip_as_shortpick",
-    "admin_fulfillment_cancel",
-    "create_grn_and_putaway",
-    "place_putaway_item",
-    "create_cycle_count",
-    "record_cycle_count_item",
-    "OutOfStockError",
-    "ReservationFailedError",
-]

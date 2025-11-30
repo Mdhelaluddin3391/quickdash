@@ -1,4 +1,5 @@
 # apps/accounts/views.py
+import logging
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.core.exceptions import ObjectDoesNotExist
@@ -6,9 +7,8 @@ from rest_framework import status, views, generics
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.conf import settings
-import logging
 from rest_framework.exceptions import Throttled, ValidationError
+from django.conf import settings
 
 from .models import PhoneOTP, UserSession, Address, CustomerProfile
 from .serializers import (
@@ -31,10 +31,6 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
-# ==========================
-# GENERIC OTP REQUEST
-# ==========================
-
 class RequestOTPView(views.APIView):
     permission_classes = [AllowAny]
     serializer_class = RequestOTPSerializer
@@ -47,43 +43,40 @@ class RequestOTPView(views.APIView):
         login_type = serializer.validated_data['login_type']
         client_ip = get_client_ip(request)
 
-        # Rate Limit Check
+        # 1. Rate Limit Check
         try:
             check_otp_rate_limit(phone, login_type, ip=client_ip)
         except ValidationError as e:
+            logger.warning(f"OTP Rate Limit hit: {phone} IP: {client_ip}")
             raise Throttled(detail=str(e))
-        except Exception:
-            logger.exception("OTP rate limit error")
-            raise ValidationError("Could not process OTP request.")
+        except Exception as e:
+            logger.exception("Redis connection error during OTP limit check")
+            # Fail open or closed depending on policy. Here we fail closed for security.
+            return Response(
+                {"detail": "Temporary system error. Please try again later."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
 
-        # Create OTP (Utility decide karega SMS bhejna hai ya nahi)
-        otp_obj = create_and_send_otp(phone, login_type)
+        # 2. Create OTP
+        # Note: create_and_send_otp handles the SMS logic internally
+        create_and_send_otp(phone, login_type)
         
-        # --- [SECURITY LOGIC] ---
-        response_data = {
-            "message": "OTP sent successfully.",
-        }
-
-        # Sirf Debug mode mein OTP response mein bhejo testing ke liye
+        # [SECURITY FIX]: Never send the OTP code in the response, even in DEBUG.
+        # Developers should check console logs or DB.
         if settings.DEBUG:
-            response_data["dev_hint"] = otp_obj.otp_code
+            logger.info(f"Dev Hint: OTP sent to {phone}")
 
-        return Response(response_data, status=status.HTTP_200_OK)
+        return Response(
+            {"message": "OTP sent successfully. Please check your SMS."},
+            status=status.HTTP_200_OK
+        )
 
-
-# ==========================
-# GENERIC OTP VERIFY
-# ==========================
 
 class VerifyOTPView(views.APIView):
     permission_classes = [AllowAny]
     serializer_class = VerifyOTPSerializer
 
     def perform_verification(self, request, validated_data):
-        """
-        Shared logic for verifying OTP and logging in the user.
-        Ye function banaya gaya hai taaki code reuse ho sake bina request hack kiye.
-        """
         phone = normalize_phone(validated_data['phone'])
         otp_input = validated_data['otp']
         login_type = validated_data['login_type']
@@ -103,6 +96,7 @@ class VerifyOTPView(views.APIView):
 
         is_valid, message = otp_record.is_valid(otp_input)
         if not is_valid:
+            # Security: Increment attempts handled inside model logic, but we enforce failure response here
             return Response(
                 {"detail": message},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -119,13 +113,17 @@ class VerifyOTPView(views.APIView):
         if login_type == 'CUSTOMER':
             if not user.is_customer:
                 user.is_customer = True
-                user.save()
+                user.save(update_fields=['is_customer'])
             # Ensure profile exists
             CustomerProfile.objects.get_or_create(user=user)
             
         elif login_type == 'RIDER':
-            # Rider login logic (usually requires pre-approval)
-            pass 
+            # Rider must be pre-approved or created via admin/onboarding flow usually.
+            if not user.is_rider:
+                return Response(
+                    {"detail": "Rider account does not exist or is not active."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
         # 5. Generate Tokens
         tokens = create_tokens_with_session(
@@ -151,15 +149,10 @@ class VerifyOTPView(views.APIView):
         return self.perform_verification(request, serializer.validated_data)
 
 
-# ==========================
-# CUSTOMER SPECIFIC ENDPOINTS
-# ==========================
-
 class CustomerRequestOTPView(views.APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        # Force login_type
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
         data["login_type"] = "CUSTOMER"
         
@@ -171,42 +164,33 @@ class CustomerRequestOTPView(views.APIView):
         
         try:
             check_otp_rate_limit(phone, login_type, ip=get_client_ip(request))
-        except Exception as e:
+        except ValidationError as e:
             return Response({"detail": str(e)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-        otp_obj = create_and_send_otp(phone, login_type)
+        create_and_send_otp(phone, login_type)
         
-        response_data = {
-            "message": "OTP sent successfully.",
-        }
         if settings.DEBUG:
-            response_data["dev_hint"] = otp_obj.otp_code
+            logger.info(f"Dev Hint: OTP sent to {phone} for CUSTOMER")
 
-        return Response(response_data, status=status.HTTP_200_OK)
+        return Response(
+            {"message": "OTP sent successfully."},
+            status=status.HTTP_200_OK
+        )
 
 
 class CustomerVerifyOTPView(VerifyOTPView):
-    """
-    Inherits from VerifyOTPView but forces login_type='CUSTOMER'.
-    """
     permission_classes = [AllowAny]
 
     def post(self, request):
-        # Force login_type in data
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
         data["login_type"] = "CUSTOMER"
         
         serializer = self.serializer_class(data=data)
         serializer.is_valid(raise_exception=True)
-        
-        # Call the shared verification logic directly
-        # Yeh line sahi hai, purani wali crash kar rahi thi
         return self.perform_verification(request, serializer.validated_data)
 
 
-# ==========================
-# ME / PROFILE VIEWS
-# ==========================
+# --- Standard Profile Views (Unchanged logic, just ensure imports match) ---
 
 class MeView(views.APIView):
     permission_classes = [IsAuthenticated]
@@ -221,12 +205,7 @@ class CustomerMeView(views.APIView):
 
     def get(self, request):
         user = request.user
-        try:
-            customer = user.customer_profile
-        except ObjectDoesNotExist:
-            # Fallback if profile missing
-            customer, _ = CustomerProfile.objects.get_or_create(user=user)
-
+        customer, _ = CustomerProfile.objects.get_or_create(user=user)
         addresses = user.addresses.all().order_by('-is_default', 'id')
         data = CustomerMeSerializer(
             {
@@ -237,10 +216,6 @@ class CustomerMeView(views.APIView):
         ).data
         return Response(data)
 
-
-# ==========================
-# ADDRESS VIEWS
-# ==========================
 
 class CustomerAddressListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated, IsCustomer]
@@ -281,10 +256,6 @@ class SetDefaultAddressView(views.APIView):
         )
 
 
-# ==========================
-# LOGOUT VIEW
-# ==========================
-
 class LogoutView(views.APIView):
     permission_classes = [IsAuthenticated]
 
@@ -300,6 +271,7 @@ class LogoutView(views.APIView):
             token = RefreshToken(refresh_token)
             token.blacklist()
 
+            # Revoke session if tracking exists
             try:
                 jti = token['jti']
                 UserSession.objects.filter(jti=jti).update(
@@ -314,8 +286,8 @@ class LogoutView(views.APIView):
                 status=status.HTTP_205_RESET_CONTENT,
             )
         except Exception as e:
-            logger.exception("Logout failed")
+            logger.error(f"Logout failed: {e}")
             return Response(
-                {"error": "Logout failed"},
+                {"error": "Invalid token or logout failed"},
                 status=status.HTTP_400_BAD_REQUEST,
             )

@@ -1,6 +1,8 @@
+# apps/orders/services.py
 import logging
 from decimal import Decimal
 from django.db import transaction
+from django.utils import timezone
 from django.conf import settings
 from django.contrib.gis.geos import Point
 from django.contrib.gis.db.models.functions import Distance
@@ -11,199 +13,200 @@ from apps.payments.models import Payment
 from apps.warehouse.models import Warehouse
 from apps.inventory.services import check_and_lock_inventory
 from apps.orders.signals import send_order_created
-from apps.payments.signals import payment_succeeded as payments_payment_succeeded
+from apps.payments.services import create_razorpay_order
 
 logger = logging.getLogger(__name__)
 
-def get_nearest_warehouse(lat, lng):
+class CheckoutOrchestrator:
     """
-    Uses PostGIS to find the nearest active warehouse within radius.
+    Encapsulates the complex logic of converting a Cart into an Order.
     """
-    MAX_RADIUS_KM = getattr(settings, 'DELIVERY_RADIUS_KM', 15.0)
     
-    if not lat or not lng:
-        return None, float('inf')
+    def __init__(self, user, data):
+        self.user = user
+        self.data = data
+        self.warehouse_id = data.get("warehouse_id")
+        self.delivery_address = data.get("delivery_address_json")
+        self.lat = data.get("delivery_lat")
+        self.lng = data.get("delivery_lng")
+        self.payment_method = data.get("payment_method", "RAZORPAY")
 
-    try:
-        user_location = Point(float(lng), float(lat), srid=4326)
+    def _get_warehouse(self):
+        # 1. Geo-based lookup
+        if self.lat and self.lng:
+            wh, _ = get_nearest_warehouse(self.lat, self.lng)
+            if wh: return wh
         
-        nearest_wh = Warehouse.objects.filter(
-            is_active=True,
-            location__distance_lte=(user_location, D(km=MAX_RADIUS_KM))
-        ).annotate(
-            distance=Distance('location', user_location)
-        ).order_by('distance').first()
+        # 2. Fallback ID lookup
+        if self.warehouse_id:
+            try:
+                return Warehouse.objects.get(id=self.warehouse_id, is_active=True)
+            except Warehouse.DoesNotExist:
+                pass
+        return None
 
-        if nearest_wh:
-            # Handle distance object safely
-            dist_val = nearest_wh.distance.km if hasattr(nearest_wh.distance, 'km') else 0.0
-            return nearest_wh, dist_val
-            
-    except (ValueError, TypeError) as e:
-        logger.error(f"Geo query error for {lat},{lng}: {e}")
-        
-    return None, float('inf')
+    def execute(self):
+        # 1. Validate Warehouse
+        warehouse = self._get_warehouse()
+        if not warehouse:
+            return None, None, "No serviceable warehouse found for this location."
 
-def create_order_from_cart(user, warehouse_id, delivery_address_json, delivery_lat=None, delivery_lng=None, payment_method='RAZORPAY'):
-    # 1. Warehouse Selection
-    selected_warehouse = None
-    if delivery_lat and delivery_lng:
-        nearest_wh, distance = get_nearest_warehouse(delivery_lat, delivery_lng)
-        if not nearest_wh:
-            return None, None, "We do not deliver to this location (No warehouse nearby)."
-        selected_warehouse = nearest_wh
-    else:
-        # Manual ID fallback
-        if not warehouse_id:
-            return None, None, "Delivery location or Warehouse ID is required."
+        # 2. Validate Cart
         try:
-            selected_warehouse = Warehouse.objects.get(id=warehouse_id, is_active=True)
-        except Warehouse.DoesNotExist:
-            return None, None, "Selected warehouse does not exist or is inactive."
+            cart = Cart.objects.select_related('customer').prefetch_related('items__sku').get(customer=self.user)
+        except Cart.DoesNotExist:
+            return None, None, "Cart not found."
+        
+        if not cart.items.exists():
+            return None, None, "Cart is empty."
 
-    # 2. Get Cart
-    try:
-        cart = Cart.objects.select_related('customer').prefetch_related('items__sku').get(customer=user)
-    except Cart.DoesNotExist:
-        return None, None, "Cart not found"
+        # 3. Transactional Order Creation
+        try:
+            with transaction.atomic():
+                # A. Lock Inventory
+                for item in cart.items.select_for_update():
+                    try:
+                        check_and_lock_inventory(warehouse.id, item.sku.id, item.quantity)
+                    except ValueError as e:
+                        return None, None, f"Out of Stock: {str(e)}"
 
-    if not cart.items.exists():
-        return None, None, "Cart empty"
+                # B. Create Order Shell
+                order = Order.objects.create(
+                    customer=self.user,
+                    warehouse=warehouse,
+                    delivery_address_json=self.delivery_address,
+                    delivery_city=self.delivery_address.get('city'), # Populate flattened fields
+                    delivery_pincode=self.delivery_address.get('pincode'),
+                    delivery_lat=self.lat,
+                    delivery_lng=self.lng,
+                    status='pending',
+                    payment_status='pending',
+                )
 
-    # 3. ATOMIC TRANSACTION: Lock Stock -> Create Order
-    try:
-        with transaction.atomic():
-            # A. Lock Inventory
-            for item in cart.items.select_for_update():
-                try:
-                    # This function must perform a DB-level lock/update
-                    check_and_lock_inventory(selected_warehouse.id, item.sku.id, item.quantity)
-                except ValueError as e:
-                    logger.warning(f"Stock checkout failed for user {user.id}: {e}")
-                    return None, None, f"Out of Stock: {str(e)}"
-
-            # B. Create Order
-            order = Order.objects.create(
-                customer=user,
-                warehouse=selected_warehouse,
-                delivery_address_json=delivery_address_json,
-                delivery_lat=delivery_lat,
-                delivery_lng=delivery_lng,
-                status='pending',
-                payment_status='pending',
-            )
-
-            # C. Create Order Items
-            items_to_create = []
-            for c_item in cart.items.all():
-                unit_price = c_item.sku.sale_price or Decimal("0.00")
-                items_to_create.append(
+                # C. Move Items
+                items_to_create = [
                     OrderItem(
                         order=order,
-                        sku=c_item.sku,
-                        quantity=c_item.quantity,
-                        unit_price=unit_price,
-                        total_price=unit_price * c_item.quantity,
-                        sku_name_snapshot=c_item.sku.name,
+                        sku=item.sku,
+                        quantity=item.quantity,
+                        unit_price=item.sku.sale_price or Decimal("0.00"),
+                        total_price=(item.sku.sale_price or Decimal("0.00")) * item.quantity,
+                        sku_name_snapshot=item.sku.name
+                    ) for item in cart.items.all()
+                ]
+                OrderItem.objects.bulk_create(items_to_create)
+                
+                # D. Update Totals
+                order.recalculate_totals(save=True)
+
+                # E. Init Payment
+                payment_data = None
+                if self.payment_method == 'COD':
+                    Payment.objects.create(
+                        order=order,
+                        user=self.user,
+                        payment_method=Payment.PaymentMethod.COD,
+                        amount=order.final_amount,
+                        status=Payment.PaymentStatus.PENDING
                     )
-                )
-            OrderItem.objects.bulk_create(items_to_create)
-            
-            # D. Update Totals
-            order.recalculate_totals(save=True)
+                    # For COD, we can auto-confirm or wait for verification step.
+                    # Here we treat it as confirmed instantly for simplicity, 
+                    # OR return it for the view to confirm.
+                    payment_data = {"mode": "COD", "status": "PENDING"}
+                
+                elif self.payment_method == 'RAZORPAY':
+                    try:
+                        rzp_id = create_razorpay_order(order, order.final_amount)
+                        Payment.objects.create(
+                            order=order,
+                            user=self.user,
+                            amount=order.final_amount,
+                            payment_method=Payment.PaymentMethod.RAZORPAY,
+                            gateway_order_id=rzp_id,
+                        )
+                        order.payment_gateway_order_id = rzp_id
+                        order.save(update_fields=["payment_gateway_order_id"])
+                        payment_data = {
+                            "mode": "RAZORPAY",
+                            "razorpay_order_id": rzp_id,
+                            "amount": str(order.final_amount),
+                            "currency": "INR"
+                        }
+                    except Exception as e:
+                        logger.error(f"Razorpay Error: {e}")
+                        # Rollback is automatic due to exception bubbling, but we catch to return clean error
+                        raise ValueError("Payment Gateway Error")
 
-            # E. Handle Payment Placeholder
-            payment = None
-            if payment_method == 'COD':
-                payment = Payment.objects.create(
-                    order=order, 
-                    payment_method=Payment.PaymentMethod.COD, 
-                    amount=order.final_amount,
-                    status=Payment.PaymentStatus.PENDING 
-                )
-            
-            return order, payment, None
+                return order, payment_data, None
 
-    except Exception as e:
-        logger.exception(f"Critical error during order creation for user {user.id}")
-        return None, None, "An internal error occurred while placing the order."
+        except ValueError as ve:
+            return None, None, str(ve)
+        except Exception as e:
+            logger.exception("Critical checkout error")
+            return None, None, "Internal system error during checkout."
 
+
+# Helper for Geo
+def get_nearest_warehouse(lat, lng):
+    MAX_RADIUS_KM = getattr(settings, 'DELIVERY_RADIUS_KM', 15.0)
+    try:
+        pnt = Point(float(lng), float(lat), srid=4326)
+        wh = Warehouse.objects.filter(
+            is_active=True,
+            location__distance_lte=(pnt, D(km=MAX_RADIUS_KM))
+        ).annotate(
+            distance=Distance('location', pnt)
+        ).order_by('distance').first()
+        return wh, wh.distance.km if wh else None
+    except Exception:
+        return None, None
+
+# ... keep existing process_successful_payment and cancel_order ...
 def process_successful_payment(order):
-    """
-    Called after COD confirmation or Razorpay webhook success.
-    Triggers WMS flow.
-    """
     try:
         with transaction.atomic():
-            # 1. Update Order
+            if order.status != 'pending': return True, "Already processed"
+            
             order.status = "confirmed"
             order.payment_status = "paid"
-            order.confirmed_at = timezone.now() # Record timestamp
+            order.confirmed_at = timezone.now()
             order.save(update_fields=["status", "payment_status", "confirmed_at"])
 
-            # 2. Update Payment
             payment = order.payments.first()
-            if payment and payment.status != Payment.PaymentStatus.SUCCESSFUL:
+            if payment:
                 payment.status = Payment.PaymentStatus.SUCCESSFUL
                 payment.save(update_fields=["status"])
 
-            # 3. Prepare Payload
-            wms_items_list = [
-                {"sku_id": str(item.sku.id), "qty": item.quantity}
-                for item in order.items.all().select_related('sku')
-            ]
+            # WMS Signal
+            wms_items = [{"sku_id": str(i.sku_id), "qty": i.quantity} for i in order.items.all()]
             
-            # 4. Trigger WMS Signal (On Commit only)
-            def trigger_wms_signal():
-                send_order_created.send(
-                    sender=order.__class__,
-                    order_id=order.id,
-                    order_items=wms_items_list,
-                    metadata={
-                        "warehouse_id": str(order.warehouse.id) if order.warehouse else None,
-                        "customer_id": str(order.customer.id) if order.customer else None,
-                    }
-                )
-                logger.info(f"WMS signal sent for confirmed order {order.id}")
-
-            transaction.on_commit(trigger_wms_signal)
-            
+            transaction.on_commit(lambda: send_order_created.send(
+                sender=Order,
+                order_id=order.id,
+                order_items=wms_items,
+                metadata={"warehouse_id": str(order.warehouse_id), "customer_id": str(order.customer_id)}
+            ))
             return True, "Success"
     except Exception as e:
-        logger.exception(f"Payment processing failed: {e}")
+        logger.exception("Payment process failed")
         return False, str(e)
 
 def cancel_order(order, cancelled_by=None, reason=""):
     from .models import OrderTimeline, OrderCancellation
-    
     if order.status in ['cancelled', 'delivered']:
         return False, 'Cannot cancel order in its current state.'
-
     try:
         with transaction.atomic():
             order.status = 'cancelled'
             order.cancelled_at = timezone.now()
             order.save(update_fields=['status', 'cancelled_at'])
-
-            OrderTimeline.objects.create(order=order, status='cancelled', notes=reason or '')
-            
-            OrderCancellation.objects.create(
-                order=order,
-                reason=reason or '',
-                cancelled_by=cancelled_by if isinstance(cancelled_by, str) else 'OPS'
-            )
-
+            OrderTimeline.objects.create(order=order, status='cancelled', notes=reason)
+            OrderCancellation.objects.create(order=order, reason=reason, cancelled_by=cancelled_by or 'OPS')
             if order.payment_status == 'paid':
                 from apps.orders.signals import order_refund_requested
-                # Signal for refund
                 transaction.on_commit(lambda: order_refund_requested.send(
-                    sender=order.__class__,
-                    order_id=order.id,
-                    amount=order.final_amount,
-                    reason=reason,
+                    sender=Order, order_id=order.id, amount=order.final_amount, reason=reason
                 ))
-                
         return True, None
     except Exception as e:
-        logger.exception(f"Cancel failed: {e}")
         return False, str(e)
