@@ -42,7 +42,9 @@ async function loadOrders() {
     container.innerHTML = '<h2 class="content-title">Order History</h2><div style="padding:20px; text-align:center;">Loading...</div>';
 
     try {
-        const orders = await apiCall('/orders/', 'GET', null, true);
+        // Handle pagination: response might be array or {results: []}
+        const response = await apiCall('/orders/', 'GET', null, true);
+        const orders = response.results || response; // FIX: Handle Paginated Response
         
         container.innerHTML = '<h2 class="content-title">Order History</h2>'; 
 
@@ -87,10 +89,13 @@ async function loadAddresses() {
     list.innerHTML = '<p>Loading addresses...</p>';
 
     try {
-        const addresses = await apiCall('/auth/customer/addresses/', 'GET', null, true);
+        const response = await apiCall('/auth/customer/addresses/', 'GET', null, true);
+        // [CRITICAL FIX] Handle pagination results
+        const addresses = response.results || response;
+
         list.innerHTML = '';
 
-        if(!addresses || addresses.length === 0) {
+        if(!Array.isArray(addresses) || addresses.length === 0) {
             list.innerHTML = '<p style="color:#777;">No saved addresses found.</p>';
             return;
         }

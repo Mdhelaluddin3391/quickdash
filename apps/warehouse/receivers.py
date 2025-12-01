@@ -1,11 +1,10 @@
+# apps/warehouse/receivers.py
 import logging
 from django.dispatch import receiver
 from apps.delivery.signals import rider_assigned_to_dispatch
-from .models import DispatchRecord
-from .signals import send_order_created
-from .tasks import orchestrate_order_fulfilment_from_order_payload
-from apps.orders.signals import send_order_created  # <--- FIXED IMPORT
 from apps.orders.signals import send_order_created
+from .models import DispatchRecord
+from .tasks import orchestrate_order_fulfilment_from_order_payload
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +27,13 @@ def handle_rider_assigned_signal(sender, dispatch_id, rider_profile_id, **kwargs
         dispatch = DispatchRecord.objects.get(id=dispatch_id)
         if dispatch.status == "ready":
             dispatch.status = "assigned"
+            # Explicitly cast to string just in case
             dispatch.rider_id = str(rider_profile_id)
             dispatch.save(update_fields=['status', 'rider_id'])
-            logger.info(f"DispatchRecord {dispatch_id} updated to 'assigned' by delivery app signal.")
+            logger.info(f"DispatchRecord {dispatch_id} updated to 'assigned'.")
         else:
-            logger.warning(f"Received rider assignment for Dispatch {dispatch_id}, but status was already {dispatch.status}.")
+            logger.warning(f"Dispatch {dispatch_id} ignored rider assign (status={dispatch.status}).")
     except DispatchRecord.DoesNotExist:
-        logger.error(f"Received rider assignment for non-existent DispatchRecord {dispatch_id}.")
+        logger.error(f"DispatchRecord {dispatch_id} not found for rider assignment.")
     except Exception as e:
-        logger.exception(f"Error updating DispatchRecord {dispatch_id} from signal: {e}")
+        logger.exception(f"Error updating DispatchRecord {dispatch_id}: {e}")

@@ -3,7 +3,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import (
     User, CustomerProfile, RiderProfile, EmployeeProfile,
-    PhoneOTP, UserSession, PasswordResetToken
+    PhoneOTP, UserSession, PasswordResetToken, Address
 )
 
 # Inlines for related models
@@ -25,6 +25,12 @@ class EmployeeProfileInline(admin.StackedInline):
     verbose_name_plural = 'Employee Profile'
     fk_name = 'user'
 
+class AddressInline(admin.StackedInline):
+    model = Address
+    extra = 0
+    can_delete = True
+    verbose_name_plural = 'Addresses'
+
 # Main User Admin Class
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
@@ -42,15 +48,20 @@ class UserAdmin(BaseUserAdmin):
     add_fieldsets = (
         (None, {'fields': ('phone', 'password')}),
     )
-    inlines = [CustomerProfileInline, RiderProfileInline, EmployeeProfileInline]
+    inlines = [CustomerProfileInline, RiderProfileInline, EmployeeProfileInline, AddressInline]
     
-    # Don't show password/last_login fields on creation form
     def get_form(self, request, obj=None, **kwargs):
         form = super().get_form(request, obj, **kwargs)
         if obj is None:
             form.base_fields.pop('last_login', None)
         return form
 
+@admin.register(Address)
+class AddressAdmin(admin.ModelAdmin):
+    list_display = ('user', 'address_type', 'city', 'pincode', 'is_default')
+    list_filter = ('address_type', 'is_default', 'city')
+    search_fields = ('user__phone', 'full_address', 'pincode')
+    raw_id_fields = ('user',)
 
 @admin.register(PhoneOTP)
 class PhoneOTPAdmin(admin.ModelAdmin):

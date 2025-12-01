@@ -40,14 +40,17 @@ async function loadAddresses() {
     const title = addressContainer.querySelector('.section-title');
     const addBtn = addressContainer.querySelector('.add-new-address-btn');
     
+    // Reset but keep title and add button structure
     addressContainer.innerHTML = '';
-    addressContainer.appendChild(title);
+    if(title) addressContainer.appendChild(title);
 
     try {
         // Fetch Addresses from API
-        const addresses = await apiCall('/auth/customer/addresses/', 'GET', null, true);
+        const response = await apiCall('/auth/customer/addresses/', 'GET', null, true);
+        // [CRITICAL FIX] Handle pagination
+        const addresses = response.results || response;
         
-        if(addresses.length === 0) {
+        if(!Array.isArray(addresses) || addresses.length === 0) {
             const msg = document.createElement('p');
             msg.innerText = 'No address found. Please add one.';
             addressContainer.appendChild(msg);
@@ -77,7 +80,7 @@ async function loadAddresses() {
         if(addBtn) addressContainer.appendChild(addBtn);
 
     } catch (e) {
-        console.error(e);
+        console.error("Address Load Error", e);
     }
 }
 
@@ -111,9 +114,13 @@ async function loadCartSummary() {
         const subTotal = parseFloat(cart.total_amount);
         const total = subTotal + deliveryFee;
 
-        document.getElementById('summary-subtotal').innerText = `₹${subTotal.toFixed(2)}`;
-        document.getElementById('summary-delivery').innerText = `₹${deliveryFee.toFixed(2)}`;
-        document.getElementById('summary-total').innerText = `₹${total.toFixed(2)}`;
+        const subTotalEl = document.getElementById('summary-subtotal');
+        const deliveryEl = document.getElementById('summary-delivery');
+        const totalEl = document.getElementById('summary-total');
+
+        if(subTotalEl) subTotalEl.innerText = `₹${subTotal.toFixed(2)}`;
+        if(deliveryEl) deliveryEl.innerText = `₹${deliveryFee.toFixed(2)}`;
+        if(totalEl) totalEl.innerText = `₹${total.toFixed(2)}`;
 
     } catch (e) {
         console.error("Cart summary failed", e);
@@ -133,18 +140,18 @@ async function handlePlaceOrder(e) {
     placeBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
     placeBtn.disabled = true;
 
-    // [PRODUCTION FIX] Payload construction updated for new serializer structure
+    // Payload construction
     const payload = {
         payment_method: selectedPaymentMethod,
+        warehouse_id: "W1", // Ideally dynamic, but hardcoded fallback for robustness
         delivery_address_json: {
             full_address: selectedAddress.full_address,
             city: selectedAddress.city,
             pincode: selectedAddress.pincode,
             type: selectedAddress.address_type
         },
-        // Use the flat fields we added to serializer
-        delivery_lat: selectedAddress.lat, 
-        delivery_lng: selectedAddress.lng
+        delivery_lat: selectedAddress.latitude, // Use backend Read field
+        delivery_lng: selectedAddress.longitude
     };
 
     try {
@@ -174,7 +181,7 @@ function handleRazorpay(orderData) {
 
     var options = {
         "key": globalConfig.razorpay_key_id, 
-        "amount": orderData.amount * 100, 
+        "amount": parseFloat(orderData.amount) * 100, 
         "currency": "INR",
         "name": "QuickDash",
         "description": "Order Payment",
@@ -182,6 +189,7 @@ function handleRazorpay(orderData) {
         "handler": async function (response){
             try {
                 const verifyResp = await apiCall('/orders/payment/verify/', 'POST', {
+                    payment_intent_id: orderData.payment_intent_id || "", // Ensure field existence
                     razorpay_order_id: response.razorpay_order_id,
                     razorpay_payment_id: response.razorpay_payment_id,
                     razorpay_signature: response.razorpay_signature

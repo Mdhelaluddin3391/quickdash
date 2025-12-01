@@ -222,10 +222,20 @@ class CustomerAddressListCreateView(generics.ListCreateAPIView):
     serializer_class = AddressSerializer
 
     def get_queryset(self):
-        return Address.objects.filter(user=self.request.user).order_by('-is_default', 'id')
+        return Address.objects.filter(user=self.request.user).order_by('-is_default', '-id')
 
     def perform_create(self, serializer):
+        make_default = serializer.validated_data.get("is_default", False)
+
+        # If new address is default → purane ko false karo
+        if make_default:
+            Address.objects.filter(
+                user=self.request.user,
+                is_default=True
+            ).update(is_default=False)
+
         serializer.save(user=self.request.user)
+
 
 
 class CustomerAddressDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -235,6 +245,19 @@ class CustomerAddressDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_queryset(self):
         return Address.objects.filter(user=self.request.user)
 
+    def perform_update(self, serializer):
+        make_default = serializer.validated_data.get("is_default", False)
+
+        if make_default:
+            # Current user ke purane default ko false karo
+            Address.objects.filter(
+                user=self.request.user,
+                is_default=True
+            ).exclude(id=self.get_object().id).update(is_default=False)
+
+        serializer.save(user=self.request.user)
+
+
 
 class SetDefaultAddressView(views.APIView):
     permission_classes = [IsAuthenticated, IsCustomer]
@@ -243,17 +266,19 @@ class SetDefaultAddressView(views.APIView):
         try:
             address = Address.objects.get(pk=pk, user=request.user)
         except Address.DoesNotExist:
-            return Response(
-                {"detail": "Address not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return Response({"detail": "Address not found."}, status=404)
 
+        # Purane default ko hatao
+        Address.objects.filter(
+            user=request.user,
+            is_default=True
+        ).exclude(pk=pk).update(is_default=False)
+
+        # Naye ko default banao
         address.is_default = True
-        address.save()
-        return Response(
-            {"detail": "Default address updated."},
-            status=status.HTTP_200_OK,
-        )
+        address.save(update_fields=["is_default"])
+
+        return Response({"detail": "Default address updated."}, status=200)
 
 
 class LogoutView(views.APIView):

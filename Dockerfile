@@ -1,32 +1,16 @@
-# Stage 1: Builder
-FROM python:3.12-slim as builder
-
-WORKDIR /app
-
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
-
-# Stage 2: Final
+# Dockerfile
 FROM python:3.12-slim
+
+# Envs
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /code
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Install runtime dependencies (PostGIS/GeoDjango needs binutils, gdal)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+# System Deps (PostGIS & compilation tools)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     libpq-dev \
     binutils \
     libproj-dev \
@@ -37,26 +21,24 @@ RUN apt-get update && \
     gosu \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy wheels from builder
-COPY --from=builder /app/wheels /wheels
-COPY --from=builder /app/requirements.txt .
-RUN pip install --no-cache-dir /wheels/*
+# Dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir whitenoise gunicorn
 
-# Setup User
-RUN addgroup --system appgroup && adduser --system --group appuser
+# Project Copy
+COPY . .
 
-# Copy Project
-COPY . /code
-
-# Copy Scripts
+# Scripts
 COPY wait-for-db.sh /wait-for-db.sh
 COPY start.sh /start.sh
+RUN chmod +x /wait-for-db.sh /start.sh
 
-# Permissions
-RUN chown -R appuser:appgroup /code && \
-    chmod +x /wait-for-db.sh /start.sh && \
+# User Setup
+RUN addgroup --system appgroup && adduser --system --group appuser && \
     mkdir -p /code/staticfiles /code/media && \
-    chown -R appuser:appgroup /code/staticfiles /code/media
+    chown -R appuser:appgroup /code
 
 EXPOSE 8000
 

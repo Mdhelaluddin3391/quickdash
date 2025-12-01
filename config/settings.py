@@ -13,18 +13,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ==========================================
 # SECURITY & CONFIGURATION
 # ==========================================
-SECRET_KEY = config("SECRET_KEY")
+SECRET_KEY = config("SECRET_KEY", default="unsafe-secret-key-change-in-prod")
 DEBUG = config("DEBUG", default=False, cast=bool)
 
-# Production Security: Hosts must be explicit
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="127.0.0.1,localhost", cast=Csv())
 
 # CORS & CSRF
-# In production, this MUST NOT be '*'
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="http://localhost:3000", cast=Csv())
 CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="http://localhost:3000", cast=Csv())
+CORS_ALLOW_CREDENTIALS = True
 
-# JWT Signing Key (Rotation support)
+# JWT Signing
 JWT_SIGNING_KEY = config("JWT_SIGNING_KEY", default=SECRET_KEY)
 
 # ==========================================
@@ -37,7 +36,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "django.contrib.gis",
+    "django.contrib.gis", # PostGIS
 
     # Third Party
     "rest_framework",
@@ -46,6 +45,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "channels",
     "drf_spectacular",
+    "django_filters",
 
     # Project Apps
     "apps.accounts",
@@ -63,6 +63,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware", # Added for static files in Docker
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -70,7 +71,6 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    # Custom Middleware
     "apps.warehouse.middleware.IdempotencyMiddleware",
     "apps.utils.middleware.RequestLogMiddleware",
 ]
@@ -172,7 +172,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # I18N / TZ
 # ==========================================
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = config("TIME_ZONE", default="UTC")
+TIME_ZONE = config("TIME_ZONE", default="Asia/Kolkata") # Set to India as per logs
 USE_I18N = True
 USE_TZ = True
 
@@ -182,6 +182,7 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_DIRS = [BASE_DIR / "static"]
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -206,14 +207,11 @@ REST_FRAMEWORK = {
         "burst": "60/min",
         "sustained": "1000/hour",
     },
-    "EXCEPTION_HANDLER": "rest_framework.views.exception_handler", # Can be customized
+    "EXCEPTION_HANDLER": "rest_framework.views.exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
+    "DEFAULT_PAGINATION_CLASS": "apps.utils.pagination.StandardResultsSetPagination",
 }
-
-if not DEBUG:
-    REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = [
-        "rest_framework.renderers.JSONRenderer",
-    ]
 
 # ==========================================
 # SIMPLE JWT
@@ -238,8 +236,8 @@ SPECTACULAR_SETTINGS = {
 # ==========================================
 # BUSINESS CONFIG
 # ==========================================
-RAZORPAY_KEY_ID = config("RAZORPAY_KEY_ID", default=None)
-RAZORPAY_KEY_SECRET = config("RAZORPAY_KEY_SECRET", default=None)
+RAZORPAY_KEY_ID = config("RAZORPAY_KEY_ID", default="rzp_test_placeholder")
+RAZORPAY_KEY_SECRET = config("RAZORPAY_KEY_SECRET", default="rzp_secret_placeholder")
 RAZORPAY_WEBHOOK_SECRET = config("RAZORPAY_WEBHOOK_SECRET", default=None)
 
 TWILIO_ACCOUNT_SID = config("TWILIO_ACCOUNT_SID", default=None)
@@ -254,9 +252,11 @@ ORDER_CANCELLATION_WINDOW = config("ORDER_CANCELLATION_WINDOW", default=300, cas
 RIDER_BASE_FEE = config("RIDER_BASE_FEE", default=30.00, cast=Decimal)
 IDEMPOTENCY_KEY_TTL = config("IDEMPOTENCY_KEY_TTL", default=30, cast=int)
 RIDER_MAX_RADIUS_KM = config("RIDER_MAX_RADIUS_KM", default=10.0, cast=float)
+DELIVERY_RADIUS_KM = config("DELIVERY_RADIUS_KM", default=15.0, cast=float)
+FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:8000")
 
 # ==========================================
-# LOGGING (Structured)
+# LOGGING
 # ==========================================
 LOGGING = {
     "version": 1,
@@ -266,40 +266,16 @@ LOGGING = {
             "format": "{levelname} {asctime} {module} {message}",
             "style": "{",
         },
-        "json": {
-            # Use json formatter for prod logs if using ELK/Datadog
-            "format": "{levelname} {asctime} {message}", 
-            "style": "{",
-        }
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "verbose" if DEBUG else "json",
+            "formatter": "verbose",
         },
     },
     "loggers": {
         "django": {"handlers": ["console"], "level": "INFO", "propagate": True},
-        "apps": {"handlers": ["console"], "level": "INFO", "propagate": True},
+        "apps": {"handlers": ["console"], "level": "DEBUG" if DEBUG else "INFO", "propagate": True},
         "celery": {"handlers": ["console"], "level": "INFO", "propagate": True},
     },
 }
-
-# ==========================================
-# SECURITY HARDENING
-# ==========================================
-if not DEBUG:
-    SECURE_SSL_REDIRECT = True
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-    SECURE_BROWSER_XSS_FILTER = True
-    SECURE_CONTENT_TYPE_NOSNIFF = True
-    X_FRAME_OPTIONS = "DENY"
-    
-    # HSTS
-    SECURE_HSTS_SECONDS = 31536000  # 1 year
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
-    
-    # Proxy Headers (Crucial for Nginx/Docker)
-    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

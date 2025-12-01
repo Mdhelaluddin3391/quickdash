@@ -5,9 +5,6 @@ const CONFIG = window.APP_CONFIG || {
     LOGIN_URL: "/auth.html" 
 };
 
-/**
- * Gets Django CSRF token from cookies
- */
 function getCookie(name) {
     let cookieValue = null;
     if (document.cookie && document.cookie !== '') {
@@ -23,67 +20,77 @@ function getCookie(name) {
     return cookieValue;
 }
 
-/**
- * Main API Wrapper
- */
+async function refreshToken() {
+    const refresh = localStorage.getItem('refreshToken');
+    if(!refresh) return false;
+
+    try {
+        const response = await fetch(`${CONFIG.API_BASE}/auth/token/refresh/`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({refresh: refresh})
+        });
+        
+        if(response.ok) {
+            const data = await response.json();
+            localStorage.setItem('accessToken', data.access);
+            if(data.refresh) localStorage.setItem('refreshToken', data.refresh);
+            return true;
+        }
+    } catch(e) { console.error("Refresh failed", e); }
+    
+    return false;
+}
+
 async function apiCall(endpoint, method = 'GET', body = null, requireAuth = false) {
+    let token = localStorage.getItem('accessToken');
+    
     const headers = {
         'Content-Type': 'application/json',
         'X-CSRFToken': getCookie('csrftoken')
     };
 
-    if (requireAuth) {
-        const token = localStorage.getItem('accessToken');
-        if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-        } else {
-            console.warn("Auth required but no token found.");
-            redirectToLogin();
-            throw new Error("Authentication required");
-        }
+    if (requireAuth && token) {
+        headers['Authorization'] = `Bearer ${token}`;
     }
 
     const config = { method, headers };
     if (body) config.body = JSON.stringify(body);
 
     try {
-        const response = await fetch(`${CONFIG.API_BASE}${endpoint}`, config);
+        let response = await fetch(`${CONFIG.API_BASE}${endpoint}`, config);
 
-        // 1. Handle 401 Unauthorized (Token Expired/Invalid)
+        // 401: Token Expired? Try Refresh
         if (response.status === 401 && requireAuth) {
-            console.warn("Session expired (401). clearing token and redirecting.");
-            localStorage.removeItem('accessToken');
-            localStorage.removeItem('user');
-            redirectToLogin();
-            throw new Error("Session expired");
+            console.log("Token expired, attempting refresh...");
+            const refreshed = await refreshToken();
+            if(refreshed) {
+                // Retry original request
+                token = localStorage.getItem('accessToken');
+                headers['Authorization'] = `Bearer ${token}`;
+                config.headers = headers;
+                response = await fetch(`${CONFIG.API_BASE}${endpoint}`, config);
+            } else {
+                console.warn("Session expired completely.");
+                logout();
+                throw new Error("Session expired");
+            }
         }
 
-        // 2. Handle 204 No Content
-        if (response.status === 204) {
-            return null;
-        }
+        if (response.status === 204) return null;
 
         const data = await response.json();
         
-        // 3. Handle Logical Errors (4xx, 5xx)
         if (!response.ok) {
-            const errorMsg = data.detail || data.error || JSON.stringify(data) || "Request failed";
+            const errorMsg = data.detail || data.error || "Request failed";
             throw new Error(errorMsg);
         }
         
         return data;
 
     } catch (error) {
-        console.error(`API Error [${method} ${endpoint}]:`, error);
+        console.error(`API Error:`, error);
         throw error;
-    }
-}
-
-function redirectToLogin() {
-    // Preserve current location for redirect back
-    if (!window.location.pathname.includes('auth.html')) {
-        const currentPath = window.location.pathname + window.location.search;
-        window.location.href = `${CONFIG.LOGIN_URL}?next=${encodeURIComponent(currentPath)}`;
     }
 }
 
@@ -98,27 +105,21 @@ function logout() {
     window.location.href = CONFIG.LOGIN_URL;
 }
 
-// Global Cart Count Updater
-// Can be called by any page after adding to cart
 window.updateGlobalCartCount = async function() {
+    if (!isLoggedIn()) return;
     const cartBadges = document.querySelectorAll('.cart-count');
-    if (cartBadges.length > 0 && isLoggedIn()) {
+    if (cartBadges.length > 0) {
         try {
             const cart = await apiCall('/orders/cart/', 'GET', null, true);
-            // Sum quantity of all items
-            const count = cart.items.reduce((acc, item) => acc + item.quantity, 0);
-            
+            const count = cart.items ? cart.items.reduce((acc, item) => acc + item.quantity, 0) : 0;
             cartBadges.forEach(el => {
                 el.innerText = count;
                 el.style.display = count > 0 ? 'inline-flex' : 'none';
             });
-        } catch (e) { 
-            console.log("Cart fetch failed (likely empty)", e); 
-        }
+        } catch (e) { console.log("Cart sync silent fail"); }
     }
 };
 
-// Auto-init on load
 document.addEventListener('DOMContentLoaded', () => {
     window.updateGlobalCartCount();
 });

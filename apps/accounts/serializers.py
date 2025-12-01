@@ -1,3 +1,4 @@
+# apps/accounts/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.gis.geos import Point 
@@ -80,35 +81,39 @@ class RiderProfileSerializer(serializers.ModelSerializer):
 
 
 # ======================
-# CUSTOMER SERIALIZERS (ADDRESS FIX HERE)
+# CUSTOMER SERIALIZERS
 # ======================
 
 class AddressSerializer(serializers.ModelSerializer):
     # Frontend se data LENE ke liye (Write)
-    lat = serializers.FloatField(write_only=True, required=False)
-    lng = serializers.FloatField(write_only=True, required=False)
-    
+    lat = serializers.FloatField(write_only=True, required=False, min_value=-90, max_value=90)
+    lng = serializers.FloatField(write_only=True, required=False, min_value=-180, max_value=180)
+
     # Frontend ko data DENE ke liye (Read)
     latitude = serializers.SerializerMethodField()
     longitude = serializers.SerializerMethodField()
+
+    # Read-only user show karne ke liye (optional but useful)
+    user = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = Address
         fields = [
             'id',
+            'user',          # 👈 yeh add karo
             'address_type',
             'full_address',
             'landmark',
             'city',
             'pincode',
-            'location', 
+            'location',
             'is_default',
-            'lat',      
-            'lng',     
-            'latitude', 
-            'longitude' 
+            'lat',
+            'lng',
+            'latitude',
+            'longitude',
         ]
-        read_only_fields = ['location']
+        read_only_fields = ['location', 'user']
 
     def get_latitude(self, obj):
         return obj.location.y if obj.location else None
@@ -117,12 +122,17 @@ class AddressSerializer(serializers.ModelSerializer):
         return obj.location.x if obj.location else None
 
     def create(self, validated_data):
+        """
+        lat/lng se Point banana + baaki data save karna.
+        NOTE: user ko viewset ke perform_create se inject karenge.
+        """
         lat = validated_data.pop('lat', None)
         lng = validated_data.pop('lng', None)
-        
+
         if lat is not None and lng is not None:
             validated_data['location'] = Point(float(lng), float(lat), srid=4326)
-            
+
+        # yahan user already aayega: serializer.save(user=request.user) se
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
@@ -131,7 +141,7 @@ class AddressSerializer(serializers.ModelSerializer):
 
         if lat is not None and lng is not None:
             instance.location = Point(float(lng), float(lat), srid=4326)
-            
+
         return super().update(instance, validated_data)
 
 
