@@ -1,14 +1,17 @@
 {% load static %}
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Profile - QuickDash</title>
+
     <link rel="stylesheet" href="{% static 'assets/css/profile_style.css' %}">
     <link rel="stylesheet" href="{% static 'assets/css/profile_additions.css' %}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 </head>
+
 <body>
     <header class="site-header">
         <div class="container header-container">
@@ -28,51 +31,71 @@
                 </div>
                 <nav class="profile-nav">
                     <ul>
-                        <li class="active" data-content="orders"><a href="#"><i class="fas fa-receipt"></i> Order History</a></li>
-                        <li data-content="addresses"><a href="#"><i class="fas fa-map-marker-alt"></i> Saved Addresses</a></li>
-                        <li data-content="settings"><a href="#"><i class="fas fa-cog"></i> Settings</a></li>
+                        <li class="active" data-content="orders"><a href="#"><i class="fas fa-receipt"></i> Orders</a>
+                        </li>
+                        <li data-content="addresses"><a href="#"><i class="fas fa-map-marker-alt"></i> Addresses</a>
+                        </li>
                     </ul>
                 </nav>
             </aside>
 
             <div class="content-area">
+
                 <div id="orders" class="profile-content-section active">
                     <h2 class="content-title">Order History</h2>
-                    </div>
+                </div>
 
                 <div id="addresses" class="profile-content-section">
                     <h2 class="content-title">Saved Addresses</h2>
+
                     <div class="address-list"></div>
+
                     <button class="btn btn-primary add-address-btn" id="show-address-modal">
                         <i class="fas fa-plus"></i> Add New Address
                     </button>
                 </div>
-                
-                <div id="settings" class="profile-content-section">
-                    <h2 class="content-title">Settings</h2>
-                    <p>Profile settings coming soon.</p>
-                </div>
+
             </div>
         </div>
     </main>
 
     <div class="modal-overlay" id="address-modal" style="display: none;">
         <div class="modal-content">
-            <div class="modal-header"><h3>Add Address</h3><button class="modal-close" id="close-address-modal">&times;</button></div>
+            <div class="modal-header">
+                <h3>Add New Address</h3>
+                <button class="modal-close" id="close-address-modal">&times;</button>
+            </div>
             <div class="modal-body">
                 <form id="address-form" class="profile-form">
-                    <div class="form-group"><label>Full Address</label><textarea id="full-address" required></textarea></div>
-                    <div class="form-group"><label>City</label><input type="text" id="city" required></div>
-                    <div class="form-group"><label>Pincode</label><input type="text" id="pincode" required></div>
-                    <div class="form-group"><label>Type</label>
-                        <select id="address-type"><option value="HOME">Home</option><option value="WORK">Work</option></select>
+                    <div class="form-group">
+                        <label>Full Address (House No, Street)</label>
+                        <textarea id="full-address" required placeholder="e.g. Flat 101, Green Apts"></textarea>
                     </div>
-                    <button type="submit" class="btn btn-primary">Save</button>
+                    <div class="form-group">
+                        <label>City</label>
+                        <input type="text" id="city" required placeholder="e.g. Bangalore">
+                    </div>
+                    <div class="form-group">
+                        <label>Pincode</label>
+                        <input type="text" id="pincode" required placeholder="e.g. 560038">
+                    </div>
+                    <div class="form-group">
+                        <label>Type</label>
+                        <select id="address-type">
+                            <option value="HOME">Home</option>
+                            <option value="WORK">Work</option>
+                            <option value="OTHER">Other</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save Address</button>
                 </form>
             </div>
         </div>
     </div>
 
     <script src="{% static 'assets/js/utils/api.js' %}"></script>
-    <script src="{% static 'assets/js/utils/profile.js' %}"></script> <script src="{% static 'assets/js/pages/profile.js' %}"></script> </body>
+    <script src="{% static 'assets/js/utils/profile.js' %}"></script>
+    <script src="{% static 'assets/js/pages/profile.js' %}"></script>
+</body>
+
 </html>
