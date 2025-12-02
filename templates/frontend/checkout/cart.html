@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}My Cart - QuickDash{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'assets/css/checkout.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container checkout-container">
+    
+    <div class="page-header">
+        <h1>Your Cart <span id="cart-count-badge" class="count-badge">(0)</span></h1>
+    </div>
+
+    <div id="cart-loader" class="loader-box">
+        <i class="fas fa-spinner fa-spin"></i> Loading your cart...
+    </div>
+
+    <div id="empty-cart" class="empty-state" style="display: none;">
+        <img src="https://cdn-icons-png.flaticon.com/512/11329/11329060.png" alt="Empty Cart">
+        <h3>Your cart is empty</h3>
+        <p>Looks like you haven't added anything yet.</p>
+        <a href="/" class="btn-primary mt-3">Start Shopping</a>
+    </div>
+
+    <div id="cart-content" class="cart-layout" style="display: none;">
+        
+        <div class="cart-items-section">
+            <div id="cart-items-list">
+                </div>
+        </div>
+
+        <div class="cart-summary-section">
+            <div class="summary-card">
+                <h3>Bill Details</h3>
+                
+                <div class="summary-row">
+                    <span>Item Total</span>
+                    <span id="subtotal">₹0</span>
+                </div>
+                <div class="summary-row">
+                    <span>Delivery Fee</span>
+                    <span id="delivery-fee">₹0</span>
+                </div>
+                <div class="summary-row text-success">
+                    <span>Discount</span>
+                    <span id="discount">-₹0</span>
+                </div>
+                
+                <hr>
+                
+                <div class="summary-row total">
+                    <span>To Pay</span>
+                    <span id="final-total">₹0</span>
+                </div>
+
+                <a href="/checkout.html" class="btn-checkout">
+                    Proceed to Checkout <i class="fas fa-arrow-right"></i>
+                </a>
+                
+                <div class="trust-badge">
+                    <i class="fas fa-shield-alt"></i> Safe & Secure Payment
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'assets/js/pages/checkout/cart.js' %}"></script>
+{% endblock %}

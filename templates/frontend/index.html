@@ -4,20 +4,57 @@
 {% block title %}Home - QuickDash{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'assets/css/index_style.css' %}">
+<style>
+    .hero-section {
+        padding: 0; margin: 0; background: #fff;
+    }
+    .scroll-banner {
+        display: flex; gap: 0; overflow-x: auto;
+        scroll-snap-type: x mandatory; scroll-behavior: smooth;
+    }
+    .promo-card {
+        flex-shrink: 0; width: 100%; height: 200px;
+        background: linear-gradient(135deg, var(--primary), var(--secondary));
+        position: relative; overflow: hidden;
+        padding: 20px 25px; color: #fff;
+        scroll-snap-align: center;
+        display: flex; align-items: center; justify-content: space-between;
+    }
+    .promo-card.dark-theme { background: linear-gradient(135deg, #485461, #2d3436); }
+    .promo-content h3 { font-size: 1.8rem; font-weight: 700; line-height: 1.2; }
+    .promo-content p { font-size: 1.1rem; opacity: 0.9; }
+    .promo-image { font-size: 6rem; opacity: 0.3; transform: rotate(-10deg); }
+    
+    /* Section Styles */
+    section { padding: 20px; background: #fff; margin-bottom: 10px; }
+    .section-title { display: flex; justify-content: space-between; margin-bottom: 15px; }
+    .view-all { color: var(--primary); font-weight: 600; font-size: 0.9rem; }
+    
+    /* Grid & Scroller */
+    .categories { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; text-align: center; }
+    .category-card img { width: 50px; height: 50px; border-radius: 50%; margin-bottom: 5px; }
+    .category-card h3 { font-size: 0.8rem; color: var(--dark); }
+    
+    .scroll-container { overflow-x: auto; padding-bottom: 10px; }
+    .product-grid { display: flex; gap: 15px; }
+    
+    @media(max-width: 600px) {
+        .categories { grid-template-columns: repeat(3, 1fr); }
+    }
+</style>
 {% endblock %}
 
 {% block content %}
 <section class="hero-section">
     <div class="scroll-banner">
-        <a href="{% url 'product' %}" class="promo-card">
+        <a href="/category.html" class="promo-card">
             <div class="promo-content">
                 <h3>Fresh Apples</h3>
                 <p>Upto 30% OFF</p>
             </div>
             <i class="fas fa-apple-alt promo-image"></i>
         </a>
-        <a href="{% url 'product' %}" class="promo-card dark-theme">
+        <a href="/category.html" class="promo-card dark-theme">
             <div class="promo-content">
                 <h3>Snack Combo</h3>
                 <p>Only at ₹99</p>
@@ -29,18 +66,21 @@
 
 <section>
     <div class="section-title">
-        <h2>Shop By Category</h2><a href="{% url 'category' %}" class="view-all">View All</a>
+        <h2>Shop By Category</h2>
+        <a href="/category.html" class="view-all">View All</a>
     </div>
-    <div class="categories">
-        </div>
+    <div class="categories" id="home-categories">
+        <div class="loader" style="text-align:center; width:100%;">Loading...</div>
+    </div>
 </section>
 
 <section>
     <div class="section-title">
-        <h2>Featured Products</h2><a href="#" class="view-all">See All</a>
+        <h2>Featured Products</h2>
+        <a href="/category.html" class="view-all">See All</a>
     </div>
     <div class="scroll-container">
-        <div class="product-grid">
+        <div class="product-grid" id="home-featured-products">
             </div>
     </div>
 </section>
@@ -48,5 +88,4 @@
 
 {% block extra_js %}
 <script src="{% static 'assets/js/utils/home.js' %}"></script>
-<script src="{% static 'assets/js/pages/index.js' %}"></script>
 {% endblock %}

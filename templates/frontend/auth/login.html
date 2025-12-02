@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Login - QuickDash{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'assets/css/auth.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="auth-wrapper">
+    <div class="auth-card">
+        <div class="auth-header">
+            <div class="auth-icon">
+                <i class="fas fa-mobile-alt"></i>
+            </div>
+            <h2>Welcome</h2>
+            <p>Enter your phone number to login or signup</p>
+        </div>
+
+        <form id="phone-form" class="auth-form">
+            <label>Mobile Number</label>
+            <div class="input-group">
+                <span class="prefix">+91</span>
+                <input type="tel" id="phone" placeholder="Enter 10 digit number" maxlength="10" required autofocus>
+            </div>
+            <button type="submit" class="btn-primary">Get OTP</button>
+        </form>
+
+        <form id="otp-form" class="auth-form" style="display:none;">
+            <label>Enter OTP</label>
+            <p class="otp-msg">Sent to <span id="display-phone"></span> <a href="#" id="edit-phone">Edit</a></p>
+            
+            <div class="otp-inputs">
+                <input type="text" maxlength="1" class="otp-field">
+                <input type="text" maxlength="1" class="otp-field">
+                <input type="text" maxlength="1" class="otp-field">
+                <input type="text" maxlength="1" class="otp-field">
+                <input type="text" maxlength="1" class="otp-field">
+                <input type="text" maxlength="1" class="otp-field">
+            </div>
+
+            <button type="submit" class="btn-primary">Verify & Login</button>
+            <div class="timer">Resend in <span id="countdown">30</span>s</div>
+        </form>
+
+        <div class="auth-footer">
+            By continuing, you agree to our <a href="#">Terms</a> & <a href="#">Privacy Policy</a>.
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'assets/js/pages/auth/login.js' %}"></script>
+{% endblock %}

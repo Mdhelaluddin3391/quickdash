@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Product Details - QuickDash{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'assets/css/catalog.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container catalog-container">
+    
+    <div class="product-detail-layout" id="product-content">
+        <div class="p-image-section">
+            <div class="badge-overlay" id="p-badge"></div>
+            <img id="p-image" src="" alt="Product Image" class="main-img">
+        </div>
+
+        <div class="p-info-section">
+            <div class="p-brand" id="p-brand">Brand Name</div>
+            <h1 class="p-title" id="p-name">Loading...</h1>
+            <div class="p-unit" id="p-unit">...</div>
+            
+            <div class="p-pricing">
+                <span class="current-price" id="p-price">...</span>
+                <span class="mrp" id="p-mrp"></span>
+                <span class="discount-tag" id="p-discount"></span>
+            </div>
+
+            <hr class="divider">
+
+            <div class="p-actions">
+                <div class="qty-control" id="qty-control" style="display: none;">
+                    <button class="qty-btn minus"><i class="fas fa-minus"></i></button>
+                    <span class="qty-val">1</span>
+                    <button class="qty-btn plus"><i class="fas fa-plus"></i></button>
+                </div>
+                
+                <button id="add-to-cart-btn" class="btn-add-main">
+                    ADD TO CART
+                </button>
+            </div>
+
+            <div class="p-meta">
+                <h3>Product Details</h3>
+                <p id="p-desc">Description loading...</p>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'assets/js/pages/catalog/product_detail.js' %}"></script>
+{% endblock %}

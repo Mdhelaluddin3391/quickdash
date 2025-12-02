@@ -1,0 +1,28 @@
+{% extends "frontend/account/profile_layout.html" %}
+{% load static %}
+
+{% block title %}My Orders - QuickDash{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'assets/css/account.css' %}">
+{% endblock %}
+
+{% block profile_content %}
+<div class="content-header">
+    <h2>My Orders</h2>
+</div>
+
+<div id="orders-list" class="orders-grid">
+    <div class="loader">Loading orders...</div>
+</div>
+
+<div id="no-orders" class="empty-state" style="display: none;">
+    <img src="https://cdn-icons-png.flaticon.com/512/3081/3081840.png" alt="No Orders" style="width:100px; opacity:0.5;">
+    <p>No orders found.</p>
+    <a href="/" class="btn-primary mt-2">Start Shopping</a>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'assets/js/pages/account/orders.js' %}"></script>
+{% endblock %}

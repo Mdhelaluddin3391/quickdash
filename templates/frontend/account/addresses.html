@@ -1,0 +1,45 @@
+{% extends "frontend/account/profile_layout.html" %}
+{% load static %}
+
+{% block title %}Addresses - QuickDash{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'assets/css/account.css' %}">
+{% endblock %}
+
+{% block profile_content %}
+<div class="content-header">
+    <h2>Saved Addresses</h2>
+    <button class="btn-sm btn-primary" onclick="openAddressModal()">
+        <i class="fas fa-plus"></i> Add New
+    </button>
+</div>
+
+<div id="address-grid" class="address-list-grid">
+    <div class="loader">Loading...</div>
+</div>
+
+<div id="addr-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-box">
+        <h3>Add Address</h3>
+        <form id="add-addr-form">
+            <input type="text" id="a-line" placeholder="Flat / House / Street" required>
+            <input type="text" id="a-city" placeholder="City" required>
+            <input type="text" id="a-pincode" placeholder="Pincode" required>
+            <select id="a-type">
+                <option value="HOME">Home</option>
+                <option value="WORK">Work</option>
+                <option value="OTHER">Other</option>
+            </select>
+            <div class="modal-actions">
+                <button type="button" class="btn-outline" onclick="closeAddrModal()">Cancel</button>
+                <button type="submit" class="btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'assets/js/pages/account/addresses.js' %}"></script>
+{% endblock %}

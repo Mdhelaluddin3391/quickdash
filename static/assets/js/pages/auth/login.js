@@ -1,4 +1,4 @@
-// Logic for api.js
+// Logic for login.js
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('api.js loaded');
+    console.log('login.js loaded');
 });

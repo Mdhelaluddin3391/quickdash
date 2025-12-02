@@ -1,19 +1,29 @@
-<footer style="background-color: #2d3436; color: white; padding: 40px 0 20px; margin-top: auto;">
+<footer>
     <div class="container">
-        <div class="footer-content" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 30px;">
+        <div class="footer-content">
             <div class="footer-column">
                 <h3>QuickDash</h3>
                 <p>Fastest delivery in town.</p>
             </div>
             <div class="footer-column">
                 <h3>Links</h3>
-                <ul style="list-style: none;">
-                    <li><a href="{% url 'home' %}" style="color: #b2bec3; text-decoration: none;">Home</a></li>
-                    <li><a href="{% url 'support' %}" style="color: #b2bec3; text-decoration: none;">Support</a></li>
+                <ul class="footer-links">
+                    <li><a href="/">Home</a></li>
+                    <li><a href="/support.html">Support</a></li>
+                    <li><a href="/orders.html">My Orders</a></li>
                 </ul>
             </div>
+            <div class="footer-column">
+                <h3>Contact</h3>
+                <p>support@quickdash.com</p>
+                <div class="social-icons">
+                    <a href="#"><i class="fab fa-facebook"></i></a>
+                    <a href="#"><i class="fab fa-twitter"></i></a>
+                    <a href="#"><i class="fab fa-instagram"></i></a>
+                </div>
+            </div>
         </div>
-        <div class="copyright" style="text-align: center; padding-top: 20px; border-top: 1px solid #444; color: #b2bec3; font-size: 14px;">
+        <div class="copyright">
             &copy; {% now "Y" %} QuickDash. All rights reserved.
         </div>
     </div>

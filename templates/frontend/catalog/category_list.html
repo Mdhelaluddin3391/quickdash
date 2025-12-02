@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}All Categories - QuickDash{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'assets/css/catalog.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container catalog-container">
+    <div class="page-header">
+        <h1>Shop by Category</h1>
+        <p>Freshest picks for your daily needs</p>
+    </div>
+
+    <div id="category-grid" class="category-grid">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'assets/js/pages/catalog/category_list.js' %}"></script>
+{% endblock %}

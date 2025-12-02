@@ -1,0 +1,44 @@
+{% extends "frontend/account/profile_layout.html" %}
+{% load static %}
+
+{% block title %}My Profile - QuickDash{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'assets/css/account.css' %}">
+{% endblock %}
+
+{% block profile_content %}
+<div class="content-header">
+    <h2>Dashboard</h2>
+</div>
+
+<div class="dashboard-stats">
+    <div class="stat-card">
+        <div class="icon-box bg-green"><i class="fas fa-shopping-bag"></i></div>
+        <div>
+            <h3>Total Orders</h3>
+            <p id="total-orders-count">0</p>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="icon-box bg-blue"><i class="fas fa-wallet"></i></div>
+        <div>
+            <h3>Saved</h3>
+            <p>₹0.00</p> </div>
+    </div>
+</div>
+
+<div class="section mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3>Recent Order</h3>
+        <a href="/orders.html" class="text-primary text-sm">View All</a>
+    </div>
+    <div id="recent-order-placeholder">
+        <div class="loader">Loading...</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'assets/js/pages/account/dashboard.js' %}"></script>
+{% endblock %}

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="container account-container">
+    <div class="account-layout">
+        
+        <aside class="account-sidebar">
+            <div class="user-brief">
+                <div class="avatar-circle" id="nav-avatar">U</div>
+                <div>
+                    <h4 id="nav-name">Loading...</h4>
+                    <p id="nav-phone">...</p>
+                </div>
+            </div>
+            
+            <nav class="side-nav">
+                <a href="/profile.html" class="nav-link {% if request.path == '/profile.html' %}active{% endif %}">
+                    <i class="fas fa-th-large"></i> Dashboard
+                </a>
+                <a href="/orders.html" class="nav-link {% if 'orders' in request.path %}active{% endif %}">
+                    <i class="fas fa-box"></i> My Orders
+                </a>
+                <a href="/addresses.html" class="nav-link {% if 'addresses' in request.path %}active{% endif %}">
+                    <i class="fas fa-map-marker-alt"></i> Saved Addresses
+                </a>
+                <a href="#" onclick="logout()" class="nav-link text-danger">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+            </nav>
+        </aside>
+
+        <div class="account-content">
+            {% block profile_content %}{% endblock %}
+        </div>
+
+    </div>
+</div>
+{% endblock %}

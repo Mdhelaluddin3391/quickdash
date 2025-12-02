@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Enable Location - QuickDash{% endblock %}
+
+{% block extra_css %}
+<style>
+    .perm-container {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        min-height: 70vh; text-align: center; padding: 20px;
+    }
+    .perm-img { width: 250px; margin-bottom: 30px; }
+    .perm-title { font-size: 1.8rem; font-weight: 700; margin-bottom: 10px; color: var(--dark); }
+    .perm-desc { color: var(--text-muted); max-width: 400px; margin-bottom: 30px; font-size: 1rem; }
+    .btn-location {
+        background: var(--primary); color: #fff; padding: 15px 30px; border-radius: 30px;
+        font-weight: 600; font-size: 1.1rem; border: none; cursor: pointer;
+        display: flex; align-items: center; gap: 10px; transition: 0.3s;
+    }
+    .btn-location:hover { background: #27ae60; transform: translateY(-3px); box-shadow: 0 5px 15px rgba(50,205,50,0.3); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container perm-container">
+    <img src="https://cdn-icons-png.flaticon.com/512/235/235861.png" alt="Map Location" class="perm-img">
+    
+    <h1 class="perm-title">We need your location</h1>
+    <p class="perm-desc">To show you products available in your area and ensure fast delivery, please enable location access.</p>
+    
+    <button class="btn-location" onclick="requestLocation()">
+        <i class="fas fa-crosshairs"></i> Enable Current Location
+    </button>
+    
+    <a href="/" class="mt-4 text-primary" style="font-weight: 500;">Enter Location Manually</a>
+</div>
+
+<script>
+    function requestLocation() {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    alert("Location Access Granted!");
+                    window.location.href = "/";
+                },
+                (error) => {
+                    alert("Permission Denied. Please enable it in browser settings.");
+                }
+            );
+        } else {
+            alert("Geolocation is not supported by this browser.");
+        }
+    }
+</script>
+{% endblock %}

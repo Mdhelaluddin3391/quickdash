@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Help Center - QuickDash{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'assets/css/support.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container support-container">
+    <div class="support-header">
+        <h1>How can we help you?</h1>
+        <div class="search-box">
+            <i class="fas fa-search"></i>
+            <input type="text" placeholder="Search for issues (e.g. 'refund', 'delivery')">
+        </div>
+    </div>
+
+    <div class="faq-grid">
+        <div class="faq-card">
+            <i class="fas fa-box-open"></i>
+            <h3>Orders</h3>
+            <p>Track, cancel, or return orders</p>
+        </div>
+        <div class="faq-card">
+            <i class="fas fa-wallet"></i>
+            <h3>Payments</h3>
+            <p>Refunds, wallets, and charges</p>
+        </div>
+        <div class="faq-card">
+            <i class="fas fa-map-marker-alt"></i>
+            <h3>Delivery</h3>
+            <p>Address, delivery time, and delays</p>
+        </div>
+        <div class="faq-card">
+            <i class="fas fa-user-shield"></i>
+            <h3>Account</h3>
+            <p>Profile, login issues, and security</p>
+        </div>
+    </div>
+
+    <div class="contact-section">
+        <h2>Still need help?</h2>
+        <div class="contact-options">
+            <a href="/support/chat.html" class="contact-card">
+                <div class="icon bg-green"><i class="fas fa-comments"></i></div>
+                <div class="info">
+                    <h4>Chat with Us</h4>
+                    <p>Start a live chat with our support team.</p>
+                </div>
+                <i class="fas fa-chevron-right arrow"></i>
+            </a>
+            <div class="contact-card">
+                <div class="icon bg-blue"><i class="fas fa-envelope"></i></div>
+                <div class="info">
+                    <h4>Email Support</h4>
+                    <p>support@quickdash.com</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

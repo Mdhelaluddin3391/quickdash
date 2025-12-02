@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Checkout - QuickDash{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'assets/css/checkout.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container checkout-container">
+    
+    <div class="checkout-header">
+        <a href="/cart.html" class="back-link"><i class="fas fa-arrow-left"></i> Back to Cart</a>
+        <h1>Checkout</h1>
+    </div>
+
+    <div class="cart-layout">
+        
+        <div class="checkout-steps">
+            
+            <div class="step-card">
+                <div class="step-header">
+                    <div class="step-num">1</div>
+                    <h3>Delivery Address</h3>
+                </div>
+                
+                <div id="address-list" class="address-grid">
+                    <div class="loader">Loading addresses...</div>
+                </div>
+
+                <button id="add-address-btn" class="btn-outline-primary mt-3">
+                    <i class="fas fa-plus"></i> Add New Address
+                </button>
+            </div>
+
+            <div class="step-card">
+                <div class="step-header">
+                    <div class="step-num">2</div>
+                    <h3>Payment Method</h3>
+                </div>
+
+                <div class="payment-options">
+                    <label class="payment-option selected" onclick="selectPayment('COD')">
+                        <input type="radio" name="payment" value="COD" checked>
+                        <div class="pay-icon"><i class="fas fa-money-bill-wave"></i></div>
+                        <div class="pay-info">
+                            <h4>Cash on Delivery</h4>
+                            <p>Pay cash to the delivery partner</p>
+                        </div>
+                    </label>
+
+                    <label class="payment-option" onclick="selectPayment('RAZORPAY')">
+                        <input type="radio" name="payment" value="RAZORPAY">
+                        <div class="pay-icon"><i class="fas fa-credit-card"></i></div>
+                        <div class="pay-info">
+                            <h4>Pay Online</h4>
+                            <p>UPI, Cards, Netbanking (Razorpay)</p>
+                        </div>
+                    </label>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="cart-summary-section">
+            <div class="summary-card">
+                <h3>Order Summary</h3>
+                <div id="checkout-items-preview" class="mini-items-list">
+                    </div>
+                <hr>
+                <div class="summary-row total">
+                    <span>Total Amount</span>
+                    <span id="checkout-total">...</span>
+                </div>
+
+                <button id="place-order-btn" class="btn-checkout">
+                    Place Order
+                </button>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<div id="address-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-box">
+        <h3>New Address</h3>
+        <form id="new-address-form">
+            <input type="text" id="addr-line" placeholder="House/Flat No, Street" required>
+            <input type="text" id="addr-city" placeholder="City" required>
+            <input type="text" id="addr-pincode" placeholder="Pincode" maxlength="6" required>
+            <select id="addr-type">
+                <option value="HOME">Home</option>
+                <option value="WORK">Work</option>
+                <option value="OTHER">Other</option>
+            </select>
+            <div class="modal-actions">
+                <button type="button" class="btn-outline" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn-primary">Save Address</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<script src="{% static 'assets/js/pages/checkout/checkout.js' %}"></script>
+{% endblock %}

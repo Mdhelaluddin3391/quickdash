@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Products - QuickDash{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'assets/css/catalog.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container catalog-container">
+    
+    <div class="listing-header">
+        <a href="/" class="back-btn"><i class="fas fa-arrow-left"></i> Back</a>
+        <h1 id="page-title">Loading...</h1>
+    </div>
+
+    <div class="toolbar">
+        <div class="filter-chips" id="brand-filters">
+            </div>
+        <select id="sort-select" class="sort-dropdown">
+            <option value="popularity">Popularity</option>
+            <option value="price_low">Price: Low to High</option>
+            <option value="price_high">Price: High to Low</option>
+            <option value="newest">Newest First</option>
+        </select>
+    </div>
+
+    <div id="product-grid" class="product-grid-view">
+        <div class="loader">Loading products...</div>
+    </div>
+
+    <div id="empty-state" class="empty-state" style="display: none;">
+        <img src="https://cdn-icons-png.flaticon.com/512/7486/7486744.png" alt="No Items">
+        <h3>No products found</h3>
+        <p>Try searching for something else</p>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'assets/js/pages/catalog/product_list.js' %}"></script>
+{% endblock %}

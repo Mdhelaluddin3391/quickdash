@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Track Order - QuickDash{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="{% static 'assets/css/track_order_style.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="track-layout">
+    <div class="track-sidebar">
+        <div class="track-header">
+            <a href="/orders.html" class="back-link"><i class="fas fa-arrow-left"></i> Back</a>
+            <h2 id="order-id-display">Order #...</h2>
+        </div>
+
+        <div class="timeline-container">
+            <div class="status-step active" id="step-confirmed">
+                <div class="dot"></div>
+                <div class="info">Order Confirmed</div>
+            </div>
+            <div class="status-step" id="step-packed">
+                <div class="dot"></div>
+                <div class="info">Packed</div>
+            </div>
+            <div class="status-step" id="step-dispatched">
+                <div class="dot"></div>
+                <div class="info">Out for Delivery <br><small id="rider-info">Assigning Rider...</small></div>
+            </div>
+            <div class="status-step" id="step-delivered">
+                <div class="dot"></div>
+                <div class="info">Delivered</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="map" class="track-map"></div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="{% static 'assets/js/pages/account/track_order.js' %}"></script>
+{% endblock %}
