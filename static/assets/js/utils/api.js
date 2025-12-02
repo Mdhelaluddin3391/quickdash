@@ -1,10 +1,33 @@
-// assets/js/utils/api.js
+// static/assets/js/utils/api.js
 
-const CONFIG = window.APP_CONFIG || { 
-    API_BASE: "/api/v1", 
-    LOGIN_URL: "/auth.html" 
-};
+const CONFIG = window.APP_CONFIG || { API_BASE: "/api/v1" };
 
+// --- Toast Notification Helper ---
+function showToast(message, type = 'success') {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        document.body.appendChild(container);
+    }
+    
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.innerHTML = `
+        <i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'}" 
+           style="color: ${type === 'success' ? 'var(--primary)' : type === 'error' ? 'var(--danger)' : 'var(--secondary)'}"></i>
+        <span>${message}</span>
+    `;
+    
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(100%)';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+// --- Cookie Helper (CSRF) ---
 function getCookie(name) {
     let cookieValue = null;
     if (document.cookie && document.cookie !== '') {
@@ -20,28 +43,29 @@ function getCookie(name) {
     return cookieValue;
 }
 
+// --- Token Refresh Logic ---
 async function refreshToken() {
     const refresh = localStorage.getItem('refreshToken');
-    if(!refresh) return false;
+    if (!refresh) return false;
 
     try {
         const response = await fetch(`${CONFIG.API_BASE}/auth/token/refresh/`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({refresh: refresh})
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh })
         });
-        
-        if(response.ok) {
+
+        if (response.ok) {
             const data = await response.json();
             localStorage.setItem('accessToken', data.access);
-            if(data.refresh) localStorage.setItem('refreshToken', data.refresh);
+            if (data.refresh) localStorage.setItem('refreshToken', data.refresh);
             return true;
         }
-    } catch(e) { console.error("Refresh failed", e); }
-    
+    } catch (e) { console.error("Token refresh failed", e); }
     return false;
 }
 
+// --- Main API Caller ---
 async function apiCall(endpoint, method = 'GET', body = null, requireAuth = false) {
     let token = localStorage.getItem('accessToken');
     
@@ -60,20 +84,19 @@ async function apiCall(endpoint, method = 'GET', body = null, requireAuth = fals
     try {
         let response = await fetch(`${CONFIG.API_BASE}${endpoint}`, config);
 
-        // 401: Token Expired? Try Refresh
+        // Handle 401 Unauthorized (Token Expired)
         if (response.status === 401 && requireAuth) {
-            console.log("Token expired, attempting refresh...");
+            console.log("401 detected, attempting refresh...");
             const refreshed = await refreshToken();
-            if(refreshed) {
-                // Retry original request
+            if (refreshed) {
+                // Retry with new token
                 token = localStorage.getItem('accessToken');
                 headers['Authorization'] = `Bearer ${token}`;
                 config.headers = headers;
                 response = await fetch(`${CONFIG.API_BASE}${endpoint}`, config);
             } else {
-                console.warn("Session expired completely.");
-                logout();
-                throw new Error("Session expired");
+                logout(); // Session expired
+                throw new Error("Session expired. Please login again.");
             }
         }
 
@@ -82,41 +105,45 @@ async function apiCall(endpoint, method = 'GET', body = null, requireAuth = fals
         const data = await response.json();
         
         if (!response.ok) {
-            const errorMsg = data.detail || data.error || "Request failed";
-            throw new Error(errorMsg);
+            throw new Error(data.detail || data.error || "Something went wrong");
         }
-        
         return data;
 
     } catch (error) {
-        console.error(`API Error:`, error);
+        console.error("API Error:", error);
         throw error;
     }
 }
 
+// --- Auth Helpers ---
 function isLoggedIn() {
     return !!localStorage.getItem('accessToken');
 }
 
 function logout() {
-    localStorage.removeItem('accessToken');
-    localStorage.removeItem('refreshToken');
-    localStorage.removeItem('user');
-    window.location.href = CONFIG.LOGIN_URL;
+    localStorage.clear();
+    window.location.href = CONFIG.LOGIN_URL || '/auth.html';
 }
 
+function getUser() {
+    try {
+        return JSON.parse(localStorage.getItem('user')) || null;
+    } catch { return null; }
+}
+
+// --- Global Cart Count ---
 window.updateGlobalCartCount = async function() {
     if (!isLoggedIn()) return;
-    const cartBadges = document.querySelectorAll('.cart-count');
-    if (cartBadges.length > 0) {
-        try {
-            const cart = await apiCall('/orders/cart/', 'GET', null, true);
-            const count = cart.items ? cart.items.reduce((acc, item) => acc + item.quantity, 0) : 0;
-            cartBadges.forEach(el => {
-                el.innerText = count;
-                el.style.display = count > 0 ? 'inline-flex' : 'none';
-            });
-        } catch (e) { console.log("Cart sync silent fail"); }
+    const badge = document.querySelector('.cart-count');
+    if (!badge) return;
+
+    try {
+        const cart = await apiCall('/orders/cart/', 'GET', null, true);
+        const count = cart.items ? cart.items.reduce((acc, item) => acc + item.quantity, 0) : 0;
+        badge.innerText = count;
+        badge.style.display = count > 0 ? 'flex' : 'none';
+    } catch (e) {
+        console.log("Cart fetch silent fail");
     }
 };
 
