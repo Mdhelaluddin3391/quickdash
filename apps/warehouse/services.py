@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 def reserve_stock_for_order(order_id, warehouse_id, items_needed):
     """
     Allocates stock from bins.
-    PRO FIX: Uses 'skip_locked=True' to allow concurrent pickers to grab different bins 
-    for the same SKU without blocking.
+    Refactored: Removed 'skip_locked=True' to prevent false out-of-stock scenarios.
+    Now transactions will WAIT for row locks to release instead of skipping bins.
     """
     warehouse = Warehouse.objects.select_for_update().get(id=warehouse_id)
     
@@ -48,13 +48,15 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
         qty_needed = int(item["qty"])
         qty_remaining = qty_needed
 
-        # OPTIMIZED LOCKING STRATEGY:
-        # 1. Filter bins with actual available stock (qty > reserved)
-        # 2. Order by 'qty' ASC (clears small fragmented bins first) OR DESC (efficiency)
-        # 3. select_for_update(skip_locked=True) allows other txns to skip these locked rows
+        # ---------------------------------------------------------
+        # [SECURITY FIX] Lock Strategy Update
+        # Removed skip_locked=True. This ensures that if Bin A is 
+        # locked by another user, we WAIT for it to free up instead 
+        # of skipping it and incorrectly reporting Out of Stock.
+        # ---------------------------------------------------------
         bin_qs = (
             BinInventory.objects
-            .select_for_update(skip_locked=True)
+            .select_for_update() # <--- FIXED HERE
             .select_related("bin__zone__warehouse")
             .filter(
                 bin__zone__warehouse=warehouse,
@@ -84,7 +86,7 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
                 qty_to_pick=to_reserve,
             )
 
-            # Signal Logical Inventory Update (async via receiver)
+            # Signal Logical Inventory Update
             inventory_change_required.send(
                 sender=Warehouse,
                 sku_id=str(sku_id),
@@ -107,7 +109,6 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
     )
     
     return task
-
 
 @transaction.atomic
 def scan_pick(task_id, pick_item_id, qty_scanned, user):

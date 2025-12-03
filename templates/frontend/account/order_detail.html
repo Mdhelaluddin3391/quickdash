@@ -1,6 +1,75 @@
+{% extends "frontend/account/profile_layout.html" %}
+{% load static %}
 
-{% extends 'base.html' %}
+{% block title %}Order Details - QuickDash{% endblock %}
 
-{% block content %}
-    <h1>Page: order_detail.html</h1>
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'assets/css/account.css' %}">
+<style>
+    /* Order Detail Specific Styles */
+    .od-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; padding-bottom: 15px; border-bottom: 1px solid var(--border); }
+    .od-title h2 { font-size: 1.4rem; margin: 0; color: var(--dark); }
+    .od-date { font-size: 0.9rem; color: var(--text-muted); }
+    
+    .od-status-badge { padding: 6px 12px; border-radius: 20px; font-weight: 600; font-size: 0.9rem; text-transform: uppercase; }
+    .badge-pending { background: #fff3cd; color: #856404; }
+    .badge-confirmed { background: #d1ecf1; color: #0c5460; }
+    .badge-delivered { background: #d4edda; color: #155724; }
+    .badge-cancelled { background: #f8d7da; color: #721c24; }
+
+    .od-content { display: flex; gap: 30px; flex-wrap: wrap; }
+    .od-items { flex: 2; min-width: 300px; }
+    .od-summary { flex: 1; min-width: 250px; background: #f9f9f9; padding: 20px; border-radius: 12px; height: fit-content; }
+
+    .item-row { display: flex; align-items: center; gap: 15px; background: #fff; padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid var(--border); }
+    .item-img { width: 60px; height: 60px; object-fit: contain; }
+    .item-details h4 { font-size: 1rem; margin: 0 0 5px 0; }
+    .item-price { font-weight: 700; margin-left: auto; }
+
+    .summ-row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.95rem; }
+    .summ-total { font-weight: 700; font-size: 1.1rem; border-top: 1px solid #ddd; padding-top: 10px; margin-top: 10px; }
+
+    .od-actions { margin-top: 20px; display: flex; gap: 10px; }
+</style>
+{% endblock %}
+
+{% block profile_content %}
+<div id="od-loader" class="text-center py-5"><div class="loader"></div></div>
+
+<div id="od-container" style="display: none;">
+    <div class="od-header">
+        <div class="od-title">
+            <h2 id="disp-id">Order #...</h2>
+            <span class="od-date" id="disp-date">...</span>
+        </div>
+        <div id="disp-status"></div>
+    </div>
+
+    <div class="od-content">
+        <div class="od-items" id="items-list">
+            </div>
+
+        <div class="od-summary">
+            <h3>Order Summary</h3>
+            <div class="summ-row"><span>Subtotal</span> <span id="val-sub">₹0</span></div>
+            <div class="summ-row"><span>Delivery</span> <span id="val-del">₹0</span></div>
+            <div class="summ-row"><span>Discount</span> <span class="text-success" id="val-disc">-₹0</span></div>
+            <div class="summ-row summ-total"><span>Total</span> <span id="val-total">₹0</span></div>
+            
+            <div class="mt-3">
+                <p class="text-sm text-muted mb-1">Delivery Address:</p>
+                <p class="font-weight-500" id="disp-addr">...</p>
+            </div>
+
+            <div class="od-actions">
+                <a href="#" id="btn-track" class="btn-primary w-100 text-center">Track Order</a>
+                <button id="btn-cancel" class="btn-outline w-100 text-danger" style="display:none;" onclick="cancelCurrentOrder()">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'assets/js/pages/account/order_detail.js' %}"></script>
 {% endblock %}
