@@ -9,6 +9,7 @@ from .views import (
     BannerViewSet,      # Ensure these are imported
     FlashSaleViewSet    # Ensure these are imported
 )
+from .views_assistant import ShoppingAssistantView
 
 # 1. Initialize Router
 router = DefaultRouter()
@@ -27,4 +28,5 @@ urlpatterns = [
     
     # Custom non-router paths
     path("import/bulk-csv/", BulkImportSKUView.as_view(), name="bulk-import-csv"),
+    path("assistant/chat/", ShoppingAssistantView.as_view(), name="shopping-assistant"),
 ]

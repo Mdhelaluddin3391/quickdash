@@ -70,6 +70,56 @@ async function loadHomeCategories() {
     }
 }
 
+
+async function loadBanners() {
+    const slider = document.getElementById('hero-slider');
+    const midContainer = document.getElementById('mid-banner-container');
+
+    try {
+        const response = await apiCall('/catalog/banners/', 'GET', null, false);
+        const banners = response.results || response;
+        
+        // A. Process Hero Sliders
+        const heroBanners = banners.filter(b => b.position === 'HERO');
+        if (slider) {
+            if (heroBanners.length > 0) {
+                slider.innerHTML = heroBanners.map(b => `
+                    <a href="${b.target_url}" class="promo-card" style="background: ${b.bg_gradient}">
+                        <div class="promo-content">
+                            <h2>${b.title}</h2>
+                            <p>Click to Explore</p>
+                            <span class="promo-btn" style="background:#fff; color:#333; padding:5px 12px; border-radius:20px; font-weight:700; font-size:0.8rem; margin-top:10px; display:inline-block;">Shop Now</span>
+                        </div>
+                        <img src="${b.image_url}" class="promo-img" alt="${b.title}" loading="lazy">
+                    </a>
+                `).join('');
+            } else {
+                // Default
+                slider.innerHTML = `<div class="promo-card" style="background: linear-gradient(135deg, #32CD32, #2ecc71);">
+                    <div class="promo-content"><h2>Welcome to<br>QuickDash</h2></div>
+                </div>`;
+            }
+        }
+
+        // B. Process Mid Banner (Take the first active MID banner)
+        const midBanners = banners.filter(b => b.position === 'MID');
+        if (midContainer && midBanners.length > 0) {
+            const mid = midBanners[0]; // Sirf ek dikhana hai
+            midContainer.style.display = 'block';
+            midContainer.innerHTML = `
+                <a href="${mid.target_url}">
+                    <img src="${mid.image_url}" alt="${mid.title}" loading="lazy" style="width:100%; border-radius:12px; box-shadow:0 4px 10px rgba(0,0,0,0.1);">
+                </a>
+            `;
+        } else if (midContainer) {
+            midContainer.style.display = 'none'; // Hide if no data
+        }
+
+    } catch (e) {
+        console.error("Banner Error:", e);
+    }
+}
+
 // --- 3. Flash Sales (Deal of the Day) ---
 async function loadFlashSales() {
     const container = document.getElementById('flash-sale-section');
