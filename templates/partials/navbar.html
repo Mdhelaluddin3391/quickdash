@@ -21,7 +21,7 @@
             </a>
         </div>
     </div>
-    
+
     <form class="search-bar-row" method="GET" action="/search_results.html">
         <i class="fas fa-search"></i>
         <input type="text" name="q" placeholder="Search for items..." value="{{ request.GET.q }}">
@@ -29,9 +29,7 @@
 
     <nav class="header-nav-row">
         <a href="/" class="nav-item {% if request.path == '/' %}active{% endif %}">All</a>
-        <a href="/category.html" class="nav-item {% if 'category' in request.path %}active{% endif %}">Groceries</a>
-        <a href="/category.html" class="nav-item">Vegetables</a>
-        <a href="/category.html" class="nav-item">Fruits</a>
-        <a href="/category.html" class="nav-item">Dairy</a>
+
+        <span style="font-size:0.8rem; color:#888; padding:5px;">Loading...</span>
     </nav>
 </header>

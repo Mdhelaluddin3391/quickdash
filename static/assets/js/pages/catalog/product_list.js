@@ -10,6 +10,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     let apiUrl = '/catalog/skus/';
     let title = 'All Products';
 
+
+
+    if (categorySlug) {
+        // 1. Pehle Category Details Lao (Subcategories ke liye)
+        try {
+            const catResponse = await apiCall(`/catalog/categories/${categorySlug}/`);
+            document.getElementById('page-title').innerText = catResponse.name;
+
+            // Agar subcategories hain, toh unhe filter chips mein dikhao
+            if (catResponse.subcategories && catResponse.subcategories.length > 0) {
+                const filterContainer = document.getElementById('brand-filters'); // Reusing existing chip container
+                filterContainer.innerHTML = ''; // Clear old
+
+                // "All" chip
+                filterContainer.innerHTML = `<div class="chip active">All ${catResponse.name}</div>`;
+
+                catResponse.subcategories.forEach(sub => {
+                    const chip = document.createElement('div');
+                    chip.className = 'chip';
+                    chip.innerText = sub.name;
+                    // Subcategory click logic: Refresh list with subcategory filter
+                    chip.onclick = () => {
+                        window.location.href = `/search_results.html?category=${sub.slug}`;
+                    };
+                    filterContainer.appendChild(chip);
+                });
+            }
+        } catch (e) {
+            console.log("Category details fetch failed, showing generic title");
+        }
+
+        // 2. Fetch Products
+        apiUrl += `?category__slug=${categorySlug}`;
+    }
+
     if (categorySlug) {
         apiUrl += `?category__slug=${categorySlug}`;
         title = categorySlug.replace(/-/g, ' ').toUpperCase(); // basic formatting
