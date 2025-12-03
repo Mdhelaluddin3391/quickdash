@@ -1,142 +1,452 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Home - QuickDash{% endblock %}
+{% block title %}QuickDash - Groceries in Minutes{% endblock %}
 
 {% block extra_css %}
 <style>
-    .hero-section {
-        padding: 0; margin: 0; background: #fff;
-    }
+    /* --- Hero & Base Styles --- */
+    .hero-wrapper { padding: 15px; background: #fff; }
     .scroll-banner {
-        display: flex; gap: 0; overflow-x: auto;
+        display: flex; gap: 15px; overflow-x: auto;
         scroll-snap-type: x mandatory; scroll-behavior: smooth;
+        padding-bottom: 10px; -ms-overflow-style: none; scrollbar-width: none;
     }
+    .scroll-banner::-webkit-scrollbar { display: none; }
+
     .promo-card {
-        flex-shrink: 0; width: 100%; height: 200px;
-        background: linear-gradient(135deg, var(--primary), var(--secondary));
-        position: relative; overflow: hidden;
-        padding: 20px 25px; color: #fff;
-        scroll-snap-align: center;
-        display: flex; align-items: center; justify-content: space-between;
+        flex: 0 0 90%; height: 180px; border-radius: 16px;
+        position: relative; overflow: hidden; scroll-snap-align: center;
+        display: flex; align-items: center; padding: 20px;
+        color: #fff; text-decoration: none; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        transition: transform 0.3s;
     }
-    .promo-card.dark-theme { background: linear-gradient(135deg, #485461, #2d3436); }
-    .promo-content h3 { font-size: 1.8rem; font-weight: 700; line-height: 1.2; }
-    .promo-content p { font-size: 1.1rem; opacity: 0.9; }
-    .promo-image { font-size: 6rem; opacity: 0.3; transform: rotate(-10deg); }
+    .promo-card:hover { transform: scale(1.02); }
     
-    /* Section Styles */
-    section { padding: 20px; background: #fff; margin-bottom: 10px; }
-    .section-title { display: flex; justify-content: space-between; margin-bottom: 15px; }
-    .view-all { color: var(--primary); font-weight: 600; font-size: 0.9rem; }
+    .bg-gradient-1 { background: linear-gradient(135deg, #32CD32 0%, #2ecc71 100%); }
+    .bg-gradient-2 { background: linear-gradient(135deg, #FFD700 0%, #ff9f43 100%); }
+    .bg-gradient-3 { background: linear-gradient(135deg, #ff6b6b 0%, #ee5253 100%); }
+
+    .promo-content { z-index: 2; max-width: 60%; }
+    .promo-content h2 { font-size: 1.8rem; font-weight: 800; line-height: 1.1; margin-bottom: 5px; }
+    .promo-content p { font-size: 1rem; opacity: 0.95; font-weight: 500; }
+    .promo-btn { 
+        display: inline-block; margin-top: 10px; padding: 8px 16px; 
+        background: #fff; color: #333; border-radius: 20px; 
+        font-weight: 700; font-size: 0.8rem; 
+    }
+    .promo-img {
+        position: absolute; right: -10px; bottom: -10px;
+        width: 140px; opacity: 0.9; transform: rotate(-10deg);
+    }
+
+    /* Features Bar */
+    .features-bar {
+        display: flex; justify-content: space-between; padding: 15px 20px;
+        background: #f9fcf9; border-bottom: 1px solid #f0f0f0;
+    }
+    .feature-item { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; font-weight: 600; color: var(--dark); }
+    .feature-item i { color: var(--primary); font-size: 1.1rem; }
+
+    /* --- Category Grid --- */
+    .section-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 20px 10px; }
+    .section-header h3 { font-size: 1.2rem; font-weight: 700; color: var(--dark); margin: 0; }
+    .view-all-btn { color: var(--primary); font-weight: 600; font-size: 0.9rem; }
+
+    #home-category-grid {
+        display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px 10px; padding: 10px 20px 30px;
+    }
+    .cat-item-home { display: flex; flex-direction: column; align-items: center; text-align: center; transition: transform 0.2s; }
+    .cat-icon-box {
+        width: 70px; height: 70px; background: #e8f5e9; border-radius: 18px;
+        display: flex; align-items: center; justify-content: center;
+        margin-bottom: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
+    .cat-icon-box img { width: 40px; height: 40px; object-fit: contain; }
+    .cat-label { font-size: 0.75rem; font-weight: 600; color: #444; line-height: 1.2; }
+
+    /* --- Promo Banner (RESTORED) --- */
+    .mid-banner { padding: 0 20px 20px; margin-top: 10px; }
+    .mid-banner img {
+        width: 100%; border-radius: 12px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    }
     
-    /* Grid & Scroller */
-    .categories { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; text-align: center; }
-    .category-card img { width: 50px; height: 50px; border-radius: 50%; margin-bottom: 5px; }
-    .category-card h3 { font-size: 0.8rem; color: var(--dark); }
+    /* --- Dynamic Product Rows --- */
+    .category-section { background: #fff; margin-bottom: 15px; border-top: 1px solid #f0f0f0; }
     
-    .scroll-container { overflow-x: auto; padding-bottom: 10px; }
-    .product-grid { display: flex; gap: 15px; }
+    .product-scroll-wrapper {
+        overflow-x: auto; padding: 10px 20px 30px; display: flex; gap: 15px;
+        scrollbar-width: none; -ms-overflow-style: none;
+    }
+    .product-scroll-wrapper::-webkit-scrollbar { display: none; }
+
+    .prod-card {
+        flex: 0 0 160px; /* Fixed width for scrolling */
+        background: #fff; border: 1px solid var(--border); border-radius: 12px;
+        padding: 12px; position: relative; display: flex; flex-direction: column;
+        justify-content: space-between; transition: 0.2s;
+    }
+    .prod-card:hover { border-color: var(--primary); transform: translateY(-3px); box-shadow: var(--shadow); }
     
-    @media(max-width: 600px) {
-        .categories { grid-template-columns: repeat(3, 1fr); }
+    .prod-img-box { height: 100px; display: flex; align-items: center; justify-content: center; margin-bottom: 10px; }
+    .prod-img { max-height: 100%; max-width: 100%; object-fit: contain; }
+    
+    .prod-title { font-size: 0.9rem; font-weight: 600; line-height: 1.3; margin-bottom: 4px; color: var(--dark); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .prod-unit { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px; }
+    
+    .prod-footer { display: flex; justify-content: space-between; align-items: center; margin-top: auto; }
+    .prod-price { font-weight: 700; color: var(--dark); font-size: 0.95rem; }
+    
+    .btn-add-sm {
+        padding: 5px 12px; background: #e6f7ef; border: 1px solid var(--primary);
+        color: var(--primary); border-radius: 6px; font-weight: 700; font-size: 0.75rem;
+        cursor: pointer; text-transform: uppercase;
+    }
+    .btn-add-sm:hover { background: var(--primary); color: #fff; }
+
+    /* Responsive */
+    @media (min-width: 768px) {
+        .promo-card { flex: 0 0 45%; height: 220px; }
+        #home-category-grid { grid-template-columns: repeat(8, 1fr); gap: 20px; }
+        .mid-banner img { height: 250px; object-fit: cover; }
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<section class="hero-section">
+<div class="hero-wrapper">
     <div class="scroll-banner">
-        <a href="/category.html" class="promo-card">
-            <div class="promo-content">
-                <h3>Fresh Apples</h3>
-                <p>Upto 30% OFF</p>
-            </div>
-            <i class="fas fa-apple-alt promo-image"></i>
+        <a href="/category.html" class="promo-card bg-gradient-1">
+            <div class="promo-content"><h2>Fresh<br>Veg</h2><p>Upto 40% OFF</p><span class="promo-btn">Shop Now</span></div>
+            <img src="https://cdn-icons-png.flaticon.com/512/2329/2329865.png" class="promo-img" alt="Veg">
         </a>
-        <a href="/category.html" class="promo-card dark-theme">
-            <div class="promo-content">
-                <h3>Snack Combo</h3>
-                <p>Only at ₹99</p>
-            </div>
-            <i class="fas fa-cookie-bite promo-image"></i>
+        <a href="/category.html" class="promo-card bg-gradient-2">
+            <div class="promo-content"><h2>Snacks<br>& Munchies</h2><p>Starting ₹10</p><span class="promo-btn">Grab Deal</span></div>
+            <img src="https://cdn-icons-png.flaticon.com/512/2553/2553691.png" class="promo-img" alt="Snack">
+        </a>
+        <a href="/category.html" class="promo-card bg-gradient-3">
+            <div class="promo-content"><h2>Home<br>Needs</h2><p>Fast Delivery</p><span class="promo-btn">Order</span></div>
+            <img src="https://cdn-icons-png.flaticon.com/512/3082/3082060.png" class="promo-img" alt="Home">
         </a>
     </div>
-</section>
+</div>
 
-<section class="mt-3">
-    <div class="section-title" style="padding: 0 20px;">
-        <h3>Shop By Category</h3>
+<div class="features-bar">
+    <div class="feature-item"><i class="fas fa-bolt"></i> 10 min Delivery</div>
+    <div class="feature-item"><i class="fas fa-award"></i> Best Quality</div>
+    <div class="feature-item"><i class="fas fa-tags"></i> Low Prices</div>
+</div>
+
+<section>
+    <div class="section-header">
+        <h3>Explore Categories</h3>
+        <a href="/category.html" class="view-all-btn">View All</a>
     </div>
-    
-    <div class="category-grid-home" id="home-category-grid">
+    <div id="home-category-grid">
         <div class="loader"></div>
     </div>
 </section>
 
+<div class="mid-banner">
+    <a href="/search_results.html?q=festival">
+        <img src="https://img.freepik.com/free-vector/flat-supermarket-twitch-banner_23-2149358374.jpg?w=1380" alt="Festival Sale">
+    </a>
+</div>
+
+<section class="brands-section">
+    <div class="section-header">
+        <h3>Top Brands</h3>
+    </div>
+    <div class="brand-scroller">
+        <div class="brand-circle">
+            <img src="https://cdn-icons-png.flaticon.com/512/683/683948.png" alt="Amul">
+        </div>
+        <div class="brand-circle">
+            <img src="https://cdn-icons-png.flaticon.com/512/2553/2553653.png" alt="Nestle">
+        </div>
+        <div class="brand-circle">
+            <img src="https://cdn-icons-png.flaticon.com/512/566/566252.png" alt="Britannia">
+        </div>
+        <div class="brand-circle">
+            <img src="https://cdn-icons-png.flaticon.com/512/2405/2405479.png" alt="Coke">
+        </div>
+        <div class="brand-circle">
+            <img src="https://cdn-icons-png.flaticon.com/512/2553/2553691.png" alt="Lays">
+        </div>
+        <div class="brand-circle">
+            <img src="https://cdn-icons-png.flaticon.com/512/3014/3014527.png" alt="Aashirvaad">
+        </div>
+    </div>
+</section>
+
 <style>
-    .category-grid-home {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr); /* 4 items per row mobile */
-        gap: 15px;
-        padding: 15px 20px;
+    /* --- Brands CSS --- */
+    .brands-section {
+        background: #fff;
+        padding-bottom: 20px;
+        border-bottom: 1px solid #f0f0f0;
     }
-    
-    .cat-item-home {
+    .brand-scroller {
         display: flex;
-        flex-direction: column;
-        align-items: center;
-        text-align: center;
-        cursor: pointer;
+        gap: 20px;
+        overflow-x: auto;
+        padding: 0 20px 10px;
+        scrollbar-width: none; /* Firefox */
+        -ms-overflow-style: none; /* IE */
     }
-    
-    .cat-icon-box {
-        width: 65px;
-        height: 65px;
-        background: #e6f7ef; /* Light Green Bg */
-        border-radius: 15px;
+    .brand-scroller::-webkit-scrollbar { display: none; } /* Chrome */
+
+    .brand-circle {
+        flex: 0 0 70px;
+        height: 70px;
+        border-radius: 50%;
+        background: #fff;
+        border: 1px solid #eee;
         display: flex;
         align-items: center;
         justify-content: center;
-        margin-bottom: 8px;
-        transition: transform 0.2s;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        transition: transform 0.2s, border-color 0.2s;
+        cursor: pointer;
     }
-    
-    .cat-item-home:hover .cat-icon-box {
+    .brand-circle:hover {
         transform: scale(1.05);
-        background: #d4edda;
+        border-color: var(--primary);
     }
-    
-    .cat-icon-box img {
-        width: 35px;
-        height: 35px;
+    .brand-circle img {
+        width: 40px;
+        height: 40px;
         object-fit: contain;
-    }
-    
-    .cat-label {
-        font-size: 0.75rem;
-        font-weight: 600;
-        color: var(--dark);
-        line-height: 1.2;
-    }
-
-    @media (min-width: 768px) {
-        .category-grid-home {
-            grid-template-columns: repeat(8, 1fr); /* Desktop: 8 items per row */
-        }
     }
 </style>
 
-<section>
-    <div class="section-title">
-        <h2>Featured Products</h2>
-        <a href="/category.html" class="view-all">See All</a>
+<section class="flash-sale-container my-3">
+    <div class="flash-header">
+        <div class="flash-title">
+            <i class="fas fa-bolt text-warning"></i>
+            <h3>Deal of the Day</h3>
+        </div>
+        <div class="flash-timer" id="countdown-timer">
+            Ends in <span class="time-box">04</span>h : <span class="time-box">30</span>m
+        </div>
     </div>
-    <div class="scroll-container">
-        <div class="product-grid" id="home-featured-products">
+
+    <div class="flash-grid">
+        
+        <div class="flash-card">
+            <div class="badge-off">50% OFF</div>
+            <img src="https://cdn-icons-png.flaticon.com/512/1625/1625099.png" alt="Oil">
+            <div class="f-info">
+                <div class="f-title">Fortune Oil (1L)</div>
+                <div class="price">
+                    <span class="new">₹85</span>
+                    <span class="old">₹170</span>
+                </div>
+                
+                <div class="flash-action-row">
+                    <div class="progress-wrapper">
+                        <div class="progress-bar"><div class="fill" style="width: 80%;"></div></div>
+                        <small>Sold: 80%</small>
+                    </div>
+                    <button class="btn-flash-add" onclick="addToCart('DEMO_ID_1', this)">ADD</button>
+                </div>
             </div>
+        </div>
+
+        <div class="flash-card">
+            <div class="badge-off">30% OFF</div>
+            <img src="https://cdn-icons-png.flaticon.com/512/2553/2553691.png" alt="Chips">
+            <div class="f-info">
+                <div class="f-title">Lays Bundle (5pk)</div>
+                <div class="price">
+                    <span class="new">₹99</span>
+                    <span class="old">₹150</span>
+                </div>
+
+                <div class="flash-action-row">
+                    <div class="progress-wrapper">
+                        <div class="progress-bar"><div class="fill" style="width: 45%;"></div></div>
+                        <small>Sold: 45%</small>
+                    </div>
+                    <button class="btn-flash-add" onclick="addToCart('DEMO_ID_2', this)">ADD</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="flash-card">
+            <div class="badge-off">20% OFF</div>
+            <img src="https://cdn-icons-png.flaticon.com/512/2909/2909787.png" alt="Coke">
+            <div class="f-info">
+                <div class="f-title">Coca Cola (2L)</div>
+                <div class="price">
+                    <span class="new">₹75</span>
+                    <span class="old">₹95</span>
+                </div>
+
+                <div class="flash-action-row">
+                    <div class="progress-wrapper">
+                        <div class="progress-bar"><div class="fill" style="width: 90%;"></div></div>
+                        <small>Sold: 90%</small>
+                    </div>
+                    <button class="btn-flash-add" onclick="addToCart('DEMO_ID_3', this)">ADD</button>
+                </div>
+            </div>
+        </div>
+
     </div>
 </section>
+
+<style>
+    .flash-sale-container {
+        background: linear-gradient(to right, #fff3e0, #ffffff);
+        padding: 15px 20px;
+        border-top: 1px solid #ffe0b2; border-bottom: 1px solid #ffe0b2;
+    }
+    .flash-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+    .flash-title h3 { font-size: 1.1rem; font-weight: 800; color: #e67e22; margin: 0; margin-left: 5px; display: inline-block;}
+    .flash-timer { font-size: 0.85rem; color: #d35400; font-weight: 600; }
+    .time-box { background: #d35400; color: #fff; padding: 2px 5px; border-radius: 4px; }
+
+    .flash-grid { display: flex; gap: 15px; overflow-x: auto; scrollbar-width: none; padding-bottom: 5px; }
+    .flash-grid::-webkit-scrollbar { display: none; }
+
+    .flash-card {
+        flex: 0 0 150px; /* Thoda wide kiya taaki button fit aaye */
+        background: #fff; border-radius: 12px; padding: 10px;
+        position: relative; border: 1px solid #eee;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        display: flex; flex-direction: column; justify-content: space-between;
+    }
+    
+    .badge-off {
+        position: absolute; top: 0; left: 0; background: #ff6b6b; color: #fff;
+        font-size: 0.65rem; padding: 3px 8px; border-radius: 12px 0 10px 0; font-weight: 700; z-index: 1;
+    }
+    
+    .flash-card img { width: 70px; height: 70px; object-fit: contain; display: block; margin: 15px auto 10px; }
+    
+    .f-title { font-size: 0.85rem; font-weight: 600; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+    
+    .price .new { font-weight: 800; color: #2d3436; font-size: 0.95rem; }
+    .price .old { text-decoration: line-through; color: #b2bec3; font-size: 0.75rem; margin-left: 5px; }
+    
+    /* New Row Layout for Progress + Button */
+    .flash-action-row {
+        display: flex; justify-content: space-between; align-items: flex-end; margin-top: 8px;
+    }
+    .progress-wrapper { flex-grow: 1; margin-right: 8px; }
+    
+    .progress-bar { height: 5px; background: #eee; border-radius: 3px; margin-bottom: 2px; overflow: hidden; }
+    .progress-bar .fill { height: 100%; background: #ff9f43; }
+    .progress-wrapper small { font-size: 0.65rem; color: #e67e22; font-weight: 700; display: block; }
+
+    /* Compact Add Button */
+    .btn-flash-add {
+        padding: 4px 12px; background: #fff; border: 1px solid #27ae60;
+        color: #27ae60; border-radius: 6px; font-weight: 700; font-size: 0.75rem;
+        cursor: pointer; transition: 0.2s;
+    }
+    .btn-flash-add:hover { background: #27ae60; color: #fff; }
+</style>
+
+<script>
+    function startTimer(duration, display) {
+        var timer = duration, hours, minutes;
+        setInterval(function () {
+            hours = parseInt(timer / 3600, 10);
+            minutes = parseInt((timer % 3600) / 60, 10);
+            hours = hours < 10 ? "0" + hours : hours;
+            minutes = minutes < 10 ? "0" + minutes : minutes;
+            display.innerHTML = `Ends in <span class="time-box">${hours}</span>h : <span class="time-box">${minutes}</span>m`;
+            if (--timer < 0) timer = duration;
+        }, 1000);
+    }
+    document.addEventListener('DOMContentLoaded', function () {
+        var display = document.querySelector('#countdown-timer');
+        if(display) startTimer(16200, display); // 4.5 hours
+    });
+</script>
+
+<style>
+    .flash-sale-container {
+        background: linear-gradient(to right, #fff3e0, #ffffff);
+        padding: 15px 20px;
+        border-top: 1px solid #ffe0b2;
+        border-bottom: 1px solid #ffe0b2;
+    }
+    .flash-header {
+        display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;
+    }
+    .flash-title { display: flex; align-items: center; gap: 8px; }
+    .flash-title h3 { font-size: 1.1rem; font-weight: 800; color: #e67e22; margin: 0; }
+    
+    .flash-timer { font-size: 0.85rem; color: #d35400; font-weight: 600; }
+    .time-box { background: #d35400; color: #fff; padding: 2px 5px; border-radius: 4px; }
+
+    .flash-grid {
+        display: flex; gap: 15px; overflow-x: auto; scrollbar-width: none;
+    }
+    .flash-grid::-webkit-scrollbar { display: none; }
+
+    .flash-card {
+        flex: 0 0 140px;
+        background: #fff; border-radius: 12px; padding: 10px;
+        position: relative; border: 1px solid #eee;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
+    .badge-off {
+        position: absolute; top: 0; left: 0;
+        background: #ff6b6b; color: #fff; font-size: 0.65rem;
+        padding: 2px 6px; border-radius: 10px 0 10px 0; font-weight: 700;
+    }
+    .flash-card img { width: 60px; height: 60px; object-fit: contain; display: block; margin: 10px auto; }
+    .f-info h6 { font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    
+    .price .new { font-weight: 700; color: var(--dark); }
+    .price .old { text-decoration: line-through; color: #999; font-size: 0.75rem; margin-left: 5px; }
+    
+    .progress-bar {
+        height: 6px; background: #eee; border-radius: 3px; margin-top: 8px; overflow: hidden;
+    }
+    .progress-bar .fill { height: 100%; background: #ff9f43; }
+    .f-info small { font-size: 0.7rem; color: #e67e22; font-weight: 600; }
+</style>
+
+<script>
+    // Simple Countdown Logic
+    function startTimer(duration, display) {
+        var timer = duration, hours, minutes, seconds;
+        setInterval(function () {
+            hours = parseInt(timer / 3600, 10);
+            minutes = parseInt((timer % 3600) / 60, 10);
+            seconds = parseInt(timer % 60, 10);
+
+            hours = hours < 10 ? "0" + hours : hours;
+            minutes = minutes < 10 ? "0" + minutes : minutes;
+            seconds = seconds < 10 ? "0" + seconds : seconds;
+
+            display.innerHTML = `Ends in <span class="time-box">${hours}</span>h : <span class="time-box">${minutes}</span>m : <span class="time-box">${seconds}</span>s`;
+
+            if (--timer < 0) {
+                timer = duration; // Loop it
+            }
+        }, 1000);
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        var fourHours = 60 * 60 * 4;
+        var display = document.querySelector('#countdown-timer');
+        if(display) startTimer(fourHours, display);
+    });
+</script>
+
+
+
+<div id="dynamic-sections-container">
+    <div class="text-center py-4"><div class="loader">Loading shelves...</div></div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}

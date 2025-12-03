@@ -1,7 +1,7 @@
 # apps/catalog/urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import CategoryViewSet, BrandViewSet, SKUViewSet
+from .views import CategoryViewSet, BrandViewSet, SKUViewSet, BulkImportSKUView 
 
 router = DefaultRouter()
 router.register(r"categories", CategoryViewSet, basename="category")
