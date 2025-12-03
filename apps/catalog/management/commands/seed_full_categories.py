@@ -4,7 +4,7 @@ from django.utils.text import slugify
 from apps.catalog.models import Category
 
 class Command(BaseCommand):
-    help = "Populate standard Zepto/Blinkit style categories"
+
 
     def handle(self, *args, **options):
         # Zepto/Blinkit Style Structure

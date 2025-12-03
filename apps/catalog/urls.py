@@ -10,4 +10,5 @@ router.register(r"skus", SKUViewSet, basename="sku")
 
 urlpatterns = [
     path("", include(router.urls)),
+    path("import/bulk-csv/", BulkImportSKUView.as_view(), name="bulk-import-csv"),
 ]

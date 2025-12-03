@@ -5,7 +5,14 @@ from django_filters.rest_framework import DjangoFilterBackend  # Ensure django-f
 
 from .models import Category, Brand, SKU
 from .serializers import CategorySerializer, BrandSerializer, SKUSerializer
-
+# apps/catalog/views.py
+import csv
+from io import TextIOWrapper
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser
+from rest_framework import status
+from .models import Category, Brand, SKU
 
 class ReadAnyWriteAdminMixin:
     """
@@ -95,3 +102,70 @@ class SKUViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
             )
             
         return qs
+
+
+
+
+
+
+class BulkImportSKUView(APIView):
+    """
+    Admin Only: Bulk Import SKUs via CSV upload.
+    """
+    permission_classes = [IsAdminUser] # Sirf Admin/Staff allow karein
+    parser_classes = [MultiPartParser] # File upload ke liye zaroori hai
+
+    def post(self, request):
+        file_obj = request.FILES.get('file')
+        
+        if not file_obj:
+            return Response({"error": "No file selected"}, status=400)
+
+        if not file_obj.name.endswith('.csv'):
+            return Response({"error": "Please upload a CSV file"}, status=400)
+
+        try:
+            # File ko text mode mein read karein
+            csv_file = TextIOWrapper(file_obj.file, encoding='utf-8')
+            reader = csv.DictReader(csv_file)
+            
+            count = 0
+            errors = []
+
+            for row_idx, row in enumerate(reader):
+                try:
+                    # 1. Category & Brand (Get or Create)
+                    cat_name = row.get('category', '').strip()
+                    brand_name = row.get('brand', '').strip()
+                    
+                    if not cat_name or not brand_name:
+                        continue # Skip invalid rows
+
+                    category, _ = Category.objects.get_or_create(name=cat_name)
+                    brand, _ = Brand.objects.get_or_create(name=brand_name)
+                    
+                    # 2. Update or Create SKU
+                    sku_code = row.get('sku_code', '').strip()
+                    
+                    obj, created = SKU.objects.update_or_create(
+                        sku_code=sku_code,
+                        defaults={
+                            'name': row.get('name', ''),
+                            'category': category,
+                            'brand': brand,
+                            'sale_price': row.get('price', 0.0),
+                            'unit': row.get('unit', 'pcs'),
+                            'is_active': True
+                        }
+                    )
+                    count += 1
+                except Exception as e:
+                    errors.append(f"Row {row_idx + 1}: {str(e)}")
+
+            return Response({
+                "message": f"Successfully processed {count} SKUs.",
+                "errors": errors
+            }, status=200)
+
+        except Exception as e:
+            return Response({"error": f"CSV Error: {str(e)}"}, status=500)

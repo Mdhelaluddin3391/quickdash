@@ -27,9 +27,8 @@
         <input type="text" name="q" placeholder="Search for items..." value="{{ request.GET.q }}">
     </form>
 
-    <nav class="header-nav-row">
+    <nav class="header-nav-row" id="dynamic-navbar">
         <a href="/" class="nav-item {% if request.path == '/' %}active{% endif %}">All</a>
-
         <span style="font-size:0.8rem; color:#888; padding:5px;">Loading...</span>
     </nav>
 </header>

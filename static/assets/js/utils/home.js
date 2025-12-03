@@ -1,6 +1,8 @@
+// static/assets/js/utils/home.js
+
 document.addEventListener('DOMContentLoaded', async () => {
     await loadCategories();
-    // loadFeaturedProducts(); // Your existing logic for products
+    // loadFeaturedProducts(); // Future ke liye
 });
 
 async function loadCategories() {
@@ -8,50 +10,73 @@ async function loadCategories() {
     const gridContainer = document.getElementById('home-category-grid');
 
     try {
-        // API Call to get ALL categories
-        const response = await apiCall('/catalog/categories/');
+        // 100 categories fetch karein taaki sab aa jayein
+        const response = await apiCall('/catalog/categories/?page_size=100', 'GET', null, false);
         const categories = response.results || response;
 
-        // Filter: Hum sirf PARENT categories chahte hain (jinka parent null hai)
-        const parents = categories.filter(c => c.parent === null).sort((a, b) => a.sort_order - b.sort_order);
+        // Sirf Parent Categories
+        const parents = categories.filter(c => c.parent === null);
 
-        // 1. Fill Navbar (Horizontal Scroll)
-        // Clear loading text, keep "All"
-        navContainer.innerHTML = '<a href="/" class="nav-item active">All</a>';
-        
-        parents.forEach(cat => {
-            const link = document.createElement('a');
-            // Link to a listing page filtering by this category slug
-            link.href = `/search_results.html?category=${cat.slug}`;
-            link.className = 'nav-item';
-            link.innerText = cat.name.split(' ')[0]; // Navbar mein naam chhota dikhayein (e.g. "Snacks" instead of "Snacks & Beverages")
-            navContainer.appendChild(link);
-        });
-
-        // 2. Fill Home Body Grid
-        gridContainer.innerHTML = ''; // Clear loader
-
-        parents.forEach(cat => {
-            const div = document.createElement('div');
-            div.className = 'cat-item-home';
-            div.onclick = () => window.location.href = `/search_results.html?category=${cat.slug}`;
+        // --- 1. Navbar Update (Smart Naming) ---
+        if (navContainer) {
+            navContainer.innerHTML = '<a href="/" class="nav-item active">All</a>';
             
-            // Icon mapping (Optional: You can add real images in DB later)
-            // Abhi ke liye DB se icon_url use karenge ya fallback
-            const icon = cat.icon_url || 'https://cdn-icons-png.flaticon.com/512/3759/3759344.png';
+            parents.forEach(cat => {
+                const link = document.createElement('a');
+                link.href = `/search_results.html?slug=${cat.slug}`;
+                link.className = 'nav-item';
+                
+                // [FIX] Yahan hum Clean Name function use karenge
+                link.innerText = getCleanName(cat.name);
+                
+                navContainer.appendChild(link);
+            });
+        }
 
-            div.innerHTML = `
-                <div class="cat-icon-box">
-                    <img src="${icon}" alt="${cat.name}">
-                </div>
-                <span class="cat-label">${cat.name}</span>
-            `;
-            gridContainer.appendChild(div);
-        });
+        // --- 2. Home Grid Update (Icons ke saath) ---
+        if (gridContainer) {
+            gridContainer.innerHTML = ''; 
+
+            parents.forEach(cat => {
+                const div = document.createElement('div');
+                div.className = 'cat-item-home';
+                div.onclick = () => window.location.href = `/search_results.html?slug=${cat.slug}`;
+                
+                const icon = cat.icon_url || 'https://cdn-icons-png.flaticon.com/512/3759/3759344.png';
+
+                div.innerHTML = `
+                    <div class="cat-icon-box">
+                        <img src="${icon}" alt="${cat.name}">
+                    </div>
+                    <span class="cat-label">${cat.name}</span>
+                `;
+                gridContainer.appendChild(div);
+            });
+        }
 
     } catch (error) {
         console.error("Error loading categories:", error);
-        if(navContainer) navContainer.innerHTML += '<span class="text-danger">Error</span>';
-        if(gridContainer) gridContainer.innerHTML = '<p class="text-center text-muted">Failed to load.</p>';
+        if(navContainer) navContainer.innerHTML = '<a href="/" class="nav-item active">All</a>';
     }
+}
+
+/**
+ * [NEW] Helper Function: Category ke lambe naam ko chhota aur sundar banata hai.
+ */
+function getCleanName(fullName) {
+    const map = {
+        "Groceries & Essentials": "Groceries",
+        "Fresh Produce": "Fruits & Veg",
+        "Snacks & Beverages": "Snacks",
+        "Dairy, Bread & Eggs": "Dairy",
+        "Chicken, Meat & Fish": "Meat",
+        "Personal Care": "Personal Care",
+        "Home Care": "Home",
+        "Instant Food": "Instant",
+        "Pet Care": "Pet Care",
+        "Baby Care": "Baby Care"
+    };
+    
+    // Agar map mein naam hai toh wo use karo, warna pehla shabd utha lo (bina comma ke)
+    return map[fullName] || fullName.split(' ')[0].replace(',', '');
 }
