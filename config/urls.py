@@ -1,33 +1,13 @@
-"""
-URL configuration for config project.
-
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/5.2/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
-"""
-
-"""
-URL configuration for config project.
-"""
 from django.contrib import admin
 from django.urls import path, include
-from django.views.generic import TemplateView  # [IMPORTANT] Ye import zaroori hai
+from django.views.generic import TemplateView
 
 urlpatterns = [
     # --- Admin Panels ---
     path("admin/", admin.site.urls),
     path("admin-panel/", include("apps.web_admin.urls")),
 
-    # --- APIs (Backend Logic) ---
+    # --- APIs ---
     path("api/v1/auth/", include("apps.accounts.urls")),
     path("api/v1/wms/", include("apps.warehouse.urls")),
     path("api/v1/orders/", include("apps.orders.urls")),
@@ -39,24 +19,40 @@ urlpatterns = [
     path("api/v1/notifications/", include("apps.notifications.urls")),
     path("api/v1/utils/", include("apps.utils.urls")),
 
-    # --- Frontend Pages (Customer App) ---
-    # Ye mapping zaroori hai taaki 'index.html' URL par index page khule
+    # --- Frontend Pages (Mapped to NEW Structure) ---
+
+    # 1. Home
     path("", TemplateView.as_view(template_name="frontend/index.html"), name="home"),
     path("index.html", TemplateView.as_view(template_name="frontend/index.html")),
-    
-    path("auth.html", TemplateView.as_view(template_name="frontend/auth.html"), name="auth"),
-    path("cart.html", TemplateView.as_view(template_name="frontend/cart.html"), name="cart"),
-    path("checkout.html", TemplateView.as_view(template_name="frontend/checkout.html"), name="checkout"),
-    path("product.html", TemplateView.as_view(template_name="frontend/product.html"), name="product"),
-    path("category.html", TemplateView.as_view(template_name="frontend/category.html"), name="category"),
-    path("category_detail.html", TemplateView.as_view(template_name="frontend/category_detail.html"), name="category-detail"),
-    path("profile.html", TemplateView.as_view(template_name="frontend/profile.html"), name="profile"),
-    path("search_results.html", TemplateView.as_view(template_name="frontend/search_results.html"), name="search"),
-    path("order_detail.html", TemplateView.as_view(template_name="frontend/order_detail.html"), name="order-detail"),
-    path("order_success.html", TemplateView.as_view(template_name="frontend/order_success.html"), name="order-success"),
-    path("track_order.html", TemplateView.as_view(template_name="frontend/track_order.html"), name="track-order"),
-    path("location_denied.html", TemplateView.as_view(template_name="frontend/location_denied.html"), name="location-denied"),
-    path("support.html", TemplateView.as_view(template_name="frontend/support.html"), name="support"),
-    path("support_chat.html", TemplateView.as_view(template_name="frontend/support_chat.html"), name="support-chat"),
-]
 
+    # 2. Auth
+    path("auth.html", TemplateView.as_view(template_name="frontend/auth/login.html"), name="auth"),
+
+    # 3. Catalog & Products
+    path("category.html", TemplateView.as_view(template_name="frontend/catalog/category_list.html"), name="category"),
+    # Category Detail & Search both use Product List
+    path("category_detail.html", TemplateView.as_view(template_name="frontend/catalog/product_list.html"), name="category-detail"),
+    path("search_results.html", TemplateView.as_view(template_name="frontend/catalog/product_list.html"), name="search"),
+    path("product.html", TemplateView.as_view(template_name="frontend/catalog/product_detail.html"), name="product"),
+
+    # 4. Checkout Flow
+    path("cart.html", TemplateView.as_view(template_name="frontend/checkout/cart.html"), name="cart"),
+    path("checkout.html", TemplateView.as_view(template_name="frontend/checkout/checkout.html"), name="checkout"),
+    path("order_success.html", TemplateView.as_view(template_name="frontend/checkout/success.html"), name="order-success"),
+
+    # 5. User Account
+    # Profile URL maps to Dashboard template
+    path("profile.html", TemplateView.as_view(template_name="frontend/account/dashboard.html"), name="profile"),
+    path("orders.html", TemplateView.as_view(template_name="frontend/account/orders.html"), name="orders"),
+    path("order_detail.html", TemplateView.as_view(template_name="frontend/account/order_detail.html"), name="order-detail"),
+    path("addresses.html", TemplateView.as_view(template_name="frontend/account/addresses.html"), name="addresses"),
+    path("track_order.html", TemplateView.as_view(template_name="frontend/account/track_order.html"), name="track-order"),
+
+    # 6. Support & Utility
+    path("support.html", TemplateView.as_view(template_name="frontend/support/help_center.html"), name="support"),
+    path("support_chat.html", TemplateView.as_view(template_name="frontend/support/chat.html"), name="support-chat"),
+    
+    # Errors & Permissions
+    path("location_denied.html", TemplateView.as_view(template_name="frontend/pages/location_permission.html"), name="location-denied"),
+    path("404.html", TemplateView.as_view(template_name="frontend/pages/404.html"), name="not-found"),
+]
