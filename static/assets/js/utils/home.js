@@ -1,247 +1,245 @@
 // static/assets/js/utils/home.js
 
 document.addEventListener('DOMContentLoaded', async () => {
-    await loadHomeData();
+    // Saare APIs ko parallel main call karenge taaki page fast load ho
+    await Promise.all([
+        loadBanners(),
+        loadHomeCategories(),
+        loadFlashSales(),
+        loadBrands(),
+        loadProductShelves()
+    ]);
 });
 
-async function loadHomeData() {
-    const navContainer = document.getElementById('dynamic-navbar');
-    const gridContainer = document.getElementById('home-category-grid');
-    const sectionsContainer = document.getElementById('dynamic-sections-container');
+// --- 1. Hero Banners Load Karo ---
+async function loadBanners() {
+    const slider = document.getElementById('hero-slider');
+    if (!slider) return;
 
     try {
-        // 1. Fetch All Parent Categories
-        const response = await apiCall('/catalog/categories/?page_size=100', 'GET', null, false);
-        const allCats = response.results || response;
-        const parentCats = allCats.filter(c => c.parent === null);
-
-        // --- A. Update Navbar & Top Grid ---
-        if (navContainer) {
-            navContainer.innerHTML = '<a href="/" class="nav-item active">All</a>';
-            gridContainer.innerHTML = ''; // Clear loader
-
-            // Fallback: Agar category bhi nahi hai, toh static dikhao grid mein
-            if (parentCats.length === 0) {
-                gridContainer.innerHTML = '<p class="text-muted text-center col-12" style="grid-column: 1/-1;">Categories Coming Soon...</p>';
-            }
-
-            parentCats.forEach((cat, index) => {
-                // Navbar (Limit 8)
-                if (index < 8) {
-                    const link = document.createElement('a');
-                    link.href = `/search_results.html?slug=${cat.slug}`;
-                    link.className = 'nav-item';
-                    link.innerText = getCleanName(cat.name);
-                    navContainer.appendChild(link);
-                }
-
-                // Top Grid (Limit 8)
-                if (index < 8) {
-                    const div = document.createElement('div');
-                    div.className = 'cat-item-home';
-                    div.onclick = () => window.location.href = `/search_results.html?slug=${cat.slug}`;
-                    const icon = cat.icon_url || 'https://cdn-icons-png.flaticon.com/512/3759/3759344.png';
-                    div.innerHTML = `
-                        <div class="cat-icon-box"><img src="${icon}" alt="${cat.name}"></div>
-                        <span class="cat-label">${getCleanName(cat.name)}</span>
-                    `;
-                    gridContainer.appendChild(div);
-                }
-            });
+        const response = await apiCall('/catalog/banners/', 'GET', null, false);
+        const banners = response.results || response;
+        
+        // Sirf 'HERO' position wale banners filter karo
+        const heroBanners = banners.filter(b => b.position === 'HERO');
+        
+        if (heroBanners.length > 0) {
+            slider.innerHTML = heroBanners.map(b => `
+                <a href="${b.target_url}" class="promo-card" style="background: ${b.bg_gradient}">
+                    <div class="promo-content">
+                        <h2>${b.title}</h2>
+                        <p>Click to Explore</p>
+                        <span class="promo-btn" style="background:#fff; color:#333; padding:5px 12px; border-radius:20px; font-weight:700; font-size:0.8rem; margin-top:10px; display:inline-block;">Shop Now</span>
+                    </div>
+                    <img src="${b.image_url}" class="promo-img" alt="${b.title}">
+                </a>
+            `).join('');
+        } else {
+            // Agar API khali hai toh Default Banner dikhao
+            slider.innerHTML = `<div class="promo-card" style="background: linear-gradient(135deg, #32CD32, #2ecc71);">
+                <div class="promo-content"><h2>Welcome to<br>QuickDash</h2></div>
+            </div>`;
         }
-
-        // --- B. Build Dynamic Product Rows (Shelves) ---
-        if (sectionsContainer) {
-            sectionsContainer.innerHTML = ''; // Clear loader
-
-            // Sirf pehli 8 categories fetch karte hain
-            const catsToLoad = parentCats.slice(0, 8); 
-
-            // Parallel Fetching for Speed
-            const promises = catsToLoad.map(cat => loadCategoryShelf(cat));
-            const shelves = await Promise.all(promises);
-
-            // Append valid shelves
-            shelves.forEach(html => {
-                if (html) sectionsContainer.innerHTML += html;
-            });
-
-            // ✅ [UPDATED] STATIC FALLBACK LOGIC
-            // Agar koi bhi real product shelf nahi bani, toh ye Dummy Shelf dikhao
-            if (sectionsContainer.innerHTML === '') {
-                sectionsContainer.innerHTML = `
-                    <section class="category-section">
-                        <div class="section-header">
-                            <h3>Best Sellers (Demo)</h3>
-                            <a href="#" class="view-all-btn" style="pointer-events:none; color:#999;">View All</a>
-                        </div>
-                        <div class="product-scroll-wrapper">
-                            <div class="prod-card">
-                                <div class="prod-img-box">
-                                    <img src="https://cdn-icons-png.flaticon.com/512/2553/2553691.png" class="prod-img" alt="Chips">
-                                </div>
-                                <div class="prod-title">Classic Salted Chips</div>
-                                <div class="prod-unit">50g</div>
-                                <div class="prod-footer">
-                                    <div class="prod-price">₹20</div>
-                                    <button class="btn-add-sm" onclick="alert('This is a demo item. Add real products from Admin Panel.')">ADD</button>
-                                </div>
-                            </div>
-
-                            <div class="prod-card">
-                                <div class="prod-img-box">
-                                    <img src="https://cdn-icons-png.flaticon.com/512/2909/2909787.png" class="prod-img" alt="Cola">
-                                </div>
-                                <div class="prod-title">Cola Soft Drink</div>
-                                <div class="prod-unit">330ml</div>
-                                <div class="prod-footer">
-                                    <div class="prod-price">₹40</div>
-                                    <button class="btn-add-sm" onclick="alert('This is a demo item.')">ADD</button>
-                                </div>
-                            </div>
-
-                            <div class="prod-card">
-                                <div class="prod-img-box">
-                                    <img src="https://cdn-icons-png.flaticon.com/512/5029/5029236.png" class="prod-img" alt="Bread">
-                                </div>
-                                <div class="prod-title">Whole Wheat Bread</div>
-                                <div class="prod-unit">400g</div>
-                                <div class="prod-footer">
-                                    <div class="prod-price">₹45</div>
-                                    <button class="btn-add-sm" onclick="alert('This is a demo item.')">ADD</button>
-                                </div>
-                            </div>
-
-                             <div class="prod-card">
-                                <div class="prod-img-box">
-                                    <img src="https://cdn-icons-png.flaticon.com/512/2329/2329865.png" class="prod-img" alt="Veg">
-                                </div>
-                                <div class="prod-title">Fresh Farm Tomato</div>
-                                <div class="prod-unit">1kg</div>
-                                <div class="prod-footer">
-                                    <div class="prod-price">₹30</div>
-                                    <button class="btn-add-sm" onclick="alert('This is a demo item.')">ADD</button>
-                                </div>
-                            </div>
-
-                            <div class="prod-card">
-                                <div class="prod-img-box">
-                                    <img src="https://cdn-icons-png.flaticon.com/512/2921/2921822.png" class="prod-img" alt="Milk">
-                                </div>
-                                <div class="prod-title">Fresh Cow Milk</div>
-                                <div class="prod-unit">1L Pouch</div>
-                                <div class="prod-footer">
-                                    <div class="prod-price">₹65</div>
-                                    <button class="btn-add-sm" onclick="alert('This is a demo item.')">ADD</button>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="text-center pb-3">
-                            <small class="text-muted" style="font-size:0.75rem;">* No real products found. Showing demo items.</small>
-                        </div>
-                    </section>
-                `;
-            }
-        }
-
-    } catch (error) {
-        console.error("Home Load Error:", error);
-        if(sectionsContainer) sectionsContainer.innerHTML = '<p class="text-center text-danger py-4">Could not load products.</p>';
+    } catch (e) {
+        console.error("Banner Error:", e);
     }
 }
 
-/**
- * Fetches products for a category and returns HTML string for the shelf
- */
-async function loadCategoryShelf(cat) {
+// --- 2. Categories Load Karo ---
+async function loadHomeCategories() {
+    const grid = document.getElementById('home-category-grid');
+    if (!grid) return;
+    
     try {
-        // Fetch 10 items for this category
-        const res = await apiCall(`/catalog/skus/?category__slug=${cat.slug}&page_size=10`, 'GET', null, false);
-        const products = res.results || res;
+        // Top 8 categories mangwao
+        const response = await apiCall('/catalog/categories/?page_size=8', 'GET', null, false);
+        const cats = response.results || response;
+        const parents = cats.filter(c => !c.parent);
 
-        if (!products || products.length === 0) return null;
-
-        // Generate HTML for products
-        const cardsHtml = products.map(p => {
-            const imgUrl = p.image_url || 'https://cdn-icons-png.flaticon.com/512/1147/1147805.png';
-            const price = parseFloat(p.sale_price).toFixed(0);
-            
-            return `
-                <div class="prod-card">
-                    <a href="/product.html?code=${p.sku_code}" style="text-decoration:none; color:inherit;">
-                        <div class="prod-img-box">
-                            <img src="${imgUrl}" class="prod-img" alt="${p.name}">
-                        </div>
-                        <div class="prod-title">${p.name}</div>
-                        <div class="prod-unit">${p.unit}</div>
-                    </a>
-                    <div class="prod-footer">
-                        <div class="prod-price">₹${price}</div>
-                        <button class="btn-add-sm" onclick="addToCart('${p.id}', this)">ADD</button>
-                    </div>
+        grid.innerHTML = parents.map(c => `
+            <div class="cat-item-home" onclick="window.location.href='/search_results.html?slug=${c.slug}'">
+                <div class="cat-icon-box">
+                    <img src="${c.icon_url || 'https://cdn-icons-png.flaticon.com/512/2921/2921822.png'}" alt="${c.name}">
                 </div>
-            `;
-        }).join('');
-
-        // Return Full Section HTML
-        return `
-            <section class="category-section">
-                <div class="section-header">
-                    <h3>${cat.name}</h3>
-                    <a href="/search_results.html?slug=${cat.slug}" class="view-all-btn">See All</a>
-                </div>
-                <div class="product-scroll-wrapper">
-                    ${cardsHtml}
-                </div>
-            </section>
-        `;
+                <span class="cat-label" style="font-size:0.75rem; font-weight:600;">${c.name}</span>
+            </div>
+        `).join('');
 
     } catch (e) {
-        console.warn(`Failed to load shelf for ${cat.name}`, e);
-        return null;
+        grid.innerHTML = '<p class="text-danger text-center">Failed to load</p>';
     }
 }
 
-function getCleanName(fullName) {
-    const map = {
-        "Groceries & Essentials": "Groceries",
-        "Fresh Produce": "Fruits & Veg",
-        "Snacks & Beverages": "Snacks",
-        "Dairy, Bread & Eggs": "Dairy",
-        "Personal Care": "Self Care",
-    };
-    return map[fullName] || fullName.split(' ')[0].replace(',', '');
+// --- 3. Flash Sales (Deal of the Day) ---
+async function loadFlashSales() {
+    const container = document.getElementById('flash-sale-section');
+    const grid = document.getElementById('flash-sale-grid');
+    if (!container || !grid) return;
+    
+    try {
+        const response = await apiCall('/catalog/flash-sales/', 'GET', null, false);
+        const sales = response.results || response;
+
+        if (sales.length === 0) {
+            container.style.display = 'none'; // Agar koi sale nahi hai toh section chhupa do
+            return;
+        }
+
+        container.style.display = 'block';
+        
+        // Timer shuru karo (Pehle item ki end_time ke hisaab se)
+        if (sales[0] && sales[0].end_time) {
+            startTimer(new Date(sales[0].end_time));
+        }
+
+        grid.innerHTML = sales.map(sale => `
+            <div class="flash-card" style="flex:0 0 150px; background:#fff; padding:10px; border-radius:12px; position:relative; border:1px solid #eee;">
+                <div class="badge-off" style="position:absolute; top:0; left:0; background:#ff6b6b; color:#fff; font-size:0.65rem; padding:2px 6px; border-radius:10px 0 10px 0; z-index:2;">
+                    ${sale.discount_percent}% OFF
+                </div>
+                <img src="${sale.sku_image || 'https://cdn-icons-png.flaticon.com/512/2553/2553691.png'}" style="width:70px; height:70px; object-fit:contain; margin:15px auto 10px; display:block;">
+                <div class="f-info">
+                    <div style="font-size:0.85rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${sale.sku_name}</div>
+                    <div class="price">
+                        <span style="font-weight:800;">₹${parseFloat(sale.discounted_price).toFixed(0)}</span>
+                        <span style="text-decoration:line-through; color:#b2bec3; font-size:0.75rem; margin-left:5px;">₹${parseFloat(sale.original_price).toFixed(0)}</span>
+                    </div>
+                    <div class="flash-action-row" style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:8px;">
+                        <div class="progress-wrapper" style="flex-grow:1; margin-right:8px;">
+                            <div class="progress-bar" style="height:5px; background:#eee; border-radius:3px; overflow:hidden;">
+                                <div style="width:${sale.percentage_sold}%; height:100%; background:#e67e22;"></div>
+                            </div>
+                            <small style="font-size:0.65rem; color:#e67e22;">${sale.percentage_sold}% Sold</small>
+                        </div>
+                        <button onclick="addToCart('${sale.sku_id}', this)" style="padding:4px 12px; background:#fff; border:1px solid #32CD32; color:#32CD32; border-radius:6px; font-weight:700; font-size:0.75rem; cursor:pointer;">ADD</button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+    } catch (e) {
+        console.error("Flash Sale Error", e);
+        container.style.display = 'none';
+    }
 }
 
-// Add to Cart Logic
+// Timer Logic
+function startTimer(endTime) {
+    const display = document.getElementById('flash-timer-display');
+    if (!display) return;
+    
+    const interval = setInterval(() => {
+        const now = new Date();
+        const diff = endTime - now;
+        
+        if (diff <= 0) {
+            display.innerText = "Ended";
+            clearInterval(interval);
+            return;
+        }
+
+        const h = Math.floor(diff / (1000 * 60 * 60));
+        const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const s = Math.floor((diff % (1000 * 60)) / 1000);
+
+        display.innerHTML = `Ends in <span class="time-box" style="background:#d35400; color:#fff; padding:2px 5px; border-radius:4px;">${h}h : ${m}m : ${s}s</span>`;
+    }, 1000);
+}
+
+// --- 4. Brands Load Karo ---
+async function loadBrands() {
+    const scroller = document.getElementById('brand-scroller');
+    if (!scroller) return;
+
+    try {
+        const response = await apiCall('/catalog/brands/', 'GET', null, false);
+        const brands = response.results || response;
+
+        if (brands.length === 0) return;
+
+        scroller.innerHTML = brands.map(b => `
+            <div class="brand-circle" onclick="window.location.href='/search_results.html?search=${b.name}'">
+                <img src="${b.logo_url || 'https://cdn-icons-png.flaticon.com/512/888/888879.png'}" alt="${b.name}">
+            </div>
+        `).join('');
+    } catch (e) {
+        console.error("Brand Error", e);
+    }
+}
+
+// --- 5. Product Shelves Load Karo (Best Sellers etc.) ---
+async function loadProductShelves() {
+    const container = document.getElementById('dynamic-sections-container');
+    if (!container) return;
+    
+    container.innerHTML = ''; 
+
+    // Pehle top 5 categories layenge
+    const catResponse = await apiCall('/catalog/categories/', 'GET', null, false);
+    const cats = (catResponse.results || catResponse).slice(0, 5); 
+
+    for (const cat of cats) {
+        // Har category ke liye products layenge
+        const prodResponse = await apiCall(`/catalog/skus/?category__slug=${cat.slug}&page_size=6`, 'GET', null, false);
+        const products = prodResponse.results || prodResponse;
+
+        if (products.length > 0) {
+            const shelfHtml = `
+                <section class="category-section" style="background:#fff; margin-bottom:15px; border-top:1px solid #f0f0f0;">
+                    <div class="section-header" style="display:flex; justify-content:space-between; padding:20px 20px 10px;">
+                        <h3 style="font-size:1.1rem; font-weight:700;">${cat.name}</h3>
+                        <a href="/search_results.html?slug=${cat.slug}" class="view-all-btn" style="color:var(--primary); font-weight:600;">See All</a>
+                    </div>
+                    <div class="product-scroll-wrapper" style="overflow-x:auto; padding:10px 20px 30px; display:flex; gap:15px; scrollbar-width:none;">
+                        ${products.map(p => `
+                            <div class="prod-card" style="flex:0 0 160px; background:#fff; border:1px solid #dfe6e9; border-radius:12px; padding:12px; display:flex; flex-direction:column; justify-content:space-between;">
+                                <a href="/product.html?code=${p.sku_code}" style="text-decoration:none; color:inherit;">
+                                    <div class="prod-img-box" style="height:100px; display:flex; align-items:center; justify-content:center; margin-bottom:10px;">
+                                        <img src="${p.image_url || 'https://cdn-icons-png.flaticon.com/512/1147/1147805.png'}" style="max-height:100%; max-width:100%; object-fit:contain;">
+                                    </div>
+                                    <div class="prod-title" style="font-size:0.9rem; font-weight:600; margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${p.name}</div>
+                                    <div class="prod-unit" style="font-size:0.75rem; color:#636e72;">${p.unit}</div>
+                                </a>
+                                <div class="prod-footer" style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
+                                    <div class="prod-price" style="font-weight:700;">₹${parseFloat(p.sale_price).toFixed(0)}</div>
+                                    <button onclick="addToCart('${p.id}', this)" style="padding:5px 12px; background:#e6f7ef; border:1px solid #32CD32; color:#32CD32; border-radius:6px; font-weight:700; font-size:0.75rem; cursor:pointer;">ADD</button>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </section>
+            `;
+            container.innerHTML += shelfHtml;
+        }
+    }
+}
+
+// --- Cart Logic ---
 async function addToCart(skuId, btn) {
-    if (!APP_CONFIG.IS_LOGGED_IN) {
+    if (!localStorage.getItem('accessToken')) {
         window.location.href = '/auth.html';
         return;
     }
-    
-    const originalText = btn.innerText;
+    const origText = btn.innerText;
     btn.innerText = "..";
     btn.disabled = true;
-
+    
     try {
-        await apiCall('/orders/cart/add/', 'POST', { sku_id: skuId, quantity: 1 }, true);
+        await apiCall('/orders/cart/add/', 'POST', { sku_id: skuId, quantity: 1 });
         btn.innerText = "✔";
         btn.style.background = "#32CD32";
         btn.style.color = "#fff";
-        
-        if(window.updateGlobalCartCount) window.updateGlobalCartCount();
-
         setTimeout(() => {
             btn.innerText = "ADD";
             btn.style.background = "#e6f7ef";
             btn.style.color = "#32CD32";
             btn.disabled = false;
-        }, 2000);
-
+        }, 1500);
+        // Navbar cart update karo
+        if(window.updateGlobalCartCount) window.updateGlobalCartCount();
     } catch (e) {
-        alert(e.message || "Failed to add");
-        btn.innerText = originalText;
+        alert(e.message || "Failed");
+        btn.innerText = origText;
         btn.disabled = false;
     }
 }

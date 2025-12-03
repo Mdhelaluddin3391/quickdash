@@ -1,0 +1,184 @@
+/* static/assets/css/home.css */
+
+/* --- Hero Section --- */
+.hero-wrapper {
+    padding: 15px;
+    background: #fff;
+}
+
+.scroll-banner {
+    display: flex;
+    gap: 15px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    padding-bottom: 10px;
+    -ms-overflow-style: none; /* IE and Edge */
+    scrollbar-width: none;    /* Firefox */
+}
+
+.scroll-banner::-webkit-scrollbar {
+    display: none;
+}
+
+.promo-card {
+    flex: 0 0 90%;
+    height: 180px;
+    border-radius: 16px;
+    position: relative;
+    overflow: hidden;
+    scroll-snap-align: center;
+    display: flex;
+    align-items: center;
+    padding: 20px;
+    color: #fff;
+    text-decoration: none;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    transition: transform 0.3s;
+}
+
+.promo-img {
+    position: absolute;
+    right: -10px;
+    bottom: -10px;
+    width: 140px;
+    opacity: 0.9;
+    transform: rotate(-10deg);
+}
+
+.promo-content {
+    z-index: 2;
+    max-width: 60%;
+}
+
+.promo-content h2 {
+    font-size: 1.8rem;
+    font-weight: 800;
+    line-height: 1.1;
+    margin-bottom: 5px;
+}
+
+/* --- Category Grid --- */
+#home-category-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 15px 10px;
+    padding: 10px 20px 30px;
+}
+
+.cat-item-home {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.cat-item-home:active {
+    transform: scale(0.95);
+}
+
+.cat-icon-box {
+    width: 70px;
+    height: 70px;
+    background: #e8f5e9;
+    border-radius: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 8px;
+}
+
+.cat-icon-box img {
+    width: 40px;
+    height: 40px;
+    object-fit: contain;
+}
+
+/* --- Flash Sale Section --- */
+.flash-sale-container {
+    background: linear-gradient(to right, #fff3e0, #ffffff);
+    padding: 15px 20px;
+    border-top: 1px solid #ffe0b2;
+    border-bottom: 1px solid #ffe0b2;
+}
+
+.flash-grid {
+    display: flex;
+    gap: 15px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 5px;
+}
+
+/* --- Brands Section --- */
+.brand-scroller {
+    display: flex;
+    gap: 20px;
+    overflow-x: auto;
+    padding: 0 20px 10px;
+    scrollbar-width: none;
+}
+
+.brand-circle {
+    flex: 0 0 70px;
+    height: 70px;
+    border-radius: 50%;
+    border: 1px solid #eee;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+}
+
+.brand-circle img {
+    width: 40px;
+    height: 40px;
+    object-fit: contain;
+}
+
+/* --- Skeleton Loaders --- */
+.skeleton {
+    background: #eee;
+    border-radius: 8px;
+    animation: pulse 1.5s infinite;
+}
+
+
+.mid-banner {
+    padding: 0 20px 20px;
+    margin-top: 10px;
+}
+
+.mid-banner img {
+    width: 100%;
+    border-radius: 12px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    display: block;
+}
+
+@media (min-width: 768px) {
+    .mid-banner img {
+        height: 250px;
+        object-fit: cover;
+    }
+}
+
+@keyframes pulse {
+    0% { opacity: 0.6; }
+    50% { opacity: 1; }
+    100% { opacity: 0.6; }
+}
+
+/* --- Responsive --- */
+@media (min-width: 768px) {
+    .promo-card {
+        flex: 0 0 45%;
+        height: 220px;
+    }
+    #home-category-grid {
+        grid-template-columns: repeat(8, 1fr);
+        gap: 20px;
+    }
+}

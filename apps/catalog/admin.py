@@ -35,3 +35,17 @@ class SKUAdmin(admin.ModelAdmin):
     list_filter = ("category", "brand", "is_active", "is_featured")
     list_editable = ("sale_price", "is_active", "is_featured")
     readonly_fields = ("created_at", "updated_at")
+
+
+
+# apps/catalog/admin.py (Append this)
+from .models import Banner, FlashSale
+
+@admin.register(Banner)
+class BannerAdmin(admin.ModelAdmin):
+    list_display = ('title', 'position', 'is_active', 'sort_order')
+    list_editable = ('is_active', 'sort_order')
+
+@admin.register(FlashSale)
+class FlashSaleAdmin(admin.ModelAdmin):
+    list_display = ('sku', 'discounted_price', 'is_active', 'end_time', 'percentage_sold')

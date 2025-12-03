@@ -2,7 +2,10 @@
 from rest_framework import viewsets, permissions, filters
 from rest_framework.permissions import SAFE_METHODS, AllowAny, IsAdminUser
 from django_filters.rest_framework import DjangoFilterBackend  # Ensure django-filter is installed
-
+# apps/catalog/views.py (Append this)
+from .serializers import BannerSerializer, FlashSaleSerializer
+from .models import Banner, FlashSale
+from django.utils import timezone
 from .models import Category, Brand, SKU
 from .serializers import CategorySerializer, BrandSerializer, SKUSerializer
 # apps/catalog/views.py
@@ -13,6 +16,16 @@ from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser
 from rest_framework import status
 from .models import Category, Brand, SKU
+# Add to imports in apps/catalog/views.py
+from .models import Banner, FlashSale
+from .serializers import BannerSerializer, FlashSaleSerializer
+from rest_framework import viewsets
+from rest_framework.permissions import AllowAny
+from django.utils import timezone
+
+# ... existing code ...
+
+
 
 class ReadAnyWriteAdminMixin:
     """
@@ -169,3 +182,26 @@ class BulkImportSKUView(APIView):
 
         except Exception as e:
             return Response({"error": f"CSV Error: {str(e)}"}, status=500)
+
+
+
+
+
+
+
+class BannerViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Banner.objects.filter(is_active=True).order_by('sort_order')
+    serializer_class = BannerSerializer
+    permission_classes = [AllowAny]
+
+class FlashSaleViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = FlashSaleSerializer
+    permission_classes = [AllowAny]
+
+    def get_queryset(self):
+        now = timezone.now()
+        return FlashSale.objects.filter(
+            is_active=True, 
+            start_time__lte=now, 
+            end_time__gte=now
+        ).select_related('sku').order_by('end_time')

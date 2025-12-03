@@ -216,3 +216,58 @@ class SKU(models.Model):
 
     def __str__(self):
         return f"{self.sku_code} - {self.name}"
+
+
+
+
+# apps/catalog/models.py (Append this)
+
+class Banner(models.Model):
+    """
+    Dynamic Banners for Home Page (Hero Slider & Mid Banners)
+    """
+    POSITION_CHOICES = [
+        ('HERO', 'Hero Slider'),
+        ('MID', 'Middle Banner'),
+    ]
+    
+    title = models.CharField(max_length=100)
+    image_url = models.URLField(help_text="External URL or Cloudinary link")
+    target_url = models.CharField(max_length=255, help_text="/category.html?slug=veg or /product.html?code=...")
+    position = models.CharField(max_length=10, choices=POSITION_CHOICES, default='HERO')
+    bg_gradient = models.CharField(max_length=50, default="linear-gradient(135deg, #32CD32 0%, #2ecc71 100%)", help_text="CSS Gradient string")
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['sort_order']
+
+    def __str__(self):
+        return f"{self.position} - {self.title}"
+
+
+class FlashSale(models.Model):
+    """
+    Deal of the Day / Flash Sales
+    """
+    sku = models.OneToOneField('SKU', on_delete=models.CASCADE)
+    discounted_price = models.DecimalField(max_digits=10, decimal_places=2)
+    start_time = models.DateTimeField()
+    end_time = models.DateTimeField()
+    total_quantity = models.PositiveIntegerField(default=100)
+    sold_quantity = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"Flash Sale: {self.sku.sku_code}"
+
+    @property
+    def percentage_sold(self):
+        if self.total_quantity == 0: return 0
+        return int((self.sold_quantity / self.total_quantity) * 100)
+    
+    @property
+    def discount_percent(self):
+        if self.sku.sale_price == 0: return 0
+        diff = self.sku.sale_price - self.discounted_price
+        return int((diff / self.sku.sale_price) * 100)

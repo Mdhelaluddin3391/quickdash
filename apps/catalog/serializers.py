@@ -1,6 +1,7 @@
 # apps/catalog/serializers.py
 from rest_framework import serializers
 from .models import Category, Brand, SKU
+from .models import Banner, FlashSale
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -69,3 +70,28 @@ class SKUSerializer(serializers.ModelSerializer):
             "category": {"write_only": True, "required": False, "allow_null": True},
             "brand": {"write_only": True, "required": False, "allow_null": True},
         }
+
+
+
+# apps/catalog/serializers.py (Append this)
+
+class BannerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Banner
+        fields = ['id', 'title', 'image_url', 'target_url', 'position', 'bg_gradient']
+
+class FlashSaleSerializer(serializers.ModelSerializer):
+    sku_name = serializers.CharField(source='sku.name', read_only=True)
+    sku_image = serializers.URLField(source='sku.image_url', read_only=True)
+    sku_unit = serializers.CharField(source='sku.unit', read_only=True)
+    original_price = serializers.DecimalField(source='sku.sale_price', max_digits=10, decimal_places=2, read_only=True)
+    sku_id = serializers.UUIDField(source='sku.id', read_only=True)
+    sku_code = serializers.CharField(source='sku.sku_code', read_only=True)
+
+    class Meta:
+        model = FlashSale
+        fields = [
+            'id', 'sku_id', 'sku_code', 'sku_name', 'sku_image', 'sku_unit',
+            'original_price', 'discounted_price', 'percentage_sold', 
+            'discount_percent', 'end_time'
+        ]
