@@ -1,6 +1,7 @@
 import uuid
 import logging
 from django.db import models, transaction
+# Explicitly import CheckConstraint and Q
 from django.db.models import CheckConstraint, Q, Sum
 from django.conf import settings
 from django.utils import timezone
@@ -56,12 +57,8 @@ class Shelf(models.Model):
         return f"{self.aisle.code}-{self.code}"
 
 class Bin(models.Model):
-    # [FIX] Renamed 'sshelf' to 'shelf' to match unique_together constraint
     shelf = models.ForeignKey(Shelf, on_delete=models.CASCADE, related_name="bins")
-
-    # Optional direct zone link if needed for legacy, but hierarchy prefers shelf
     zone = models.ForeignKey(Zone, on_delete=models.CASCADE, related_name="bins_direct", null=True, blank=True)
-    
     bin_code = models.CharField(max_length=20, unique=True, db_index=True)
     capacity = models.FloatField(default=100.0)
 
@@ -81,12 +78,13 @@ class BinInventory(models.Model):
     class Meta:
         unique_together = ("bin", "sku")
         constraints = [
-            models.CheckConstraint(
-                check=models.Q(qty__gte=0), 
+            # UPDATED: Using explicit CheckConstraint and Q imported above
+            CheckConstraint(
+                check=Q(qty__gte=0), 
                 name="bin_inventory_qty_gte_0"
             ),
-            models.CheckConstraint(
-                check=models.Q(reserved_qty__gte=0), 
+            CheckConstraint(
+                check=Q(reserved_qty__gte=0), 
                 name="bin_inventory_reserved_qty_gte_0"
             ),
         ]
@@ -233,7 +231,6 @@ class DispatchRecord(models.Model):
         default=DispatchStatus.READY,
         db_index=True,
     )
-    # link to delivery/rider world by ID (string) to avoid circular imports
     rider_id = models.CharField(
         max_length=64,
         null=True,
@@ -460,57 +457,3 @@ class IdempotencyKey(models.Model):
 
     class Meta:
         verbose_name_plural = "Idempotency Keys"
-
-
-# =========================================================
-# 7. AUTO STOCK SYNC TO CENTRAL INVENTORY
-# =========================================================
-
-# def sync_inventory_stock(warehouse_id, sku_id):
-#     """
-#     Calculates total available stock across ALL bins for a specific SKU in a Warehouse,
-#     and updates the central 'InventoryStock' (apps.inventory) used by cart/search.
-#     """
-#     from apps.inventory.models import InventoryStock  # local import to avoid circulars
-
-#     try:
-#         with transaction.atomic():
-#             totals = BinInventory.objects.filter(
-#                 bin__zone__warehouse_id=warehouse_id,
-#                 sku_id=sku_id,
-#             ).aggregate(
-#                 total_qty=Sum("qty"),
-#                 total_reserved=Sum("reserved_qty"),
-#             )
-#             qty = totals["total_qty"] or 0
-#             reserved = totals["total_reserved"] or 0
-#             available = max(0, qty - reserved)
-
-#             stock, _ = InventoryStock.objects.select_for_update().get_or_create(
-#                 warehouse_id=warehouse_id,
-#                 sku_id=sku_id,
-#                 defaults={"available_qty": 0, "reserved_qty": 0},
-#             )
-#             stock.available_qty = available
-#             stock.reserved_qty = reserved
-#             stock.save()
-
-#             logger.info(
-#                 "SYNC: SKU %s in WH %s -> avail=%s reserved=%s",
-#                 sku_id,
-#                 warehouse_id,
-#                 available,
-#                 reserved,
-#             )
-#     except Exception:
-#         logger.exception("Stock sync failed for warehouse=%s sku=%s", warehouse_id, sku_id)
-
-
-# @receiver([post_save, post_delete], sender=BinInventory)
-# def on_bin_inventory_change(sender, instance, **kwargs):
-#     """
-#     Whenever BinInventory changes, update central InventoryStock.
-#     """
-#     warehouse_id = instance.bin.zone.warehouse_id
-#     sku_id = instance.sku_id
-#     sync_inventory_stock(warehouse_id, sku_id)

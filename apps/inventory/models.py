@@ -29,7 +29,6 @@ class InventoryStock(models.Model):
         verbose_name = "Inventory Stock"
         verbose_name_plural = "Inventory Stocks"
         constraints = [
-            # Fix: Use Q() syntax correctly and use imported CheckConstraint directly
             CheckConstraint(
                 check=Q(available_qty__gte=0), 
                 name="inventory_stock_available_qty_gte_0"
@@ -49,17 +48,12 @@ class InventoryStock(models.Model):
 
 
 class InventoryHistory(models.Model):
-    """
-    Audit trail for inventory changes.
-    """
     id = models.BigAutoField(primary_key=True)
-
     stock = models.ForeignKey(
         InventoryStock,
         on_delete=models.CASCADE,
         related_name="history",
     )
-
     warehouse = models.ForeignKey(
         Warehouse,
         on_delete=models.CASCADE,
@@ -70,24 +64,12 @@ class InventoryHistory(models.Model):
         on_delete=models.CASCADE,
         related_name="inventory_history",
     )
-
     delta_available = models.IntegerField(default=0)
     delta_reserved = models.IntegerField(default=0)
-
     available_after = models.IntegerField()
     reserved_after = models.IntegerField()
-
-    change_type = models.CharField(
-        max_length=64,
-        blank=True,
-        help_text="Reason: putaway, dispatch, cycle_count, etc."
-    )
-    reference = models.CharField(
-        max_length=100,
-        blank=True,
-        help_text="Order ID / GRN / Task ID"
-    )
-
+    change_type = models.CharField(max_length=64, blank=True)
+    reference = models.CharField(max_length=100, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
