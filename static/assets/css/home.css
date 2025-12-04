@@ -58,6 +58,17 @@
     margin-bottom: 5px;
 }
 
+.promo-btn {
+    background: #fff;
+    color: #333;
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-weight: 700;
+    font-size: 0.8rem;
+    margin-top: 10px;
+    display: inline-block;
+}
+
 /* --- Category Grid --- */
 #home-category-grid {
     display: grid;
@@ -96,6 +107,11 @@
     object-fit: contain;
 }
 
+.cat-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
 /* --- Flash Sale Section --- */
 .flash-sale-container {
     background: linear-gradient(to right, #fff3e0, #ffffff);
@@ -110,6 +126,101 @@
     overflow-x: auto;
     scrollbar-width: none;
     padding-bottom: 5px;
+}
+
+.flash-card {
+    flex: 0 0 150px;
+    background: #fff;
+    padding: 10px;
+    border-radius: 12px;
+    position: relative;
+    border: 1px solid #eee;
+}
+
+.flash-card .badge-off {
+    position: absolute;
+    top: 0;
+    left: 0;
+    background: #ff6b6b;
+    color: #fff;
+    font-size: 0.65rem;
+    padding: 2px 6px;
+    border-radius: 10px 0 10px 0;
+    z-index: 2;
+}
+
+.flash-card img {
+    width: 70px;
+    height: 70px;
+    object-fit: contain;
+    margin: 15px auto 10px;
+    display: block;
+}
+
+.flash-card .f-info {
+    font-size: 0.85rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.flash-card .price {
+    font-weight: 800;
+}
+
+.flash-card .price span:last-child {
+    text-decoration: line-through;
+    color: #b2bec3;
+    font-size: 0.75rem;
+    margin-left: 5px;
+}
+
+.flash-action-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    margin-top: 8px;
+}
+
+.progress-wrapper {
+    flex-grow: 1;
+    margin-right: 8px;
+}
+
+.progress-bar {
+    height: 5px;
+    background: #eee;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-bar div {
+    height: 100%;
+    background: #e67e22;
+}
+
+.progress-wrapper small {
+    font-size: 0.65rem;
+    color: #e67e22;
+}
+
+.flash-action-row button {
+    padding: 4px 12px;
+    background: #fff;
+    border: 1px solid #32CD32;
+    color: #32CD32;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+.time-box {
+    background: #d35400;
+    color: #fff;
+    padding: 2px 5px;
+    border-radius: 4px;
 }
 
 /* --- Brands Section --- */
@@ -137,6 +248,122 @@
     height: 40px;
     object-fit: contain;
 }
+
+/* --- Product Shelves --- */
+.category-section {
+    background: #fff;
+    margin-bottom: 15px;
+    border-top: 1px solid #f0f0f0;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    padding: 20px 20px 10px;
+}
+
+.section-header h3 {
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.view-all-btn {
+    color: var(--primary);
+    font-weight: 600;
+}
+
+.product-scroll-wrapper {
+    overflow-x: auto;
+    padding: 10px 20px 30px;
+    display: flex;
+    gap: 15px;
+    scrollbar-width: none;
+}
+
+.prod-card {
+    flex: 0 0 160px;
+    background: #fff;
+    border: 1px solid #dfe6e9;
+    border-radius: 12px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.prod-card a {
+    text-decoration: none;
+    color: inherit;
+}
+
+.prod-img-box {
+    height: 100px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 10px;
+}
+
+.prod-img-box img {
+    max-height: 100%;
+    max-width: 100%;
+    object-fit: contain;
+}
+
+.prod-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.prod-unit {
+    font-size: 0.75rem;
+    color: #636e72;
+}
+
+.prod-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 10px;
+}
+
+.prod-price {
+    font-weight: 700;
+}
+
+.prod-card button {
+    padding: 5px 12px;
+    background: #e6f7ef;
+    border: 1px solid #32CD32;
+    color: #32CD32;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+.view-all-card {
+    flex: 0 0 100px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.view-all-card a {
+    width: 50px;
+    height: 50px;
+    background: #e6f7ef;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--primary);
+}
+
 
 /* --- Skeleton Loaders --- */
 .skeleton {

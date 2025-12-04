@@ -9,41 +9,51 @@ const API_CONFIG = {
  * Generic API Call Function
  * Handles Auth Tokens, Errors, and JSON parsing automatically.
  */
+let isRefreshing = false;
+let refreshPromise = null;
+
+/**
+ * Generic API Call Function
+ * Handles Auth Tokens, Errors, and JSON parsing automatically.
+ */
 async function apiCall(endpoint, method = 'GET', body = null, requireAuth = true) {
-    let token = localStorage.getItem('accessToken');
-    
-    const headers = {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': getCookie('csrftoken') // Django CSRF protection
+    const executeFetch = async () => {
+        let token = localStorage.getItem('accessToken');
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        };
+        if (requireAuth && token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+        const config = { method, headers };
+        if (body) {
+            config.body = JSON.stringify(body);
+        }
+        return fetch(`${API_CONFIG.BASE_URL}${endpoint}`, config);
     };
-
-    if (requireAuth && token) {
-        headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    const config = {
-        method: method,
-        headers: headers,
-    };
-
-    if (body) {
-        config.body = JSON.stringify(body);
-    }
 
     try {
-        let response = await fetch(`${API_CONFIG.BASE_URL}${endpoint}`, config);
+        let response = await executeFetch();
 
-        // --- Token Expiry Handling (401 Unauthorized) ---
         if (response.status === 401 && requireAuth) {
-            console.warn("Access Token Expired. Attempting Refresh...");
-            const refreshSuccess = await refreshToken();
-            
+            console.warn("Access Token Expired. Handling Refresh...");
+
+            if (!isRefreshing) {
+                // If not already refreshing, start the refresh process
+                isRefreshing = true;
+                refreshPromise = refreshToken().finally(() => {
+                    isRefreshing = false;
+                    refreshPromise = null; // Clear the promise
+                });
+            }
+
+            // Wait for the ongoing refresh to complete
+            const refreshSuccess = await refreshPromise;
+
             if (refreshSuccess) {
-                // Retry original request with new token
-                token = localStorage.getItem('accessToken');
-                headers['Authorization'] = `Bearer ${token}`;
-                config.headers = headers;
-                response = await fetch(`${API_CONFIG.BASE_URL}${endpoint}`, config);
+                // Retry original request with the new token
+                response = await executeFetch();
             } else {
                 // Refresh failed, logout user
                 logout();
@@ -51,15 +61,11 @@ async function apiCall(endpoint, method = 'GET', body = null, requireAuth = true
             }
         }
 
-        // Handle empty responses (like 204 No Content)
         if (response.status === 204) return null;
-
         const data = await response.json();
-
         if (!response.ok) {
             throw new Error(data.detail || data.error || "Something went wrong");
         }
-
         return data;
 
     } catch (error) {
@@ -73,26 +79,32 @@ async function apiCall(endpoint, method = 'GET', body = null, requireAuth = true
  */
 async function refreshToken() {
     const refresh = localStorage.getItem('refreshToken');
-    if (!refresh) return false;
+    if (!refresh) {
+        console.error("No refresh token available.");
+        return false;
+    }
 
     try {
         const response = await fetch(`${API_CONFIG.BASE_URL}/auth/token/refresh/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh: refresh })
+            body: JSON.stringify({ refresh })
         });
 
         if (response.ok) {
             const data = await response.json();
             localStorage.setItem('accessToken', data.access);
-            // Rotate refresh token if backend sends a new one
             if (data.refresh) localStorage.setItem('refreshToken', data.refresh);
+            console.log("Token successfully refreshed.");
             return true;
+        } else {
+            console.error("Token refresh API call failed with status:", response.status);
+            return false;
         }
     } catch (e) {
-        console.error("Token refresh failed:", e);
+        console.error("An error occurred during token refresh:", e);
+        return false;
     }
-    return false;
 }
 
 // --- Helper: Get CSRF Cookie ---
