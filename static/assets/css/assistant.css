@@ -1,66 +1,125 @@
-/* Floating Button */
+/* --- Floating Button (With Bouncy Animation) --- */
 .assistant-btn {
     position: fixed; bottom: 30px; right: 30px;
-    width: 60px; height: 60px;
-    background: var(--primary); color: white;
+    width: 65px; height: 65px;
+    background: linear-gradient(135deg, #32CD32, #58D68D); /* Soft Green Gradient */
+    color: white;
     border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 4px 15px rgba(50, 205, 50, 0.4);
+    box-shadow: 0 10px 25px rgba(46, 204, 113, 0.5);
     cursor: pointer; z-index: 9999;
-    transition: transform 0.3s;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); /* Spring effect */
+    animation: floatBtn 3s ease-in-out infinite;
 }
-.assistant-btn:hover { transform: scale(1.1); }
-.assistant-btn i { font-size: 1.8rem; }
 
-/* Chat Box */
+.assistant-btn:hover { 
+    transform: scale(1.1) rotate(-10deg); 
+    box-shadow: 0 15px 35px rgba(46, 204, 113, 0.6);
+}
+
+.assistant-btn i { font-size: 2rem; }
+
+/* --- Chat Box (Rounded & Soft) --- */
 .assistant-box {
-    position: fixed; bottom: 100px; right: 30px;
-    width: 320px; height: 450px;
-    background: #fff; border-radius: 16px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    position: fixed; bottom: 110px; right: 30px;
+    width: 340px; height: 480px;
+    background: #fff; 
+    border-radius: 24px; /* Super rounded corners */
+    box-shadow: 0 20px 60px rgba(0,0,0,0.15);
     display: none; flex-direction: column;
     z-index: 9999; overflow: hidden;
-    border: 1px solid var(--border);
+    border: none;
+    transform-origin: bottom right;
 }
-.assistant-box.active { display: flex; animation: slideUp 0.3s ease; }
 
-/* Header */
+.assistant-box.active { 
+    display: flex; 
+    animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); 
+}
+
+/* --- Header --- */
 .ast-header {
-    background: var(--primary); color: #fff; padding: 15px;
+    background: linear-gradient(135deg, #32CD32, #82E0AA);
+    color: #fff; padding: 20px;
     display: flex; align-items: center; justify-content: space-between;
+    border-radius: 24px 24px 0 0;
 }
-.ast-header h4 { font-size: 1rem; margin: 0; font-weight: 600; }
+.ast-header h4 { font-size: 1.1rem; margin: 0; font-weight: 700; letter-spacing: 0.5px; }
+.ast-header i { 
+    background: rgba(255,255,255,0.2); 
+    padding: 5px; border-radius: 50%; width: 28px; height: 28px; 
+    display: flex; align-items: center; justify-content: center; transition: 0.2s; 
+}
+.ast-header i:hover { background: rgba(255,255,255,0.4); transform: rotate(90deg); }
 
-/* Messages Area */
+/* --- Body --- */
 .ast-body {
-    flex-grow: 1; padding: 15px; overflow-y: auto;
-    background: #f9fcf9; display: flex; flex-direction: column; gap: 10px;
+    flex-grow: 1; padding: 20px; overflow-y: auto;
+    background: #f0fdf4; /* Very light green bg */
+    display: flex; flex-direction: column; gap: 12px;
+    scrollbar-width: thin;
 }
 
-/* Bubbles */
-.msg-row { display: flex; width: 100%; }
+/* --- Bubbles --- */
+.msg-row { display: flex; width: 100%; align-items: flex-end; gap: 5px; }
 .msg-row.bot { justify-content: flex-start; }
 .msg-row.user { justify-content: flex-end; }
 
 .msg-bubble {
-    max-width: 80%; padding: 8px 12px; border-radius: 12px; font-size: 0.9rem;
-    line-height: 1.4;
+    max-width: 80%; padding: 12px 16px; 
+    border-radius: 20px; 
+    font-size: 0.95rem; line-height: 1.5;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    position: relative;
 }
-.msg-bubble.bot { background: #fff; border: 1px solid #eee; color: #333; border-bottom-left-radius: 0; }
-.msg-bubble.user { background: var(--primary); color: #fff; border-bottom-right-radius: 0; }
 
-/* Footer Input */
+/* Bot Bubble (White with grey border) */
+.msg-bubble.bot { 
+    background: #fff; 
+    color: #444; 
+    border-bottom-left-radius: 4px; /* Speech bubble tail */
+    border: 1px solid #e1e1e1;
+}
+
+/* User Bubble (Green Gradient) */
+.msg-bubble.user { 
+    background: linear-gradient(135deg, #32CD32, #2ecc71); 
+    color: #fff; 
+    border-bottom-right-radius: 4px; /* Speech bubble tail */
+    border: none;
+}
+
+/* --- Footer --- */
 .ast-footer {
-    padding: 10px; border-top: 1px solid #eee; background: #fff;
-    display: flex; gap: 8px;
-}
-.ast-footer input {
-    flex-grow: 1; padding: 8px 12px; border-radius: 20px;
-    border: 1px solid #ddd; outline: none; font-size: 0.9rem;
-}
-.ast-footer button {
-    background: var(--primary); color: #fff; border: none;
-    width: 35px; height: 35px; border-radius: 50%; cursor: pointer;
+    padding: 15px; background: #fff;
+    display: flex; gap: 10px; align-items: center;
+    border-top: 1px solid #f0f0f0;
 }
 
-@keyframes slideUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
+.ast-footer input {
+    flex-grow: 1; padding: 12px 20px; 
+    border-radius: 30px; border: 1px solid #eee; 
+    outline: none; font-size: 0.95rem; background: #f9f9f9;
+    transition: 0.2s;
+}
+.ast-footer input:focus { background: #fff; border-color: #32CD32; box-shadow: 0 0 0 3px rgba(50,205,50,0.1); }
+
+.ast-footer button {
+    background: #32CD32; color: #fff; border: none;
+    width: 45px; height: 45px; border-radius: 50%; 
+    cursor: pointer; box-shadow: 0 4px 10px rgba(50,205,50,0.3);
+    transition: 0.2s;
+    display: flex; align-items: center; justify-content: center;
+}
+.ast-footer button:hover { transform: scale(1.1); background: #27ae60; }
+
+/* --- Animations --- */
+@keyframes floatBtn {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
+
+@keyframes popIn {
+    0% { opacity: 0; transform: scale(0.8) translateY(20px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+}

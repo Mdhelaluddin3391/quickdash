@@ -155,32 +155,127 @@ img { max-width: 100%; display: block; }
 
 /* --- FOOTER STYLES (Cleaned up) --- */
 footer {
-    background-color: var(--dark);
-    color: white;
-    padding: 40px 0 20px;
-    margin-top: auto; /* Pushes footer to bottom */
+    background-color: #ffffff;
+    color: #2d3436; /* Dark text for white bg */
+    padding-top: 0;
+    margin-top: auto;
+    position: relative;
+    font-size: 0.9rem;
+    overflow: hidden;
+    
+    /* "Tech/Grocery" Vibe Pattern - Subtle Grid */
+    background-image: 
+        linear-gradient(#f0f2f5 1px, transparent 1px),
+        linear-gradient(90deg, #f0f2f5 1px, transparent 1px);
+    background-size: 20px 20px; /* Grid size */
+    background-position: center center;
 }
-.container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+/* Neon Green Top Border (Speed Line) */
+.footer-top-border {
+    height: 4px;
+    background: linear-gradient(90deg, var(--primary), #FFD700); /* Green to Gold */
+    width: 100%;
+    position: relative;
+    z-index: 2;
+}
 
 .footer-content {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 30px;
-    margin-bottom: 30px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 40px;
+    padding: 50px 0;
+    position: relative;
+    z-index: 1;
 }
+
+/* Brand Styling */
+.footer-logo {
+    font-size: 1.8rem;
+    font-weight: 800;
+    color: var(--primary);
+    margin-bottom: 15px;
+    display: flex; align-items: center; gap: 10px;
+    text-decoration: none;
+}
+.footer-logo:hover { opacity: 0.8; }
+
+.brand-col p { color: #636e72; line-height: 1.6; margin-bottom: 20px; }
+
+/* Headings */
 .footer-column h3 {
-    font-size: 18px; margin-bottom: 20px; position: relative; padding-bottom: 10px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #2d3436;
+    margin-bottom: 20px;
+    position: relative;
+    display: inline-block;
+    letter-spacing: 0.5px;
 }
 .footer-column h3::after {
-    content: ''; position: absolute; bottom: 0; left: 0;
-    width: 40px; height: 2px; background-color: var(--primary);
+    content: '';
+    position: absolute;
+    left: 0; bottom: -8px;
+    width: 40px; height: 3px;
+    background-color: var(--primary);
+    border-radius: 2px;
 }
-.footer-links li { margin-bottom: 10px; }
-.footer-links a { color: #b2bec3; transition: 0.3s; }
-.footer-links a:hover { color: white; padding-left: 5px; }
-.copyright {
-    text-align: center; padding-top: 20px;
-    border-top: 1px solid #444; color: #b2bec3; font-size: 14px;
+
+/* Interactive Links */
+.footer-links li { margin-bottom: 12px; }
+.footer-links a {
+    color: #636e72; /* Muted text */
+    transition: all 0.3s ease;
+    display: flex; align-items: center; gap: 8px;
+    font-weight: 500;
+}
+.footer-links a i { font-size: 0.7rem; color: var(--primary); opacity: 0.6; transition: 0.3s; }
+
+/* Hover Animation */
+.footer-links a:hover { color: var(--primary); transform: translateX(5px); }
+.footer-links a:hover i { opacity: 1; }
+
+/* Contact Info */
+.contact-col p {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 14px; color: #636e72;
+}
+.contact-col i { color: var(--primary); font-size: 1rem; width: 20px; text-align: center; }
+
+/* Social Icons Buttons (Light Theme) */
+.social-icons { display: flex; gap: 12px; margin-top: 15px; }
+.social-btn {
+    width: 40px; height: 40px;
+    background: #f1f2f6; /* Light grey background */
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: #2d3436; 
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    font-size: 1.1rem;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+}
+.social-btn:hover {
+    background: var(--primary);
+    color: #fff;
+    transform: translateY(-3px) scale(1.1);
+    box-shadow: 0 5px 15px rgba(50, 205, 50, 0.3);
+}
+
+/* App Badges */
+.app-badges { display: flex; gap: 15px; }
+.app-badges a { font-size: 1.6rem; color: #b2bec3; transition: 0.3s; }
+.app-badges a:hover { color: var(--primary); transform: scale(1.1); }
+
+/* Copyright Bar (Light) */
+.copyright-bar {
+    background-color: #f9f9f9;
+    padding: 20px;
+    text-align: center;
+    border-top: 1px solid #eee;
+    color: #636e72;
+    font-size: 0.85rem;
+    position: relative;
+    z-index: 1;
 }
 
 /* --- Mobile Queries --- */

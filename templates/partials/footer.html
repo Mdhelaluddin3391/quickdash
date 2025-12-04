@@ -1,30 +1,57 @@
+{% load static %}
 <footer>
+    <div class="footer-top-border"></div>
+
     <div class="container">
         <div class="footer-content">
-            <div class="footer-column">
-                <h3>QuickDash</h3>
-                <p>Fastest delivery in town.</p>
-            </div>
-            <div class="footer-column">
-                <h3>Links</h3>
-                <ul class="footer-links">
-                    <li><a href="/">Home</a></li>
-                    <li><a href="/support.html">Support</a></li>
-                    <li><a href="/orders.html">My Orders</a></li>
-                </ul>
-            </div>
-            <div class="footer-column">
-                <h3>Contact</h3>
-                <p>support@quickdash.com</p>
-                <div class="social-icons">
-                    <a href="#"><i class="fab fa-facebook"></i></a>
-                    <a href="#"><i class="fab fa-twitter"></i></a>
-                    <a href="#"><i class="fab fa-instagram"></i></a>
+            
+            <div class="footer-column brand-col">
+                <a href="/" class="footer-logo">
+                    <i class="fas fa-bolt"></i> <span>QuickDash</span>
+                </a>
+                <p>India's Fastest Delivery App.<br>Groceries, Veggies & More in minutes.</p>
+                
+                <div class="app-badges">
+                    <a href="#"><i class="fab fa-google-play"></i></a>
+                    <a href="#"><i class="fab fa-apple"></i></a>
                 </div>
             </div>
+
+            <div class="footer-column">
+                <h3>Quick Links</h3>
+                <ul class="footer-links">
+                    <li><a href="/"><i class="fas fa-chevron-right"></i> Home</a></li>
+                    <li><a href="/category.html"><i class="fas fa-chevron-right"></i> Shop Now</a></li>
+                    <li><a href="/orders.html"><i class="fas fa-chevron-right"></i> My Orders</a></li>
+                </ul>
+            </div>
+
+            <div class="footer-column">
+                <h3>Support</h3>
+                <ul class="footer-links">
+                    <li><a href="/support.html"><i class="fas fa-chevron-right"></i> Help Center</a></li>
+                    <li><a href="/support_chat.html"><i class="fas fa-chevron-right"></i> Live Chat</a></li>
+                    <li><a href="#"><i class="fas fa-chevron-right"></i> Terms & Privacy</a></li>
+                </ul>
+            </div>
+
+            <div class="footer-column contact-col">
+                <h3>Get in Touch</h3>
+                <p><i class="fas fa-map-marker-alt"></i> Indiranagar, Bangalore</p>
+                <p><i class="fas fa-envelope"></i> support@quickdash.com</p>
+                <p><i class="fas fa-phone-alt"></i> +91 98765 43210</p>
+                
+                <div class="social-icons mt-3">
+                    <a href="#" class="social-btn"><i class="fab fa-facebook-f"></i></a>
+                    <a href="#" class="social-btn"><i class="fab fa-twitter"></i></a>
+                    <a href="#" class="social-btn"><i class="fab fa-instagram"></i></a>
+                </div>
+            </div>
+
         </div>
-        <div class="copyright">
-            &copy; {% now "Y" %} QuickDash. All rights reserved.
-        </div>
+    </div>
+    
+    <div class="copyright-bar">
+        <p>&copy; {% now "Y" %} QuickDash Technologies. Made with <i class="fas fa-heart" style="color: #e74c3c;"></i> in India.</p>
     </div>
 </footer>
