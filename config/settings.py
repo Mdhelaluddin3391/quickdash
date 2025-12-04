@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.gis", # PostGIS
+    "django.contrib.postgres",
 
     # Third Party
     "rest_framework",

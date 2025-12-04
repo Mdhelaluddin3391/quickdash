@@ -23,9 +23,9 @@
     </div>
 
     <form class="search-bar-row" method="GET" action="/search_results.html">
-        <i class="fas fa-search"></i>
-        <input type="text" name="q" placeholder="Search for items..." value="{{ request.GET.q }}">
-    </form>
+    <i class="fas fa-search"></i>
+    <input type="text" name="q" placeholder="Search for items..." value="{{ request.GET.q }}" autocomplete="off">
+</form>
 
     <nav class="header-nav-row" id="dynamic-navbar">
         <a href="/" class="nav-item {% if request.path == '/' %}active{% endif %}">All</a>

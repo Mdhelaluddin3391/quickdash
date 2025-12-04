@@ -23,6 +23,12 @@ from rest_framework import viewsets
 from rest_framework.permissions import AllowAny
 from django.utils import timezone
 
+from django.contrib.postgres.search import TrigramSimilarity
+from django.db.models import Q
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import AllowAny
+from .models import SKU, Category
 # ... existing code ...
 
 
@@ -205,3 +211,59 @@ class FlashSaleViewSet(viewsets.ReadOnlyModelViewSet):
             start_time__lte=now, 
             end_time__gte=now
         ).select_related('sku').order_by('end_time')
+
+
+
+# apps/catalog/views.py (Is file ke end mein add karein)
+
+
+class SearchSuggestView(APIView):
+    """
+    Real-time auto-complete API with Typos correction.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        query = request.query_params.get('q', '').strip()
+        if len(query) < 2:
+            return Response([])
+
+        # 1. Categories Dhoondo (Partial Match)
+        categories = Category.objects.filter(
+            Q(name__icontains=query) | Q(slug__icontains=query),
+            is_active=True
+        )[:3]
+
+        cat_data = [{
+            "type": "category",
+            "text": c.name,
+            "url": f"/search_results.html?slug={c.slug}",
+            "icon": "fas fa-th-large"
+        } for c in categories]
+
+        # 2. Products Dhoondo (Trigram Similarity for Typos)
+        # Agar Trigram setup nahi hai toh normal fallback karega
+        try:
+            products = SKU.objects.annotate(
+                similarity=TrigramSimilarity('name', query)
+            ).filter(
+                Q(similarity__gt=0.1) | Q(name__icontains=query) | Q(sku_code__icontains=query),
+                is_active=True
+            ).order_by('-similarity')[:6]
+        except Exception:
+            # Fallback agar pg_trgm missing ho
+            products = SKU.objects.filter(
+                name__icontains=query, 
+                is_active=True
+            )[:6]
+
+        prod_data = [{
+            "type": "product",
+            "text": p.name,
+            "sub_text": f"in {p.category.name if p.category else 'General'}",
+            "url": f"/product.html?code={p.sku_code}",
+            "image": p.image_url,
+            "price": p.sale_price
+        } for p in products]
+
+        return Response(cat_data + prod_data)

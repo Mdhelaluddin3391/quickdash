@@ -6,7 +6,14 @@ from rest_framework import viewsets, views, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import AllowAny
+from django.contrib.gis.geos import Point
+from django.contrib.gis.db.models.functions import Distance
+from django.contrib.gis.measure import D
+from apps.warehouse.models import Warehouse
+import math
 from apps.accounts.permissions import IsRider
 from .models import DeliveryTask, RiderEarning
 from .serializers import (
@@ -233,3 +240,51 @@ class RiderEarningsView(views.APIView):
                 },
             }
         )
+
+
+
+
+
+
+class DeliveryEstimateView(APIView):
+    """
+    Calculates ETA based on user location and nearest active warehouse.
+    Logic: Base Prep Time (10m) + Travel Time (3m per km).
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        lat = request.data.get('lat')
+        lng = request.data.get('lng')
+
+        if not lat or not lng:
+            return Response({"time": "...", "location": "Select Location"}, status=400)
+
+        user_point = Point(float(lng), float(lat), srid=4326)
+        
+        # 1. Find Nearest Warehouse
+        nearest_wh = Warehouse.objects.filter(is_active=True).annotate(
+            distance=Distance('location', user_point)
+        ).order_by('distance').first()
+
+        if not nearest_wh:
+            return Response({"time": "No Service", "location": "Out of Service Area"})
+
+        # 2. Calculate Distance (in km)
+        distance_km = nearest_wh.distance.km
+        
+        # 3. Calculate Time (Simple Heuristic)
+        # Base Prep: 10 mins + Travel: 4 mins per km
+        eta_minutes = 10 + math.ceil(distance_km * 4)
+        
+        # Cap min time at 15 mins
+        if eta_minutes < 15: eta_minutes = 15
+
+        # 4. Reverse Geocode (Optional, or just send ETA)
+        # For now, we return the ETA. Frontend can handle the City name via Google Maps API or Browser API.
+        
+        return Response({
+            "eta": f"{eta_minutes} mins",
+            "distance_km": round(distance_km, 1),
+            "serviceable": distance_km < 15.0 # 15km Radius check
+        })
