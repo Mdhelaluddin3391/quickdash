@@ -8,15 +8,15 @@ let isLoadingShelves = false; // Flag taaki double loading na ho
 let shelfObserver;         // Observer ko global scope mein rakhein
 
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log("Loading initial data sequentially...");
+    console.log("Loading initial data...");
 
     await loadBanners();
     await loadHomeCategories();
     await loadFlashSales();
     await loadBrands();
     initProductShelves();
-
-    console.log("All initial data loaded sequentially.");
+    
+    console.log("All initial data loading initiated.");
 });
 
 
@@ -239,18 +239,18 @@ async function loadNextBatch() {
     
     const container = document.getElementById('dynamic-sections-container');
     const loader = document.getElementById('shelves-loader');
-    if(loader) loader.style.display = 'block';
+    if (loader) loader.style.display = 'block';
 
     const batch = parentCategories.slice(loadedCount, loadedCount + BATCH_SIZE);
     console.log("Processing batch:", batch);
     
     for (const cat of batch) {
         console.log(`Rendering shelf for category: ${cat.name}`);
-        await renderSingleShelf(cat, container);
+        await renderSingleShelf(cat);
     }
     console.log("Finished processing batch.");
 
-    loadedCount += BATCH_SIZE;
+    loadedCount += batch.length; // Use actual batch length
     console.log(`Finished loading batch. Total loaded: ${loadedCount}`);
     
     if(loader) loader.style.display = 'none';
@@ -260,14 +260,16 @@ async function loadNextBatch() {
         console.log("All categories loaded. Disconnecting observer.");
         if (shelfObserver) {
             shelfObserver.disconnect();
+            if (loader) loader.remove(); // Remove loader completely
         }
     }
 }
 
-async function renderSingleShelf(cat, container) {
+async function renderSingleShelf(cat) {
     console.log(`Rendering shelf for: ${cat.name}`);
     try {
         const prodResponse = await apiCall(`/catalog/skus/?category__slug=${cat.slug}&page_size=20`, 'GET', null, false);
+        const container = document.getElementById('dynamic-sections-container');
         const products = prodResponse.results || prodResponse;
 
         if (products.length > 0) {
@@ -302,11 +304,7 @@ async function renderSingleShelf(cat, container) {
                 </section>
             `;
             const loader = document.getElementById('shelves-loader');
-            if (loader) {
-                loader.insertAdjacentHTML('beforebegin', shelfHtml);
-            } else {
-                container.insertAdjacentHTML('beforeend', shelfHtml);
-            }
+            if (loader) loader.insertAdjacentHTML('beforebegin', shelfHtml);
         } else {
             console.log(`No products found for category: ${cat.name}`);
         }
