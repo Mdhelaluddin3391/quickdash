@@ -80,29 +80,19 @@ class BrandViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
         return qs
 
 
+# apps/catalog/views.py
+
+# apps/catalog/views.py
+
+# apps/catalog/views.py
+
 class SKUViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
-    """
-    Product / SKU API:
-
-    - Anonymous / customer:
-        - only active SKUs
-        - active category/brand
-    - Staff:
-        - can see/manage all
-        
-    Supports filtering by:
-    - category (slug) via ?category=slug
-    - search via ?search=query
-    """
-
     serializer_class = SKUSerializer
     lookup_field = "sku_code"
 
-    # Added DjangoFilterBackend for field-based filtering
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    
-    # Fields available for filtering
-    filterset_fields = ['category__slug', 'brand__slug', 'is_featured', 'is_active']
+    # NOTE: category__slug ko filterset_fields se hata diya hai kyunki hum manually handle karenge
+    filterset_fields = ['brand__slug', 'is_featured', 'is_active'] 
     
     search_fields = ["name", "sku_code", "search_keywords", "metadata__values"]
     ordering_fields = ["sale_price", "created_at", "name"]
@@ -112,18 +102,20 @@ class SKUViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
         qs = SKU.objects.all().select_related("category", "brand")
         user = self.request.user
 
-        # Basic visibility filter
+        # 1. Active Filter
         if not user.is_authenticated or not user.is_staff:
             qs = qs.filter(
                 is_active=True,
                 category__is_active=True,
                 brand__is_active=True,
             )
+
+        # 2. [IMPORTANT] Category Slug Filter Handle Karein
+        category_slug = self.request.query_params.get('category__slug')
+        if category_slug:
+            qs = qs.filter(category__slug=category_slug)
             
         return qs
-
-
-
 
 
 

@@ -1,11 +1,11 @@
 // static/assets/js/utils/home.js
 
 // --- Global Variables for Infinite Scroll ---
-let parentCategories = []; // Saari main categories yahan store hongi
-let loadedCount = 0;       // Abhi tak kitni categories screen par dikh chuki hain
-const BATCH_SIZE = 3;      // Ek baar mein kitni category load karni hain (3-3 karke)
-let isLoadingShelves = false; // Flag taaki double loading na ho
-let shelfObserver;         // Observer ko global scope mein rakhein
+let parentCategories = []; 
+let loadedCount = 0;       
+const BATCH_SIZE = 2;      // 2 Categories ek saath load karenge
+let isLoadingShelves = false; 
+let shelfObserver;        // Observer ko global scope mein rakhein
 
 document.addEventListener('DOMContentLoaded', async () => {
     console.log("Loading initial data...");
@@ -184,97 +184,102 @@ async function loadBrands() {
     }
 }
 
+
+
 // =========================================================
-// 5. SMART SHELVES (Infinite Scroll Logic)
+// 5. SMART SHELVES (Fixed Logic)
 // =========================================================
 
 async function initProductShelves() {
-    console.log("Initializing Product Shelves...");
     const container = document.getElementById('dynamic-sections-container');
-    if (!container) {
-        console.error("Fatal: dynamic-sections-container not found!");
-        return;
-    }
+    if (!container) return;
     
-    container.innerHTML = '<div id="shelves-loader" class="text-center py-4"><div class="loader">Loading shelves...</div></div>';
+    // Loader dikhayein
+    container.innerHTML = '<div id="shelves-loader" class="text-center py-4" style="clear:both; width:100%;"><div class="loader">Loading shelves...</div></div>';
 
     try {
+        // 1. Backend se saari Categories mangwayein
+        // requireAuth = false rakha hai taaki bina login ke bhi dikhe
         const catResponse = await apiCall('/catalog/categories/?page_size=100', 'GET', null, false);
         const allCats = catResponse.results || catResponse;
         
+        // Sirf Parent Categories filter karein (Top level)
         parentCategories = allCats.filter(c => !c.parent);
-        console.log("Parent Categories:", parentCategories);
+
+        console.log(`Found ${parentCategories.length} parent categories.`);
 
         if (parentCategories.length === 0) {
-            container.innerHTML = '<p class="text-center text-muted">No parent product categories were found. Shelves cannot be loaded.</p>';
+            container.innerHTML = '<p class="text-center text-muted py-4">No categories found.</p>';
             return;
         }
         
-        console.log(`Found ${parentCategories.length} parent categories.`);
-        
-        // Pehla Batch Load karo
+        // 2. Loading Shuru Karein
         await loadNextBatch();
 
-        // Agar aur categories bachi hain, to Scroll Observer set up karo
-        if (loadedCount < parentCategories.length) {
-            setupObserver();
-        }
+        // 3. Scroll Observer lagayein
+        setupObserver();
 
     } catch (e) {
         console.error("Shelves Init Error:", e);
-        container.innerHTML = '<p class="text-danger text-center">Failed to initialize product shelves.</p>';
+        // Error user ko dikhayein par console main detail dekhein
+        container.innerHTML = '<p class="text-danger text-center py-4">Failed to load shelves. Please check console.</p>';
     }
 }
 
 async function loadNextBatch() {
-    console.log(`loadNextBatch called. isLoading: ${isLoadingShelves}, loaded: ${loadedCount}, total: ${parentCategories.length}`);
-    
-    if (isLoadingShelves || loadedCount >= parentCategories.length) {
-        console.log("Shelf loading skipped.");
-        return;
-    }
+    // Agar loading chal rahi hai ya list khatam, toh ruk jao
+    if (isLoadingShelves || loadedCount >= parentCategories.length) return;
     
     isLoadingShelves = true;
-    console.log(`Loading next batch of shelves. Starting from index ${loadedCount}`);
     
-    const container = document.getElementById('dynamic-sections-container');
-    const loader = document.getElementById('shelves-loader');
-    if (loader) loader.style.display = 'block';
-
-    const batch = parentCategories.slice(loadedCount, loadedCount + BATCH_SIZE);
-    console.log("Processing batch:", batch);
-    
-    for (const cat of batch) {
-        console.log(`Rendering shelf for category: ${cat.name}`);
-        await renderSingleShelf(cat);
+    // Loader ensure karein
+    let loader = document.getElementById('shelves-loader');
+    if (!loader) {
+        const container = document.getElementById('dynamic-sections-container');
+        container.insertAdjacentHTML('beforeend', '<div id="shelves-loader" class="text-center py-4"><div class="loader">Loading...</div></div>');
+        loader = document.getElementById('shelves-loader');
     }
-    console.log("Finished processing batch.");
+    loader.style.display = 'block';
 
-    loadedCount += batch.length; // Use actual batch length
-    console.log(`Finished loading batch. Total loaded: ${loadedCount}`);
-    
-    if(loader) loader.style.display = 'none';
+    // Batch banayein
+    const batch = parentCategories.slice(loadedCount, loadedCount + BATCH_SIZE);
+    let itemsAddedInThisBatch = 0;
+
+    console.log(`Loading batch: ${loadedCount} to ${loadedCount + BATCH_SIZE}`);
+
+    // Har category ke liye API call karein
+    for (const cat of batch) {
+        const added = await renderSingleShelf(cat);
+        if (added) itemsAddedInThisBatch++;
+    }
+
+    loadedCount += batch.length;
     isLoadingShelves = false;
 
+    // [MAGIC FIX]: Agar batch load hua lekin screen par kuch nahi aaya (Categories empty thi),
+    // toh user scroll nahi kar payega. Isliye hum TURANT agla batch call karte hain.
+    if (itemsAddedInThisBatch === 0 && loadedCount < parentCategories.length) {
+        console.log("Empty batch detected, automatically loading next...");
+        loadNextBatch(); 
+    }
+
+    // Agar sab khatam ho gaya to loader hata do
     if (loadedCount >= parentCategories.length) {
-        console.log("All categories loaded. Disconnecting observer.");
-        if (shelfObserver) {
-            shelfObserver.disconnect();
-            if (loader) loader.remove(); // Remove loader completely
-        }
+        if (loader) loader.remove();
+        if (shelfObserver) shelfObserver.disconnect();
     }
 }
 
 async function renderSingleShelf(cat) {
-    console.log(`Rendering shelf for: ${cat.name}`);
     try {
+        // API call: Category Slug bhejein
+        // page_size=20 (Jaisa aapne manga tha)
         const prodResponse = await apiCall(`/catalog/skus/?category__slug=${cat.slug}&page_size=20`, 'GET', null, false);
-        const container = document.getElementById('dynamic-sections-container');
         const products = prodResponse.results || prodResponse;
 
         if (products.length > 0) {
             const shelfHtml = `
-                <section class="category-section">
+                <section class="category-section" style="animation: fadeIn 0.5s ease-in;">
                     <div class="section-header">
                         <h3>${cat.name}</h3>
                         <a href="/search_results.html?slug=${cat.slug}" class="view-all-btn">See All</a>
@@ -284,7 +289,7 @@ async function renderSingleShelf(cat) {
                             <div class="prod-card">
                                 <a href="/product.html?code=${p.sku_code}">
                                     <div class="prod-img-box">
-                                        <img src="${p.image_url || 'https://cdn-icons-png.flaticon.com/512/1147/1147805.png'}">
+                                        <img src="${p.image_url || 'https://cdn-icons-png.flaticon.com/512/1147/1147805.png'}" loading="lazy" alt="${p.name}">
                                     </div>
                                     <div class="prod-title">${p.name}</div>
                                     <div class="prod-unit">${p.unit}</div>
@@ -303,14 +308,18 @@ async function renderSingleShelf(cat) {
                     </div>
                 </section>
             `;
+            
+            // HTML Inject karein (Loader ke just pehle)
             const loader = document.getElementById('shelves-loader');
-            if (loader) loader.insertAdjacentHTML('beforebegin', shelfHtml);
-        } else {
-            console.log(`No products found for category: ${cat.name}`);
+            if (loader) {
+                loader.insertAdjacentHTML('beforebegin', shelfHtml);
+            }
+            return true; // Success: Shelf bani
         }
     } catch (e) {
-        console.warn(`Failed to load shelf for ${cat.name}`, e);
+        console.warn(`Shelf load failed for ${cat.name}`, e);
     }
+    return false; // Fail: Shelf nahi bani
 }
 
 function setupObserver() {
@@ -318,22 +327,19 @@ function setupObserver() {
     if (!loader) return;
 
     const options = {
-        root: null, // viewport
-        rootMargin: '0px',
+        root: null, 
+        rootMargin: '200px', // Screen bottom se 200px pehle load trigger karo
         threshold: 0.1 
     };
 
     shelfObserver = new IntersectionObserver((entries) => {
-        if (entries[0].isIntersecting && !isLoadingShelves) {
-            console.log("Scroll trigger hit!");
+        if (entries[0].isIntersecting) {
             loadNextBatch();
         }
     }, options);
 
     shelfObserver.observe(loader);
-    console.log("Intersection observer is set up.");
 }
-
 
 // =========================================================
 // 6. CART LOGIC
