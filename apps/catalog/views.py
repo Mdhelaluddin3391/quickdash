@@ -58,16 +58,15 @@ class BrandViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
         return qs
 
 
+
+
 class SKUViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
     serializer_class = SKUSerializer
     lookup_field = "sku_code"
     throttle_classes = []
 
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    
-    # Standard filters
-    filterset_fields = ['brand__slug', 'is_featured', 'is_active'] 
-    
+    filterset_fields = ['brand__slug', 'is_featured', 'is_active']
     search_fields = ["name", "sku_code", "search_keywords", "metadata__values"]
     ordering_fields = ["sale_price", "created_at", "name"]
     ordering = ["name"]
@@ -76,7 +75,6 @@ class SKUViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
         qs = SKU.objects.all().select_related("category", "brand")
         user = self.request.user
 
-        # 1. Hide inactive items for public
         if not user.is_authenticated or not user.is_staff:
             qs = qs.filter(
                 is_active=True,
@@ -84,12 +82,24 @@ class SKUViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
                 brand__is_active=True,
             )
 
-        # 2. Custom Filter for Infinite Scroll
         category_slug = self.request.query_params.get('category__slug')
         if category_slug:
-            qs = qs.filter(category__slug=category_slug)
-            
+            try:
+                cat = Category.objects.get(slug=category_slug)
+
+                subcats = cat.subcategories.all()
+
+                if subcats.exists():
+                    qs = qs.filter(category__in=subcats)
+                else:
+                    qs = qs.filter(category=cat)
+
+            except Category.DoesNotExist:
+                qs = qs.none()
+
         return qs
+
+
 
 
 class BannerViewSet(viewsets.ReadOnlyModelViewSet):

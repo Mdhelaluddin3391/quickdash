@@ -18,11 +18,15 @@ class Category(models.Model):
         on_delete=models.CASCADE,
         related_name='subcategories',
     )
+   
 
     # New fields
     is_active = models.BooleanField(default=True)
     sort_order = models.PositiveIntegerField(default=0)
     icon_url = models.URLField(null=True, blank=True)
+
+    def get_all_children(self):
+        return self.subcategories.all()
 
     class Meta:
         verbose_name_plural = "Categories"
