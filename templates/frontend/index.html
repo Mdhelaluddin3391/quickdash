@@ -17,24 +17,27 @@
 
 <div class="features-bar"
     style="display: flex; justify-content: space-between; padding: 15px 20px; background: #f9fcf9; border-bottom: 1px solid #f0f0f0;">
-    <div class="feature-item" style="font-weight:600; font-size:0.8rem;"><i class="fas fa-bolt text-success"></i> 10 min
-        Delivery</div>
-    <div class="feature-item" style="font-weight:600; font-size:0.8rem;"><i class="fas fa-award text-success"></i> Best
-        Quality</div>
-    <div class="feature-item" style="font-weight:600; font-size:0.8rem;"><i class="fas fa-tags text-success"></i> Low
-        Prices</div>
+    <div class="feature-item" style="font-weight:600; font-size:0.8rem; color:#2d3436;">
+        <i class="fas fa-bolt text-success"></i> 10 min Delivery
+    </div>
+    <div class="feature-item" style="font-weight:600; font-size:0.8rem; color:#2d3436;">
+        <i class="fas fa-award text-success"></i> Best Quality
+    </div>
+    <div class="feature-item" style="font-weight:600; font-size:0.8rem; color:#2d3436;">
+        <i class="fas fa-tags text-success"></i> Low Prices
+    </div>
 </div>
 
 <section>
     <div class="section-header" style="display:flex; justify-content:space-between; padding:20px 20px 10px;">
         <h3 style="font-size:1.2rem; font-weight:700;">Explore Categories</h3>
-        <a href="/category.html" style="color:var(--primary); font-weight:600;">View All</a>
+        <a href="/category.html" style="color:var(--primary); font-weight:600; font-size:0.9rem;">View All</a>
     </div>
     <div id="home-category-grid">
-        <div class="skeleton" style="height:80px; width:100%;"></div>
-        <div class="skeleton" style="height:80px; width:100%;"></div>
-        <div class="skeleton" style="height:80px; width:100%;"></div>
-        <div class="skeleton" style="height:80px; width:100%;"></div>
+        <div class="skeleton" style="height:80px; width:100%; border-radius:12px;"></div>
+        <div class="skeleton" style="height:80px; width:100%; border-radius:12px;"></div>
+        <div class="skeleton" style="height:80px; width:100%; border-radius:12px;"></div>
+        <div class="skeleton" style="height:80px; width:100%; border-radius:12px;"></div>
     </div>
 </section>
 
@@ -63,11 +66,12 @@
         <div class="brand-circle skeleton"></div>
         <div class="brand-circle skeleton"></div>
         <div class="brand-circle skeleton"></div>
+        <div class="brand-circle skeleton"></div>
     </div>
 </section>
 
-<div id="dynamic-sections-container">
-    <div class="text-center py-4">
+<div id="dynamic-sections-container" style="min-height: 200px;">
+    <div id="shelves-loader" class="text-center py-4">
         <div class="loader">Loading shelves...</div>
     </div>
 </div>

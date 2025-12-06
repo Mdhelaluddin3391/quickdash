@@ -85,6 +85,10 @@ def compute_daily_sales_summary(day: date | None = None) -> DailySalesSummary:
     return obj
 
 
+# apps/analytics/services.py
+
+# ... (imports remain same)
+
 @transaction.atomic
 def compute_warehouse_kpi_snapshot(day: date | None = None) -> None:
     if day is None:
@@ -102,29 +106,35 @@ def compute_warehouse_kpi_snapshot(day: date | None = None) -> None:
         orders_delivered = o_qs.filter(status="delivered").count()
         orders_cancelled = o_qs.filter(status__in=["cancelled", "cancelled_fc"]).count()
 
+        # --- FIX START: Commented out missing fields logic ---
         # assuming Order has fields: picking_started_at, packing_completed_at, dispatched_at, delivered_at
-        pick_duration = ExpressionWrapper(
-            F("picking_completed_at") - F("picking_started_at"), output_field=DurationField()
-        )
-        pack_duration = ExpressionWrapper(
-            F("packing_completed_at") - F("picking_completed_at"), output_field=DurationField()
-        )
+        
+        # pick_duration = ExpressionWrapper(
+        #     F("picking_completed_at") - F("picking_started_at"), output_field=DurationField()
+        # )
+        # pack_duration = ExpressionWrapper(
+        #     F("packing_completed_at") - F("picking_completed_at"), output_field=DurationField()
+        # )
+        
+        # Delivery duration can be calculated if dispatched_at and delivered_at exist
         delivery_duration = ExpressionWrapper(
             F("delivered_at") - F("dispatched_at"), output_field=DurationField()
         )
 
         t = o_qs.aggregate(
-            avg_pick=Avg(pick_duration),
-            avg_pack=Avg(pack_duration),
+            # avg_pick=Avg(pick_duration),  # Commented out
+            # avg_pack=Avg(pack_duration),  # Commented out
             avg_delivery=Avg(delivery_duration),
         )
 
         def to_seconds(d):
             return int(d.total_seconds()) if d else 0
 
-        avg_pick_time = to_seconds(t["avg_pick"])
-        avg_pack_time = to_seconds(t["avg_pack"])
+        # Defaulting missing metrics to 0 for now
+        avg_pick_time = 0 # to_seconds(t["avg_pick"])
+        avg_pack_time = 0 # to_seconds(t["avg_pack"])
         avg_del_time = to_seconds(t["avg_delivery"])
+        # --- FIX END ---
 
         # short pick / FC counts (assuming Order model has these counters or related)
         short_pick_incidents = getattr(
@@ -151,6 +161,7 @@ def compute_warehouse_kpi_snapshot(day: date | None = None) -> None:
 
     logger.info("Computed WarehouseKPISnapshot for %s", day)
 
+# ... (rest of the file remains same)
 
 @transaction.atomic
 def compute_rider_kpi_snapshot(day: date | None = None) -> None:
