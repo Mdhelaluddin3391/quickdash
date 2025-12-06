@@ -61,6 +61,7 @@ class BrandViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
 class SKUViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
     serializer_class = SKUSerializer
     lookup_field = "sku_code"
+    throttle_classes = []
 
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     

@@ -205,8 +205,9 @@ REST_FRAMEWORK = {
         "apps.utils.throttle.SustainedRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
-        "burst": "60/min",
-        "sustained": "1000/hour",
+        "burst": "200/min",
+        "sustained": "2000/hour",
+        "anon": "100/min",
     },
     "EXCEPTION_HANDLER": "rest_framework.views.exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",

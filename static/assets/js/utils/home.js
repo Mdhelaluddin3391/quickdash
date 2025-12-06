@@ -235,6 +235,9 @@ async function loadNextBatch() {
     const results = await Promise.all(promises);
 
     // Count successful loads (Kitne shelves actually bane?)
+   
+
+    // Check End of List
     const shelvesCreated = results.filter(r => r === true).length;
 
     loadedCount += batch.length;
@@ -244,15 +247,26 @@ async function loadNextBatch() {
     if (loadedCount >= parentCategories.length) {
         if (loader) {
             loader.innerHTML = '<div class="text-center py-4 text-muted"><i class="fas fa-check-circle"></i> You have reached the end!</div>';
-            // Observer hata do taaki aur calls na ho
             if (shelfObserver) shelfObserver.disconnect();
         }
     } 
-    // [SAFETY FIX] Agar is batch mein saari categories khali thi (0 products), 
-    // toh user scroll nahi kar payega. Isliye hum khud hi agla batch load kar dete hain.
+    // [FIX] Prevent infinite loop on API errors
     else if (shelvesCreated === 0) {
-        console.log("Empty batch detected, automatically loading next...");
-        loadNextBatch();
+        console.log("Batch empty or error. Stopping auto-retry to prevent loop.");
+        
+        // Loop rok dein aur user ko "Try Again" ka button dikhayein
+        // Taaki automatic spam na ho
+        let loader = document.getElementById('shelves-loader');
+        if (loader) {
+            loader.innerHTML = `
+                <div class="text-center py-4">
+                    <p class="text-muted small">Kuch items load nahi ho paye.</p>
+                    <button class="btn btn-sm btn-outline-primary" style="margin-top:5px;" onclick="loadNextBatch()">
+                        Try Again
+                    </button>
+                </div>
+            `;
+        }
     }
 }
 
