@@ -1,11 +1,34 @@
-document.addEventListener('DOMContentLoaded', loadAddresses);
+// static/assets/js/pages/account/addresses.js
+
+document.addEventListener('DOMContentLoaded', () => {
+    console.log("Addresses Page Loaded");
+    
+    // Load existing addresses
+    loadAddresses();
+
+    // Attach Event Listener Safely
+    const addForm = document.getElementById('add-addr-form');
+    if (addForm) {
+        addForm.addEventListener('submit', handleAddAddress);
+        console.log("Add Address Form Listener Attached");
+    } else {
+        console.error("Error: Add Address Form not found in DOM");
+    }
+});
 
 async function loadAddresses() {
     const grid = document.getElementById('address-grid');
+    if(!grid) return;
+    
     grid.innerHTML = '<div class="loader">Loading...</div>';
 
     try {
-        const addresses = await apiCall('/auth/customer/addresses/');
+        const response = await apiCall('/auth/customer/addresses/');
+        
+        // --- FIX: Handle Pagination (response.results) ---
+        const addresses = response.results || response; 
+        console.log("Addresses loaded:", addresses);
+
         grid.innerHTML = '';
 
         if(addresses.length === 0) {
@@ -30,38 +53,60 @@ async function loadAddresses() {
         });
 
     } catch (e) {
+        console.error("Load Error:", e);
         grid.innerHTML = '<p class="text-danger">Error loading addresses.</p>';
     }
 }
 
-// Modal Logic
-function openAddressModal() { document.getElementById('addr-modal').style.display = 'flex'; }
-function closeAddrModal() { document.getElementById('addr-modal').style.display = 'none'; }
-
-document.getElementById('add-addr-form').addEventListener('submit', async (e) => {
+async function handleAddAddress(e) {
     e.preventDefault();
+    console.log("Save Button Clicked");
+
+    const btn = e.target.querySelector('button[type="submit"]');
+    const originalText = btn.innerText;
+    btn.innerText = "Saving...";
+    btn.disabled = true;
+
+    // Demo Coordinates (Production mein Map Picker use karein)
     const payload = {
         full_address: document.getElementById('a-line').value,
         city: document.getElementById('a-city').value,
         pincode: document.getElementById('a-pincode').value,
         address_type: document.getElementById('a-type').value,
-        lat: 12.9716, lng: 77.5946 // Hardcoded until Map Picker is added
+        lat: 12.9716, 
+        lng: 77.5946 
     };
 
     try {
         await apiCall('/auth/customer/addresses/', 'POST', payload);
+        alert("Address Saved Successfully!");
         closeAddrModal();
-        loadAddresses();
-    } catch(err) { alert(err.message); }
-});
-
-async function deleteAddr(id) {
-    if(!confirm("Are you sure?")) return;
-    await apiCall(`/auth/customer/addresses/${id}/`, 'DELETE');
-    loadAddresses();
+        e.target.reset(); 
+        loadAddresses(); 
+    } catch(err) {
+        console.error(err);
+        alert("Error: " + err.message);
+    } finally {
+        btn.innerText = originalText;
+        btn.disabled = false;
+    }
 }
 
-async function setDefault(id) {
-    await apiCall(`/auth/customer/addresses/${id}/set-default/`, 'POST');
-    loadAddresses();
+// Modal Logic
+window.openAddressModal = function() { document.getElementById('addr-modal').style.display = 'flex'; }
+window.closeAddrModal = function() { document.getElementById('addr-modal').style.display = 'none'; }
+
+window.deleteAddr = async function(id) {
+    if(!confirm("Are you sure?")) return;
+    try {
+        await apiCall(`/auth/customer/addresses/${id}/`, 'DELETE');
+        loadAddresses();
+    } catch (e) { alert(e.message); }
+}
+
+window.setDefault = async function(id) {
+    try {
+        await apiCall(`/auth/customer/addresses/${id}/set-default/`, 'POST');
+        loadAddresses();
+    } catch (e) { alert(e.message); }
 }

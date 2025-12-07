@@ -20,7 +20,7 @@ async function loadNavbarCategories() {
         // Har category ke liye link banao aur append karo
         parentCategories.forEach(cat => {
             const link = document.createElement('a');
-            
+
             // Search page par slug ke saath bhejo
             link.href = `/search_results.html?slug=${cat.slug}`;
             link.className = 'nav-item';
@@ -45,18 +45,18 @@ async function initLocationWidget() {
     const locText = document.getElementById('header-location');
     if (!locText) return;
 
-    // 1. Check if User is Logged In & Has Default Address
-    const user = APP_CONFIG.USER; // Loaded from base.html
     const token = localStorage.getItem('accessToken');
 
     if (token) {
         try {
-            // Fetch default address
-            const addresses = await apiCall('/auth/customer/addresses/');
+            const response = await apiCall('/auth/customer/addresses/');
+            
+            // --- FIX: Handle Pagination ---
+            const addresses = response.results || response;
+
             const defaultAddr = addresses.find(a => a.is_default) || addresses[0];
 
             if (defaultAddr && defaultAddr.latitude) {
-                // User has address, calculate ETA
                 updateNavbarWithETA(defaultAddr.latitude, defaultAddr.longitude, defaultAddr.city);
                 return;
             }
@@ -65,13 +65,11 @@ async function initLocationWidget() {
         }
     }
 
-    // 2. Fallback: Browser GPS (Guest User)
     if (navigator.geolocation) {
         locText.innerText = "Locating...";
         navigator.geolocation.getCurrentPosition(
             (pos) => {
                 const { latitude, longitude } = pos.coords;
-                // Reverse Geocode Logic here or just show "Current Location"
                 updateNavbarWithETA(latitude, longitude, "Current Location");
             },
             (err) => {
@@ -85,10 +83,10 @@ async function initLocationWidget() {
 
 async function updateNavbarWithETA(lat, lng, cityName) {
     const locText = document.getElementById('header-location');
-    
+
     try {
         const response = await apiCall('/delivery/estimate/', 'POST', { lat, lng }, false); // Auth not mandatory for estimate
-        
+
         if (response.serviceable) {
             locText.innerHTML = `
                 <span style="font-weight:700; color:#32CD32;">${response.eta}</span> 
@@ -107,7 +105,7 @@ async function updateNavbarWithETA(lat, lng, cityName) {
 
 
 // --- Cart Count Global Helper ---
-window.updateGlobalCartCount = async function() {
+window.updateGlobalCartCount = async function () {
     const badge = document.getElementById('nav-cart-count');
     if (!badge) return;
 
@@ -121,15 +119,18 @@ window.updateGlobalCartCount = async function() {
     try {
         const cart = await apiCall('/orders/cart/');
         const count = cart.items ? cart.items.length : 0;
-        
+
         badge.innerText = count;
         badge.style.display = count > 0 ? 'flex' : 'none';
-        
+
         // Cart page par bhi update karein agar element maujood hai
         const pageBadge = document.getElementById('cart-count-badge');
-        if(pageBadge) pageBadge.innerText = `(${count})`;
+        if (pageBadge) pageBadge.innerText = `(${count})`;
 
     } catch (e) {
         console.warn("Cart count update failed");
     }
 };
+
+
+
