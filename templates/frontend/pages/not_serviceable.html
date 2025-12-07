@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Not Available - QuickDash{% endblock %}
+
+{% block content %}
+<div class="container" style="text-align: center; padding: 80px 20px; min-height: 70vh; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+    
+    <img src="https://cdn-icons-png.flaticon.com/512/10632/10632613.png" alt="No Service" style="width: 150px; margin-bottom: 30px; opacity: 0.8;">
+    
+    <h1 style="font-size: 2rem; font-weight: 800; color: var(--dark); margin-bottom: 10px;">
+        We're not there yet! 😔
+    </h1>
+    
+    <p style="color: var(--text-muted); margin-bottom: 30px; max-width: 500px; font-size: 1.1rem;">
+        Sorry, we currently do not deliver to your selected location. 
+        We are expanding fast and hope to serve you soon.
+    </p>
+
+    <div style="background: #fff3cd; padding: 15px; border-radius: 8px; border: 1px solid #ffeeba; margin-bottom: 30px;">
+        <i class="fas fa-map-marker-alt text-warning"></i> 
+        <strong>Current Location:</strong> <span id="current-city-display">Checking...</span>
+    </div>
+
+    <div style="display: flex; gap: 15px; flex-wrap: wrap; justify-content: center;">
+        <a href="/addresses.html" class="btn-primary" style="padding: 12px 30px; border-radius: 30px; text-decoration: none;">
+            <i class="fas fa-map-marked-alt"></i> Change Location
+        </a>
+        
+        <a href="#" onclick="logout()" class="btn-outline" style="padding: 12px 30px; border-radius: 30px; border: 1px solid var(--border);">
+            Logout
+        </a>
+    </div>
+
+</div>
+
+<script>
+    // Show current city from storage or API if available
+    document.addEventListener('DOMContentLoaded', () => {
+        const user = JSON.parse(localStorage.getItem('user') || '{}');
+        // Simple logic: Fetch address again or use stored simplified data
+        // For now, let's keep it static or update via base.js logic
+    });
+</script>
+{% endblock %}

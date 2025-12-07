@@ -254,7 +254,7 @@ ORDER_CANCELLATION_WINDOW = config("ORDER_CANCELLATION_WINDOW", default=300, cas
 RIDER_BASE_FEE = config("RIDER_BASE_FEE", default=30.00, cast=Decimal)
 IDEMPOTENCY_KEY_TTL = config("IDEMPOTENCY_KEY_TTL", default=30, cast=int)
 RIDER_MAX_RADIUS_KM = config("RIDER_MAX_RADIUS_KM", default=10.0, cast=float)
-DELIVERY_RADIUS_KM = config("DELIVERY_RADIUS_KM", default=15.0, cast=float)
+DELIVERY_RADIUS_KM = config("DELIVERY_RADIUS_KM", default=5.0, cast=float)
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:8000")
 
 # ==========================================

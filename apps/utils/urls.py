@@ -8,4 +8,5 @@ urlpatterns = [
     path("health/", health_check, name="health-check"),
     path("info/", ServerInfoView.as_view(), name="server-info"),
     path("config/", GlobalConfigView.as_view(), name="global-config"),
+    
 ]

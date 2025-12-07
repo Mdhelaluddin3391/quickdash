@@ -47,30 +47,37 @@ async function initLocationWidget() {
 
     const token = localStorage.getItem('accessToken');
 
+    // 1. Agar User Login hai, toh Saved Address check karo
     if (token) {
         try {
             const response = await apiCall('/auth/customer/addresses/');
-            
-            // --- FIX: Handle Pagination ---
             const addresses = response.results || response;
 
+            // Default address ya pehla address uthao
             const defaultAddr = addresses.find(a => a.is_default) || addresses[0];
 
             if (defaultAddr && defaultAddr.latitude) {
-                updateNavbarWithETA(defaultAddr.latitude, defaultAddr.longitude, defaultAddr.city);
+                // CITY Display karo
+                if(document.getElementById('current-city-display')) {
+                    document.getElementById('current-city-display').innerText = defaultAddr.city;
+                }
+                
+                // Serviceability Check Call karo
+                checkServiceabilityAndRedirect(defaultAddr.latitude, defaultAddr.longitude, defaultAddr.city);
                 return;
             }
         } catch (e) {
-            console.warn("Could not fetch user address", e);
+            console.warn("Address fetch failed", e);
         }
     }
 
+    // 2. Agar Login nahi hai, toh Browser GPS use karo
     if (navigator.geolocation) {
         locText.innerText = "Locating...";
         navigator.geolocation.getCurrentPosition(
             (pos) => {
                 const { latitude, longitude } = pos.coords;
-                updateNavbarWithETA(latitude, longitude, "Current Location");
+                checkServiceabilityAndRedirect(latitude, longitude, "Current Location");
             },
             (err) => {
                 locText.innerHTML = `<span style="cursor:pointer" onclick="window.location.href='/location_denied.html'">Enable Location</span>`;
@@ -81,24 +88,55 @@ async function initLocationWidget() {
     }
 }
 
-async function updateNavbarWithETA(lat, lng, cityName) {
+async function checkServiceabilityAndRedirect(lat, lng, cityName) {
     const locText = document.getElementById('header-location');
-
+    
     try {
-        const response = await apiCall('/delivery/estimate/', 'POST', { lat, lng }, false); // Auth not mandatory for estimate
+        const response = await apiCall('/delivery/estimate/', 'POST', { lat, lng }, false);
 
-        if (response.serviceable) {
-            locText.innerHTML = `
-                <span style="font-weight:700; color:#32CD32;">${response.eta}</span> 
-                <span style="color:#ccc;">•</span> 
-                ${cityName}
-            `;
+        // --- GLOBAL REDIRECT LOGIC ---
+        const currentPath = window.location.pathname;
+        
+        // In pages par redirect mat karo (taki user address change kar sake)
+        const safePages = [
+            '/addresses.html', 
+            '/profile.html', 
+            '/auth.html', 
+            '/service-unavailable.html'
+        ];
+
+        if (!response.serviceable) {
+            // Agar service nahi hai, aur user kisi "safe page" par nahi hai -> REDIRECT
+            if (!safePages.includes(currentPath)) {
+                window.location.href = '/service-unavailable.html';
+                return; 
+            }
+            
+            // Navbar update (Red text)
+            if(locText) {
+                locText.innerHTML = `<span style="color:red; font-weight:bold;">Not Serviceable</span> • ${cityName}`;
+            }
         } else {
-            locText.innerText = "Not Serviceable Area";
-            locText.style.color = "red";
+            // Agar service hai, aur user galti se 'unavailable' page par hai -> Home bhejo
+            if (currentPath === '/service-unavailable.html') {
+                window.location.href = '/';
+                return;
+            }
+
+            // Navbar update (Green text)
+            if(locText) {
+                locText.innerHTML = `
+                    <span style="font-weight:700; color:#32CD32;">${response.eta}</span> 
+                    <span style="color:#ccc;">•</span> 
+                    ${cityName}
+                `;
+            }
         }
+        // -----------------------------
+
     } catch (e) {
-        locText.innerText = cityName || "Location Set";
+        console.error("Service Check Error", e);
+        if(locText) locText.innerText = cityName || "Location Set";
     }
 }
 

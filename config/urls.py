@@ -55,4 +55,5 @@ urlpatterns = [
     # Errors & Permissions
     path("location_denied.html", TemplateView.as_view(template_name="frontend/pages/location_permission.html"), name="location-denied"),
     path("404.html", TemplateView.as_view(template_name="frontend/pages/404.html"), name="not-found"),
+    path("service-unavailable.html", TemplateView.as_view(template_name="frontend/pages/not_serviceable.html"), name="not-serviceable"),
 ]
