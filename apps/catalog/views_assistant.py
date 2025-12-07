@@ -1,182 +1,415 @@
 # apps/catalog/views_assistant.py
+
 import re
-import random
 from decimal import Decimal
+from django.db.models import Q, Sum
+from django.contrib.postgres.search import TrigramSimilarity
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
-from django.db.models import Q, Sum, F
-from django.contrib.postgres.search import TrigramSimilarity  # 👈 Smart Brain
-from apps.catalog.models import SKU, Category, FlashSale
+
+from apps.catalog.models import SKU, FlashSale
 from apps.orders.models import Cart, CartItem
+
 
 class ShoppingAssistantView(APIView):
     """
-    LEVEL 2 AI Salesman Bot 🤖
-    - Auto-corrects spelling mistakes (e.g., 'milkk' -> 'Milk')
-    - Contextual Upselling (Bought Milk? -> Suggest Bread/Eggs)
-    - Manages Cart & Free Gifts smartly
+    Rule-Based Shopping Assistant (NO LLM)
+    --------------------------------------------------------
+    ✔ Pure English reply
+    ✔ Add / remove items
+    ✔ Show / clear cart
+    ✔ Smart product search (handles spelling mistakes)
+    ✔ COD Order Confirmation
+    ❌ Rejects UPI orders
+    ✔ Upsell + free delivery hint
     """
+
     permission_classes = [AllowAny]
 
+    # ---------------------------------------------------------------------
+    # INTENT WORD SETS
+    # ---------------------------------------------------------------------
+
+    GREET_WORDS = {"hi", "hello", "hey", "start", "help", "assistant"}
+    HELP_WORDS = {"help", "how", "what can you do", "guide", "support"}
+
+    SHOW_CART_WORDS = {"cart", "show cart", "my cart", "view cart"}
+    CLEAR_CART_WORDS = {"clear cart", "empty cart", "reset cart"}
+
+    REMOVE_WORDS = {"remove", "delete", "take out", "minus"}
+
+    OFFER_WORDS = {"offer", "offers", "discount", "sale", "deal"}
+
+    ORDER_WORDS = {
+        "order", "place order", "checkout", "confirm order",
+        "cod", "cash on delivery", "place the order",
+        "complete my order", "buy now"
+    }
+
+    BLOCK_UPI_WORDS = {
+        "upi", "pay", "google pay", "phonepe", "gpay", "online payment"
+    }
+
+    STOPWORDS = {
+        "add", "send", "need", "want", "give", "please", "pkt",
+        "kg", "g", "gram", "ltr", "ml", "packet", "pack"
+    }
+
+    # ---------------------------------------------------------------------
+    # MAIN POST HANDLER
+    # ---------------------------------------------------------------------
+
     def post(self, request):
-        message = request.data.get('message', '').lower().strip()
+        text_raw = request.data.get("message", "").strip()
+        message = self._clean(text_raw)
+
         user = request.user if request.user.is_authenticated else None
-        
-        # --- 1. CART CONTEXT LOAD KAREIN ---
-        cart = None
-        current_total = 0
-        if user:
-            cart, _ = Cart.objects.get_or_create(customer=user)
-            current_total = cart.items.aggregate(t=Sum('total_price'))['t'] or 0
+        cart, cart_total = self._get_cart_and_total(user)
 
-        # --- 2. GREETING & SMART INTRO ---
-        greetings = ['hi', 'hello', 'start', 'hey', 'namaste']
-        if not message or message in greetings:
-            return Response({
-                "reply": self.get_smart_greeting(user, current_total)
-            })
+        # 1. GREETING
+        if not message or self._contains(message, self.GREET_WORDS):
+            return Response({"reply": self._get_greeting(user, cart_total)})
 
-        # --- 3. SHOW OFFERS ---
-        if any(x in message for x in ['offer', 'deal', 'sasta', 'discount']):
-            return Response({"reply": self.get_flash_deals()})
+        # 2. HELP
+        if self._contains(message, self.HELP_WORDS):
+            return Response({"reply": self._help_text()})
 
-        # --- 4. SMART PRODUCT PARSING (NLP Lite) ---
-        # Quantity nikalo (e.g., "5 kg", "2 pkt", "10")
-        qty_match = re.search(r'(\d+)', message)
-        quantity = int(qty_match.group(1)) if qty_match else None
-        
-        # "Junk words" hatao taaki product ka naam mile
-        stopwords = ['chahiye', 'bhejo', 'add', 'want', 'need', 'kg', 'gm', 'packet', 'pcs', 'pack', 'liter', 'ltr', 'kilo', 'please', 'do']
-        clean_text = message
-        for word in stopwords:
-            clean_text = clean_text.replace(word, '')
-        
-        clean_text = clean_text.replace(str(quantity), '').strip() # Remove number too
+        # 3. SHOW CART
+        if self._contains(message, self.SHOW_CART_WORDS):
+            return Response({"reply": self._show_cart(user, cart)})
 
-        if len(clean_text) < 2 and not quantity:
-            return Response({"reply": "Ji, main samjha nahi. Kya chahiye? (Likhein: 'Milk', 'Onion', 'Rice')"})
+        # 4. CLEAR CART
+        if self._contains(message, self.CLEAR_CART_WORDS):
+            return Response({"reply": self._clear_cart(user, cart)})
 
-        # --- 5. FIND PRODUCT (SMART SEARCH) ---
-        sku = self.find_best_match_product(clean_text)
+        # 5. OFFERS
+        if self._contains(message, self.OFFER_WORDS):
+            return Response({"reply": self._flash_deals()})
 
+        # 6. BLOCK UPI
+        if self._contains(message, self.BLOCK_UPI_WORDS):
+            return Response({"reply": self._reject_upi_message()})
+
+        # 7. ORDER REQUEST
+        if self._contains(message, self.ORDER_WORDS):
+            return Response(self._handle_order(user, cart))
+
+        # 8. REMOVE ITEM
+        if self._contains(message, self.REMOVE_WORDS):
+            return Response({"reply": self._remove_item(message, user, cart)})
+
+        # 9. ADD PRODUCT FLOW
+        return Response(self._handle_add(message, user, cart, cart_total))
+
+    # ---------------------------------------------------------------------
+    # ORDER LOGIC (COD ONLY)
+    # ---------------------------------------------------------------------
+
+    def _handle_order(self, user, cart):
+        if not user:
+            return {"reply": "Please login before placing an order."}
+
+        if not cart or not cart.items.exists():
+            return {"reply": "Your cart is empty. Add items before placing an order."}
+
+        total = cart.items.aggregate(t=Sum("total_price"))["t"] or Decimal("0.00")
+
+        summary = []
+        for item in cart.items.select_related("sku"):
+            summary.append(
+                f"- {item.quantity} × {item.sku.name} (₹{int(item.unit_price)}) = ₹{int(item.total_price)}"
+            )
+        summary_text = "\n".join(summary)
+
+        return {
+            "reply": (
+                "✅ **Your COD Order Request Has Been Received!**\n\n"
+                f"**Order Summary:**\n{summary_text}\n\n"
+                f"**Amount to Pay on Delivery:** ₹{int(total)}\n\n"
+                "Your order is being processed. You will receive updates soon. 🚚"
+            ),
+            "action": "order_cod_requested"
+        }
+
+    # ---------------------------------------------------------------------
+    # ADD ITEM LOGIC
+    # ---------------------------------------------------------------------
+
+    def _handle_add(self, message, user, cart, cart_total):
+        qty = self._extract_qty(message)
+        product_text = self._extract_product(message, qty)
+
+        if not product_text:
+            return {"reply": "I could not understand. Please mention a product name."}
+
+        sku = self._find_product(product_text)
         if not sku:
-            return Response({"reply": f"🤔 Maaf kijiye, '{clean_text}' jaisa kuch nahi mila. Spelling check karein ya kuch aur try karein (e.g., Potato, Oil)."})
+            return {"reply": f"Sorry, I couldn’t find anything matching '{product_text}'."}
 
-        # --- 6. ACTION: ADD TO CART or ASK QTY ---
-        if quantity:
-            if not user:
-                return Response({"reply": f"Ji main **{sku.name}** add toh kardu, par pehle aap **Login** kar lijiye."})
-            
-            # Add Item
-            item, created = CartItem.objects.get_or_create(cart=cart, sku=sku, defaults={'quantity': 0})
-            item.quantity += quantity
-            item.unit_price = sku.sale_price # Price refresh
+        if qty and not user:
+            return {"reply": "Please login before adding items to your cart."}
+
+        if qty and user:
+            item, _ = CartItem.objects.get_or_create(cart=cart, sku=sku, defaults={"quantity": 0})
+            item.quantity += qty
+            item.unit_price = sku.sale_price
             item.save()
-            
-            # Recalculate Total
-            new_total = cart.items.aggregate(t=Sum('total_price'))['t'] or 0
-            
-            # --- 7. SMART UPSELL GENERATION ---
-            upsell_msg = self.generate_upsell(sku, new_total)
-            
-            return Response({
-                "reply": f"✅ Done! {quantity} {sku.unit} **{sku.name}** add ho gaya.\n\n{upsell_msg}",
+
+            new_total = cart.items.aggregate(t=Sum("total_price"))["t"] or Decimal("0.00")
+            upsell = self._upsell(sku, new_total)
+
+            return {
+                "reply": f"Added {qty} {sku.unit} of **{sku.name}**.\n\n{upsell}",
                 "action": "cart_updated"
-            })
+            }
 
-        else:
-            # Product mila par quantity nahi pata
-            return Response({
-                "reply": f"Ji **{sku.name}** (₹{int(sku.sale_price)}/{sku.unit}) mil gaya! Kitna bheju? (Likhein: 1, 2, 5...)",
-                "context_sku_id": sku.id 
-            })
+        return {
+            "reply": f"Found **{sku.name}** for ₹{int(sku.sale_price)}/{sku.unit}. How many units should I add?",
+            "context_sku_id": str(sku.id)
+        }
 
-    def put(self, request):
-        """ Follow-up: Jab user sirf quantity bole (e.g., '2') """
-        sku_id = request.data.get('context_sku_id')
-        quantity = request.data.get('quantity')
-        user = request.user
+    # ---------------------------------------------------------------------
+    # REMOVE ITEM
+    # ---------------------------------------------------------------------
 
-        if not user or not user.is_authenticated:
-             return Response({"reply": "Please login first."})
+    def _remove_item(self, message, user, cart):
+        if not user:
+            return "Please login to modify your cart."
+
+        text = self._strip_stopwords(message)
+        sku = self._find_product(text)
+        if not sku:
+            return "I couldn't identify which product to remove."
 
         try:
-            sku = SKU.objects.get(id=sku_id)
-            cart, _ = Cart.objects.get_or_create(customer=user)
-            item, created = CartItem.objects.get_or_create(cart=cart, sku=sku, defaults={'quantity': 0})
-            item.quantity += int(quantity)
-            item.save()
-            
-            new_total = cart.items.aggregate(t=Sum('total_price'))['t'] or 0
-            upsell_msg = self.generate_upsell(sku, new_total)
-            
-            return Response({
-                "reply": f"✅ {quantity} {sku.unit} **{sku.name}** bag mein daal diya.\n\n{upsell_msg}",
-                "action": "cart_updated"
-            })
-        except Exception:
-            return Response({"reply": "Kuch gadbad ho gayi. Phir se try karein."})
+            item = CartItem.objects.get(cart=cart, sku=sku)
+        except CartItem.DoesNotExist:
+            return f"**{sku.name}** is not in your cart."
 
-    # --- HELPER BRAINS 🧠 ---
+        item.delete()
+        return f"Removed **{sku.name}** from your cart."
 
-    def find_best_match_product(self, query):
-        """ 
-        Uses Postgres Trigram Similarity to find products even with typos.
-        Matches: 'Aple' -> 'Apple', 'Onoin' -> 'Onion'
-        """
-        try:
-            return SKU.objects.annotate(
-                similarity=TrigramSimilarity('name', query)
-            ).filter(
-                Q(similarity__gt=0.1) | Q(name__icontains=query) | Q(search_keywords__icontains=query),
-                is_active=True
-            ).order_by('-similarity').first()
-        except Exception:
-            # Fallback for SQLite (Dev mode without Postgres extensions)
-            return SKU.objects.filter(name__icontains=query, is_active=True).first()
+    # ---------------------------------------------------------------------
+    # CART FUNCTIONS
+    # ---------------------------------------------------------------------
 
-    def get_smart_greeting(self, user, total):
-        """ Greeting based on Cart Status """
-        name = user.full_name.split(' ')[0] if user and user.full_name else "Sir/Ma'am"
-        
-        if total > 0:
-            return f"Welcome back {name}! 🛒 Aapki cart mein ₹{total} ka saaman hai.\nAur kya chahiye? (Type: 'Milk', 'Bread')."
-        
+    def _show_cart(self, user, cart):
+        if not user:
+            return "Please login to view your cart."
+
+        if not cart or not cart.items.exists():
+            return "Your cart is currently empty."
+
+        lines = ["**Your Cart:**\n"]
+        total = 0
+
+        for item in cart.items.select_related("sku"):
+            total += item.total_price
+            lines.append(f"- {item.quantity} × {item.sku.name} = ₹{int(item.total_price)}")
+
+        lines.append(f"\n**Total:** ₹{int(total)}")
+
+        return "\n".join(lines)
+
+    def _clear_cart(self, user, cart):
+        if not user:
+            return "Please login to clear your cart."
+
+        if not cart or not cart.items.exists():
+            return "Your cart is already empty."
+
+        cart.items.all().delete()
+        return "Your cart has been cleared."
+
+    # ---------------------------------------------------------------------
+    # HELP, OFFERS, GREETING, UPI REJECTION
+    # ---------------------------------------------------------------------
+
+    def _reject_upi_message(self):
         return (
-            f"Namaste {name}! 🙏 Main QuickDash Assistant hu.\n"
-            "Aaj **Sabzi** aur **Grocery** taaza aayi hai.\n"
-            "Bataiye ghar ke liye kya bheju? (Jaise: '5kg Aloo', '2 packet Milk')"
+            "❌ UPI / online payments are currently unavailable.\n"
+            "Please proceed with **Cash on Delivery (COD)**."
         )
 
-    def get_flash_deals(self):
+    def _help_text(self):
+        return (
+            "**I can help you with:**\n"
+            "- Adding items (e.g., 'add 2 milk')\n"
+            "- Removing items (e.g., 'remove bread')\n"
+            "- Showing cart (e.g., 'show cart')\n"
+            "- Clearing cart\n"
+            "- Viewing offers\n"
+            "- Placing a COD order\n\n"
+            "Just type what you need!"
+        )
+
+    def _flash_deals(self):
         sales = FlashSale.objects.filter(is_active=True)[:3]
-        if sales:
-            deals = [f"🔥 **{s.sku.name}** sirf ₹{int(s.discounted_price)}!" for s in sales]
-            return "Aaj ke Hot Deals:\n" + "\n".join(deals) + "\n\nKaunsa add karu?"
-        return "Abhi sabhi items par best rate hai! Aap bas order kijiye."
+        if not sales:
+            return "No active offers right now."
 
-    def generate_upsell(self, current_sku, total_amt):
-        """ 
-        Suggests related items based on what was just added. 
-        Uses Category to find siblings.
-        """
-        # 1. Free Gift Logic
-        FREE_THRESHOLD = 499
-        if total_amt >= FREE_THRESHOLD:
-             return f"🎉 **Badhai ho!** Total ₹{total_amt} ho gaya. Delivery FREE rahegi!"
+        lines = ["🔥 **Today's Best Deals:**"]
+        for s in sales:
+            lines.append(f"- {s.sku.name}: ₹{int(s.discounted_price)}")
+
+        return "\n".join(lines)
+
+    def _get_greeting(self, user, total):
+        if user:
+            return f"Welcome back! Your cart total is ₹{int(total)}. What would you like to order?"
+
+        return (
+            "Hello! I’m the QuickDash Shopping Assistant.\n"
+            "Tell me what you want — for example: '2 kg rice', 'add milk', 'show cart'."
+        )
+
+    # ---------------------------------------------------------------------
+    # UTILITIES (Clean, Search, Qty, etc.)
+    # ---------------------------------------------------------------------
+
+    def _clean(self, text):
+        text = text.lower()
+        text = re.sub(r"[^a-zA-Z0-9\s]", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _contains(self, msg, words):
+        return any(w in msg for w in words)
+
+    def _get_cart_and_total(self, user):
+        if not user:
+            return None, Decimal("0.00")
+        cart, _ = Cart.objects.get_or_create(customer=user)
+        total = cart.items.aggregate(t=Sum("total_price"))["t"] or Decimal("0.00")
+        return cart, total
+
+    def _extract_qty(self, msg):
+        m = re.search(r"(\d+)", msg)
+        return int(m.group(1)) if m else None
+
+    def _strip_stopwords(self, text):
+        words = text.split()
+        filtered = [w for w in words if w not in self.STOPWORDS]
+        return " ".join(filtered)
+
+    def _extract_product(self, msg, qty):
+        if qty:
+            msg = msg.replace(str(qty), "")
+        msg = self._strip_stopwords(msg)
+        return msg.strip()
+
+    def _find_product(self, query):
+        try:
+            return (
+                SKU.objects.annotate(similarity=TrigramSimilarity("name", query))
+                .filter(Q(similarity__gt=0.1) | Q(name__icontains=query))
+                .order_by("-similarity")
+                .first()
+            )
+        except:
+            return SKU.objects.filter(name__icontains=query).first()
+
+    # ---------------------------------------------------------------------
+    # UPSELL LOGIC
+    # ---------------------------------------------------------------------
+
+    def _upsell(self, sku, total):
+        FREE_LIMIT = 499
+
+        if total >= FREE_LIMIT:
+            return (
+                f"🎉 Your total is ₹{int(total)}. You now qualify for **FREE Delivery**!"
+            )
+
+        remaining = FREE_LIMIT - total
+        return (
+            f"Your current total is ₹{int(total)}. Add items worth ₹{int(remaining)} "
+            f"to get **FREE delivery**!"
+        )
+
+
+
+
+# # apps/catalog/views_assistant.py
+# import requests
+# import json
+# from rest_framework.views import APIView
+# from rest_framework.response import Response
+# from rest_framework.permissions import AllowAny
+# from django.contrib.postgres.search import TrigramSimilarity
+# from django.db.models import Q
+# from .models import SKU
+
+# class ShoppingAssistantView(APIView):
+#     """
+#     LOCAL AI ASSISTANT (Ollama Powered)
+#     - Free
+#     - Secure (No Data Leak)
+#     - Runs on localhost:11434
+#     """
+#     permission_classes = [AllowAny]
+
+#     def post(self, request):
+#         user_message = request.data.get('message', '').strip()
         
-        # 2. Category Based Suggestion
-        # Agar 'Milk' liya, toh 'Bread' ya 'Eggs' suggest karo
-        if current_sku.category:
-            related = SKU.objects.filter(
-                category=current_sku.category, 
-                is_active=True
-            ).exclude(id=current_sku.id).order_by('?').first()
-            
-            if related:
-                return f"💡 Saath mein **{related.name}** (₹{int(related.sale_price)}) bhi bheju? Log aksar saath lete hain."
+#         # 1. SMART SEARCH (Context dhundhne ke liye)
+#         # Database se milta-julta products nikalo
+#         matched_products = SKU.objects.annotate(
+#             similarity=TrigramSimilarity('name', user_message)
+#         ).filter(
+#             Q(similarity__gt=0.1) | Q(name__icontains=user_message) | Q(category__name__icontains=user_message),
+#             is_active=True
+#         ).order_by('-similarity')[:10]  # Top 10 products
 
-        # 3. Generic Upsell
-        short_amt = FREE_THRESHOLD - total_amt
-        return f"💰 Total: ₹{total_amt}. Bas **₹{short_amt}** aur shop karein free delivery ke liye!"
+#         # 2. CONTEXT BANANA
+#         inventory_text = "Available Inventory:\n"
+#         if matched_products.exists():
+#             for p in matched_products:
+#                 inventory_text += f"- {p.name}: ₹{p.sale_price} ({p.unit})\n"
+#         else:
+#             inventory_text = "No direct matching products found via search."
+
+#         # 3. PROMPT (AI ko instruction)
+#         prompt = f"""
+#         You are a helpful grocery shopping assistant for 'QuickDash'.
+        
+#         CONTEXT (Real-time Stock):
+#         {inventory_text}
+        
+#         USER SAYS: "{user_message}"
+        
+#         INSTRUCTIONS:
+#         1. Only suggest products listed in the CONTEXT above.
+#         2. If the user asks for something not in the list, apologize politely.
+#         3. Keep the answer short, friendly, and use Hinglish (Hindi+English mix).
+#         4. Do not mention "I am an AI". Act like a shopkeeper.
+#         """
+
+#         # 4. CALL LOCAL OLLAMA API (Free & Secure)
+#         try:
+#             response = requests.post(
+#                 "http://localhost:11434/api/generate",
+#                 json={
+#                     "model": "llama3",  # Ya "mistral" jo bhi install kiya ho
+#                     "prompt": prompt,
+#                     "stream": False
+#                 },
+#                 timeout=10
+#             )
+            
+#             if response.status_code == 200:
+#                 ai_reply = response.json().get("response", "Network error in AI.")
+#             else:
+#                 ai_reply = "System is busy. Please search manually."
+
+#         except Exception as e:
+#             print(f"Ollama Error: {e}")
+#             # Fallback logic (Agar AI band ho toh basic search result dikha do)
+#             if matched_products.exists():
+#                 top_product = matched_products.first()
+#                 ai_reply = f"AI offline hai, par mujhe **{top_product.name}** mila hai ₹{top_product.sale_price} ka. Kya add karu?"
+#             else:
+#                 ai_reply = "Maaf kijiye, abhi main connect nahi kar paa raha hu."
+
+#         return Response({"reply": ai_reply})

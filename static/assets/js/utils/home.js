@@ -235,18 +235,38 @@ async function loadNextBatch() {
     const results = await Promise.all(promises);
 
     // Count successful loads (Kitne shelves actually bane?)
-   
-
-    // Check End of List
     const shelvesCreated = results.filter(r => r === true).length;
 
     loadedCount += batch.length;
     isLoadingShelves = false;
 
-    // Check End of List
+    // --- LOGIC UPDATED FOR DISCOVERY CARD ---
     if (loadedCount >= parentCategories.length) {
         if (loader) {
-            loader.innerHTML = '<div class="text-center py-4 text-muted"><i class="fas fa-check-circle"></i> You have reached the end!</div>';
+            // Show Discovery Card at the end
+            loader.innerHTML = `
+                <div class="end-page-cta">
+                    <div class="cta-icon-box">
+                        <i class="fas fa-shipping-fast"></i>
+                    </div>
+                    <h3 class="cta-title">Can't find what you're looking for?</h3>
+                    <p class="cta-desc">
+                        QuickDash gets your order in minutes.
+
+                        Still missing something? Just ask to your assistant.
+                    </p>
+                    
+                    <div class="cta-buttons">
+                        <button class="btn-cta-action btn-search-trigger" onclick="scrollToSearch()">
+                            <i class="fas fa-search"></i> Search Item
+                        </button>
+                        
+                        <button class="btn-cta-action btn-ai-trigger" onclick="triggerAssistant()">
+                            <i class="fas fa-robot"></i> Ask Assistant
+                        </button>
+                    </div>
+                </div>
+            `;
             if (shelfObserver) shelfObserver.disconnect();
         }
     } 
@@ -255,8 +275,6 @@ async function loadNextBatch() {
         console.log("Batch empty or error. Stopping auto-retry to prevent loop.");
         
         // Loop rok dein aur user ko "Try Again" ka button dikhayein
-        // Taaki automatic spam na ho
-        let loader = document.getElementById('shelves-loader');
         if (loader) {
             loader.innerHTML = `
                 <div class="text-center py-4">
@@ -382,4 +400,28 @@ async function addToCart(skuId, btn) {
         btn.disabled = false;
     }
 
+}
+
+// =========================================================
+// 7. BOTTOM CTA ACTIONS (New Helper Functions)
+// =========================================================
+
+function scrollToSearch() {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setTimeout(() => {
+        const searchInput = document.querySelector('input[name="q"]');
+        if (searchInput) {
+            searchInput.focus();
+            searchInput.style.borderColor = '#32CD32'; // Highlight effect
+            // Thodi der baad border normal kar dein
+            setTimeout(() => searchInput.style.borderColor = '', 1500);
+        }
+    }, 800); // Scroll khatam hone ka approximate time
+}
+
+function triggerAssistant() {
+    const astBtn = document.getElementById('ast-btn');
+    if (astBtn) {
+        astBtn.click(); // Bot button par click simulate karega
+    }
 }

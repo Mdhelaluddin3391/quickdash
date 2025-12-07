@@ -1,6 +1,45 @@
 document.addEventListener('DOMContentLoaded', () => {
     initLocationWidget();
+    loadNavbarCategories(); // Navbar load karne ke liye call
+    if (window.updateGlobalCartCount) window.updateGlobalCartCount();
 });
+
+
+async function loadNavbarCategories() {
+    const nav = document.getElementById('dynamic-navbar');
+    if (!nav) return;
+
+    try {
+        // API se saari categories mangwao (Limit 100 taaki saari parents aa jayein)
+        const response = await apiCall('/catalog/categories/?page_size=100', 'GET', null, false);
+        const allCategories = response.results || response;
+
+        // Sirf Parent Categories filter karein (jinka koi parent nahi hai)
+        const parentCategories = allCategories.filter(c => !c.parent);
+
+        // Har category ke liye link banao aur append karo
+        parentCategories.forEach(cat => {
+            const link = document.createElement('a');
+            
+            // Search page par slug ke saath bhejo
+            link.href = `/search_results.html?slug=${cat.slug}`;
+            link.className = 'nav-item';
+            link.innerText = cat.name;
+
+            // Agar user abhi is category ke page par hai, toh 'active' class lagao
+            const currentSlug = new URLSearchParams(window.location.search).get('slug');
+            if (currentSlug === cat.slug) {
+                link.classList.add('active');
+            }
+
+            nav.appendChild(link);
+        });
+
+    } catch (error) {
+        console.error("Navbar Categories Error:", error);
+        // Error aaye toh kuch mat dikhao ya retry button de sakte ho
+    }
+}
 
 async function initLocationWidget() {
     const locText = document.getElementById('header-location');
@@ -64,3 +103,33 @@ async function updateNavbarWithETA(lat, lng, cityName) {
         locText.innerText = cityName || "Location Set";
     }
 }
+
+
+
+// --- Cart Count Global Helper ---
+window.updateGlobalCartCount = async function() {
+    const badge = document.getElementById('nav-cart-count');
+    if (!badge) return;
+
+    // Login check
+    if (!localStorage.getItem('accessToken')) {
+        badge.innerText = '0';
+        badge.style.display = 'none';
+        return;
+    }
+
+    try {
+        const cart = await apiCall('/orders/cart/');
+        const count = cart.items ? cart.items.length : 0;
+        
+        badge.innerText = count;
+        badge.style.display = count > 0 ? 'flex' : 'none';
+        
+        // Cart page par bhi update karein agar element maujood hai
+        const pageBadge = document.getElementById('cart-count-badge');
+        if(pageBadge) pageBadge.innerText = `(${count})`;
+
+    } catch (e) {
+        console.warn("Cart count update failed");
+    }
+};

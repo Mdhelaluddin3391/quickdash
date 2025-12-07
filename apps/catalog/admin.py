@@ -46,6 +46,16 @@ class BannerAdmin(admin.ModelAdmin):
     list_display = ('title', 'position', 'is_active', 'sort_order')
     list_editable = ('is_active', 'sort_order')
 
+# @admin.register(FlashSale)
+# class FlashSaleAdmin(admin.ModelAdmin):
+#     list_display = ('sku', 'discounted_price', 'is_active', 'end_time', 'percentage_sold')
+
+
+
+# apps/catalog/admin.py
+
 @admin.register(FlashSale)
 class FlashSaleAdmin(admin.ModelAdmin):
-    list_display = ('sku', 'discounted_price', 'is_active', 'end_time', 'percentage_sold')
+    list_display = ('sku', 'discounted_price', 'is_active', 'start_time', 'end_time', 'percentage_sold')
+    # Ye line add karein:
+    list_editable = ('is_active', 'end_time')
