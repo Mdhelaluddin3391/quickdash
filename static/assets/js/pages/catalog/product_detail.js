@@ -50,10 +50,11 @@ async function addToCart(skuId) {
     try {
         await apiCall('/orders/cart/add/', 'POST', { sku_id: skuId, quantity: 1 }, true);
         btn.innerText = "ADDED ✔";
+        showSuccess("Item added to cart!", 2000);
         setTimeout(() => btn.innerText = originalText, 2000);
         if(window.updateGlobalCartCount) window.updateGlobalCartCount();
     } catch (e) {
-        alert(e.message);
+        showError(e.message || "Failed to add item", 3000);
         btn.innerText = originalText;
     } finally {
         btn.disabled = false;

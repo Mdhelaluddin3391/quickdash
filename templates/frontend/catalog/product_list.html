@@ -5,6 +5,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'assets/css/catalog.css' %}">
+<link rel="stylesheet" href="{% static 'assets/css/toast.css' %}">
 {% endblock %}
 
 {% block content %}
@@ -40,5 +41,6 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{% static 'assets/js/utils/toast.js' %}"></script>
 <script src="{% static 'assets/js/pages/catalog/product_list.js' %}"></script>
 {% endblock %}

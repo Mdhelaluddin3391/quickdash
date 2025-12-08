@@ -5,6 +5,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'assets/css/account.css' %}">
+<link rel="stylesheet" href="{% static 'assets/css/toast.css' %}">
 {% endblock %}
 
 {% block profile_content %}
@@ -16,6 +17,17 @@
     <div class="loader">Loading orders...</div>
 </div>
 
+<!-- Pagination Controls -->
+<div id="pagination-controls" class="pagination-controls" style="display: none;">
+    <button id="prev-btn" class="pagination-btn" onclick="previousPage()">
+        <i class="fas fa-chevron-left"></i> Previous
+    </button>
+    <span id="page-info" class="page-info"></span>
+    <button id="next-btn" class="pagination-btn" onclick="nextPage()">
+        Next <i class="fas fa-chevron-right"></i>
+    </button>
+</div>
+
 <div id="no-orders" class="empty-state" style="display: none;">
     <img src="https://cdn-icons-png.flaticon.com/512/3081/3081840.png" alt="No Orders" style="width:100px; opacity:0.5;">
     <p>No orders found.</p>
@@ -24,5 +36,6 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{% static 'assets/js/utils/toast.js' %}"></script>
 <script src="{% static 'assets/js/pages/account/orders.js' %}"></script>
 {% endblock %}
