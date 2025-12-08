@@ -55,36 +55,36 @@ class CheckoutView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsCustomer]
 
     def post(self, request):
-        serializer = CreateOrderSerializer(data=request.data)
+        serializer = CreateOrderSerializer(
+            data=request.data,
+            context={"request": request}   # <-- FIXED
+        )
         serializer.is_valid(raise_exception=True)
-        
-        # Delegate to Service Layer
+
         orchestrator = CheckoutOrchestrator(request.user, serializer.validated_data)
         order, payment_data, error = orchestrator.execute()
 
         if error:
-            return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": error}, status=400)
 
-        # Handle COD Immediate Confirmation logic inside View or keep it separate
-        if payment_data['mode'] == 'COD':
-            # Auto-confirm for COD (or mark as Pending Verification)
+        if payment_data["mode"] == "COD":
             ok, msg = process_successful_payment(order)
             if not ok:
-                return Response({"error": "Order placed but confirmation failed."}, status=500)
-            
-            # Clear Cart
+                return Response({"error": msg}, status=500)
+
             Cart.objects.filter(customer=request.user).delete()
-            
+
             return Response({
                 "order": OrderSerializer(order).data,
                 "payment": payment_data
-            }, status=status.HTTP_201_CREATED)
+            }, status=201)
 
-        # Return Online Payment Params
         return Response({
             "order_id": str(order.id),
             **payment_data
-        }, status=status.HTTP_201_CREATED)
+        }, status=201)
+
+
 
 class PaymentVerificationView(APIView):
     permission_classes = [permissions.IsAuthenticated]

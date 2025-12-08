@@ -20,7 +20,7 @@ async function loadAddresses() {
     try {
         const response = await apiCall('/auth/customer/addresses/'); 
         
-        // [FIX] Backend Pagination (results) या Direct List दोनों को handle करें
+        // [FIX] Handle Backend Pagination (results) or Direct List
         const addresses = response.results || response; 
 
         container.innerHTML = '';
@@ -32,7 +32,7 @@ async function loadAddresses() {
 
         addresses.forEach((addr, index) => {
             const card = document.createElement('div');
-            // पहला Address अपने आप Select करें
+            // Select first address by default
             const isSelected = index === 0;
             if (isSelected) selectedAddressId = addr.id;
 
@@ -92,7 +92,7 @@ window.selectPayment = function(method) {
     }
 };
 
-// --- 3. Place Order (COD & Razorpay Fixed) ---
+// --- 3. Place Order (Fixed 400 Error) ---
 document.getElementById('place-order-btn').addEventListener('click', async () => {
     if (!selectedAddressId) {
         alert("Please select a delivery address.");
@@ -104,23 +104,24 @@ document.getElementById('place-order-btn').addEventListener('click', async () =>
     btn.innerText = "Processing...";
 
     try {
-        // [STEP 1] Address Details Fetch करें
+        // [STEP 1] Fetch Selected Address Details
         const response = await apiCall('/auth/customer/addresses/');
         const addresses = response.results || response;
         const addrObj = addresses.find(a => a.id === selectedAddressId);
 
         if (!addrObj) throw new Error("Selected address invalid.");
 
-        // [STEP 2] Payload तैयार करें
+        // [STEP 2] Prepare Payload
+        // FIX: Removed hardcoded 'warehouse_id: "1"'. 
+        // The backend will now automatically find the warehouse using delivery_lat/lng.
         const payload = {
-            warehouse_id: "1", // [Note] Production में यह Geo-Location से आना चाहिए
             payment_method: selectedPayment,
             delivery_address_json: {
                 full_address: addrObj.full_address,
                 city: addrObj.city,
                 pincode: addrObj.pincode
             },
-            // Lat/Lng भी भेजें ताकि Backend Warehouse खोज सके
+            // Lat/Lng is CRITICAL for auto-assigning warehouse in backend
             delivery_lat: addrObj.latitude || addrObj.lat || 12.9716, 
             delivery_lng: addrObj.longitude || addrObj.lng || 77.5946
         };
@@ -137,8 +138,8 @@ document.getElementById('place-order-btn').addEventListener('click', async () =>
         }
 
     } catch (e) {
-        // [FIX] Error का सही कारण दिखाएं (जैसे Warehouse Not Found)
         console.error("Order Failed:", e);
+        // Show clearer error message
         alert("Order Failed: " + (e.message || JSON.stringify(e)));
         btn.disabled = false;
         btn.innerText = "Place Order";
@@ -153,7 +154,7 @@ async function handleRazorpay(orderData) {
         return;
     }
 
-    // Config से Key लें, नहीं तो Fallback use करें
+    // Get Config Key or Fallback
     let keyId = "rzp_test_YOUR_KEY_HERE"; 
     try {
         const config = await apiCall('/utils/config/', 'GET', null, false);
@@ -197,7 +198,7 @@ async function handleRazorpay(orderData) {
         document.getElementById('place-order-btn').disabled = false;
     });
 
-    rzp1.open(); // यह Popup खोलेगा
+    rzp1.open(); // Opens Popup
 }
 
 async function verifyPayment(paymentResponse, localOrderId) {
@@ -226,25 +227,32 @@ async function verifyPayment(paymentResponse, localOrderId) {
 // --- Modal Setup ---
 window.setupAddressModal = function() {
     const modal = document.getElementById('address-modal');
-    document.getElementById('add-address-btn').onclick = () => modal.style.display = 'flex';
+    if (!modal) return;
+
+    const addBtn = document.getElementById('add-address-btn');
+    if (addBtn) addBtn.onclick = () => modal.style.display = 'flex';
+    
     window.closeModal = () => modal.style.display = 'none';
 
-    document.getElementById('new-address-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const payload = {
-            full_address: document.getElementById('addr-line').value,
-            city: document.getElementById('addr-city').value,
-            pincode: document.getElementById('addr-pincode').value,
-            address_type: document.getElementById('addr-type').value,
-            lat: 12.9716, lng: 77.5946 // Demo location
-        };
+    const form = document.getElementById('new-address-form');
+    if (form) {
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const payload = {
+                full_address: document.getElementById('addr-line').value,
+                city: document.getElementById('addr-city').value,
+                pincode: document.getElementById('addr-pincode').value,
+                address_type: document.getElementById('addr-type').value,
+                lat: 12.9716, lng: 77.5946 // Demo location
+            };
 
-        try {
-            await apiCall('/auth/customer/addresses/', 'POST', payload);
-            closeModal();
-            loadAddresses(); 
-        } catch(err) {
-            alert(err.message);
-        }
-    });
+            try {
+                await apiCall('/auth/customer/addresses/', 'POST', payload);
+                closeModal();
+                loadAddresses(); 
+            } catch(err) {
+                alert(err.message);
+            }
+        });
+    }
 };

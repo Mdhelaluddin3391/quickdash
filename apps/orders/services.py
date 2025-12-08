@@ -15,7 +15,26 @@ from apps.inventory.services import check_and_lock_inventory
 from apps.orders.signals import send_order_created
 from apps.payments.services import create_razorpay_order
 
+
+
+import logging
+from decimal import Decimal
+from django.db import transaction
+from django.utils import timezone
+from django.conf import settings
+from django.contrib.gis.geos import Point
+from django.contrib.gis.db.models.functions import Distance
+from django.contrib.gis.measure import D
+
+from apps.orders.models import Order, OrderItem, Cart
+from apps.payments.models import Payment
+from apps.warehouse.models import Warehouse
+from apps.inventory.services import check_and_lock_inventory
+from apps.orders.signals import send_order_created
+from apps.payments.services import create_razorpay_order
+
 logger = logging.getLogger(__name__)
+
 
 class CheckoutOrchestrator:
     def __init__(self, user, data):
@@ -27,54 +46,95 @@ class CheckoutOrchestrator:
         self.lng = data.get("delivery_lng")
         self.payment_method = data.get("payment_method", "RAZORPAY")
 
+    # ---------------------------------------------
+    # LOAD ITEMS: (items from frontend OR cart)
+    # ---------------------------------------------
+    def _load_items(self, cart):
+        """
+        Priority:
+        1. If frontend sends items -> use them.
+        2. Otherwise -> load items from user's cart.
+        """
+        # If frontend sends items
+        if self.data.get("items"):
+            return [
+                {
+                    "sku_id": item["sku_id"],
+                    "quantity": item["quantity"]
+                }
+                for item in self.data["items"]
+            ]
+
+        # Fallback: load from cart
+        return [
+            {
+                "sku_id": i.sku.id,
+                "quantity": i.quantity
+            }
+            for i in cart.items.all()
+        ]
+
+    # ---------------------------------------------
+    # GET WAREHOUSE
+    # ---------------------------------------------
     def _get_warehouse(self):
-        # 1. Geo-based lookup
+        # Try geo-based lookup
         if self.lat and self.lng:
             wh, dist = get_nearest_warehouse(self.lat, self.lng)
             if wh:
-                logger.info(f"Geo-located warehouse {wh.code} at {dist}km")
+                logger.info(f"[Warehouse] Geo-located {wh.code} @ {dist}km")
                 return wh
-        
-        # 2. Fallback ID lookup (Only if no geo or strict assignment)
+
+        # Fallback ID
         if self.warehouse_id:
             try:
                 return Warehouse.objects.get(id=self.warehouse_id, is_active=True)
             except Warehouse.DoesNotExist:
-                logger.warning(f"Requested warehouse {self.warehouse_id} not found.")
-                pass
+                logger.warning(f"Invalid warehouse requested: {self.warehouse_id}")
+
         return None
 
+    # ---------------------------------------------
+    # EXECUTE CHECKOUT
+    # ---------------------------------------------
     def execute(self):
-        # 1. Validate Warehouse
+        # 1. Validate warehouse
         warehouse = self._get_warehouse()
         if not warehouse:
             return None, None, "No serviceable warehouse found for this location."
 
-        # 2. Validate Cart
+        # 2. Validate cart exists
         try:
             cart = Cart.objects.select_related('customer').prefetch_related('items__sku').get(customer=self.user)
         except Cart.DoesNotExist:
             return None, None, "Cart not found."
-        
+
         if not cart.items.exists():
             return None, None, "Cart is empty."
 
-        # 3. Transactional Order Creation
+        # -----------------------------------------
+        # 🔥 FIXED: LOAD ITEMS (from cart or passed JSON)
+        # -----------------------------------------
+        payload_items = self._load_items(cart)
+
+        if not payload_items:
+            return None, None, "Cart is empty or no items selected."
+
+        # 3. Create order in safe transaction
         try:
             with transaction.atomic():
-                # A. Lock Inventory & Validate Stock
-                # Sort items by SKU ID to prevent deadlocks
+
+                # A. Lock inventory
                 cart_items = list(cart.items.select_for_update().select_related('sku'))
                 cart_items.sort(key=lambda x: x.sku.id)
 
                 for item in cart_items:
                     try:
-                        # This function must handle its own locking logic or be called inside atomic
                         check_and_lock_inventory(warehouse.id, item.sku.id, item.quantity)
                     except ValueError as e:
-                        return None, None, f"Out of Stock: {item.sku.name} - {str(e)}"
+                        return None, None, f"Out of Stock: {item.sku.name} ({str(e)})"
 
-                # B. Create Order Shell
+                # B. Create Order
                 order = Order.objects.create(
                     customer=self.user,
                     warehouse=warehouse,
@@ -87,7 +147,7 @@ class CheckoutOrchestrator:
                     payment_status='pending',
                 )
 
-                # C. Move Items (Bulk Create)
+                # C. Create Order Items
                 items_to_create = []
                 for item in cart_items:
                     unit_price = item.sku.sale_price or Decimal("0.00")
@@ -99,14 +159,16 @@ class CheckoutOrchestrator:
                         total_price=unit_price * item.quantity,
                         sku_name_snapshot=item.sku.name
                     ))
+
                 OrderItem.objects.bulk_create(items_to_create)
-                
-                # D. Update Totals
+
+                # D. Compute totals
                 order.recalculate_totals(save=True)
 
-                # E. Init Payment
+                # E. Payment
                 payment_data = None
-                if self.payment_method == 'COD':
+
+                if self.payment_method == "COD":
                     Payment.objects.create(
                         order=order,
                         user=self.user,
@@ -115,10 +177,9 @@ class CheckoutOrchestrator:
                         status=Payment.PaymentStatus.PENDING
                     )
                     payment_data = {"mode": "COD", "status": "PENDING"}
-                
-                elif self.payment_method == 'RAZORPAY':
+
+                elif self.payment_method == "RAZORPAY":
                     try:
-                        # Only create Razorpay order if amount > 0
                         if order.final_amount > 0:
                             rzp_id = create_razorpay_order(order, order.final_amount)
                             Payment.objects.create(
@@ -137,21 +198,20 @@ class CheckoutOrchestrator:
                                 "currency": "INR"
                             }
                         else:
-                            # Free order?
                             payment_data = {"mode": "FREE", "status": "SUCCESS"}
                             order.payment_status = "paid"
                             order.save()
                     except Exception as e:
-                        logger.error(f"Razorpay Error: {e}")
-                        raise ValueError("Payment Gateway Error. Please try COD.")
+                        logger.error(f"Razorpay error: {e}")
+                        raise ValueError("Payment gateway error. Try COD.")
 
                 return order, payment_data, None
 
         except ValueError as ve:
             return None, None, str(ve)
         except Exception as e:
-            logger.exception("Critical checkout error")
-            return None, None, "Internal system error during checkout."
+            logger.exception("Fatal checkout failure")
+            return None, None, "Internal checkout error."
 
 
 def get_nearest_warehouse(lat, lng):

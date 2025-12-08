@@ -18,32 +18,17 @@ from apps.warehouse.models import Warehouse
 
 
 class CreateOrderItemSerializer(serializers.Serializer):
-    """
-    [LEGACY] Direct payload based order creation.
-    Abhi hum primarily cart-based checkout use kar rahe hain,
-    lekin agar kabhi direct items bhejne ho to use ho sakta hai.
-    """
     sku_id = serializers.UUIDField()
     quantity = serializers.IntegerField(min_value=1)
 
-    def validate_sku_id(self, value):
-        if not SKU.objects.filter(id=value, is_active=True).exists():
-            raise serializers.ValidationError(
-                f"SKU with id {value} does not exist or is inactive."
-            )
-        return value
 
 
 class CreateOrderSerializer(serializers.Serializer):
-    """
-    Naya order create karne ke liye INPUT serializer.
+    warehouse_id = serializers.UUIDField(required=False, allow_null=True)
 
-    Current behavior:
-    - Primary: Cart se items uthta hai (items optional)
-    - Optional: items[] bhejo to future mein direct-flow add ho sakta hai
-    """
-    warehouse_id = serializers.UUIDField()
-    items = CreateOrderItemSerializer(many=True, required=False)  # <-- OPTIONAL now
+    # Now optional
+    items = CreateOrderItemSerializer(many=True, required=False, allow_null=True)
+
     delivery_address_json = serializers.JSONField()
 
     delivery_lat = serializers.DecimalField(
@@ -52,30 +37,41 @@ class CreateOrderSerializer(serializers.Serializer):
     delivery_lng = serializers.DecimalField(
         max_digits=9, decimal_places=6, required=False, allow_null=True
     )
+
     payment_method = serializers.ChoiceField(
         choices=[("RAZORPAY", "Razorpay"), ("COD", "Cash on Delivery")],
-        required=True, # Make this explicit
-        error_messages={'invalid_choice': 'Invalid payment method selected.'}
+        required=True,
+        error_messages={"invalid_choice": "Invalid payment method selected."}
     )
 
-    def validate_warehouse_id(self, value):
-        if not Warehouse.objects.filter(id=value, is_active=True).exists():
-            raise serializers.ValidationError(
-                f"Warehouse with id {value} does not exist or is inactive."
-            )
-        return value
-
     def validate_items(self, value):
-        # Only validate if client explicitly sends items
-        if value is None:
-            return value
-        if not value:
-            raise serializers.ValidationError("Order must contain at least one item.")
+        """
+        If frontend does NOT send items → allow it (cart checkout will be used).
+        If frontend sends items → validate them strictly.
+        """
+        if value in (None, []):
+            return value  # allow empty or missing
 
+        # Validate duplicates only when items provided
         sku_ids = [item["sku_id"] for item in value]
         if len(sku_ids) != len(set(sku_ids)):
-            raise serializers.ValidationError("Duplicate SKUs found in order items.")
+            raise serializers.ValidationError("Duplicate SKUs found.")
+
         return value
+
+    def validate(self, data):
+        """If items missing → fallback to cart."""
+        user = self.context["request"].user
+
+        if not data.get("items"):
+            cart = Cart.objects.filter(customer=user).first()
+
+            if not cart or cart.items.count() == 0:
+                raise serializers.ValidationError(
+                    {"items": "Cart is empty. Add products before checkout."}
+                )
+
+        return data
 
 
 class AddToCartSerializer(serializers.Serializer):
@@ -104,14 +100,10 @@ class PaymentVerificationSerializer(serializers.Serializer):
     razorpay_signature = serializers.CharField()
 
     def validate(self, data):
-        # Additional gateway verify view mein hota hai
         return data
 
 
 class CancelOrderSerializer(serializers.Serializer):
-    """
-    Order cancel API input.
-    """
     reason = serializers.CharField(
         required=False, allow_blank=True, max_length=500
     )
