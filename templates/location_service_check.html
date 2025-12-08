@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Service Availability Checker</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            width: 100%;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-bottom: 5px;
+        }
+
+        .content {
+            padding: 40px 30px;
+        }
+
+        .location-status {
+            display: none;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+            font-size: 14px;
+        }
+
+        .location-status.loading {
+            display: block;
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            color: #1976d2;
+        }
+
+        .location-status.success {
+            display: block;
+            background: #e8f5e9;
+            border-left: 4px solid #4caf50;
+            color: #2e7d32;
+        }
+
+        .location-status.error {
+            display: block;
+            background: #ffebee;
+            border-left: 4px solid #f44336;
+            color: #c62828;
+        }
+
+        .location-status.warning {
+            display: block;
+            background: #fff3e0;
+            border-left: 4px solid #ff9800;
+            color: #e65100;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 25px;
+        }
+
+        button {
+            flex: 1;
+            padding: 14px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #eeeeee;
+        }
+
+        .manual-input {
+            display: none;
+            margin: 25px 0;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 8px;
+        }
+
+        .manual-input.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 500;
+            color: #333;
+            font-size: 14px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .availability-result {
+            display: none;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .availability-result.available {
+            display: block;
+            background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
+            border: 2px solid #4caf50;
+        }
+
+        .availability-result.not-available {
+            display: block;
+            background: linear-gradient(135deg, #ffebee 0%, #fff3e0 100%);
+            border: 2px solid #f44336;
+        }
+
+        .result-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .result-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .result-message {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 15px;
+            line-height: 1.6;
+        }
+
+        .warehouse-info {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 10px 0;
+            border-left: 4px solid #667eea;
+        }
+
+        .warehouse-info h4 {
+            color: #667eea;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .warehouse-info p {
+            margin: 5px 0;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .service-area {
+            background: rgba(102, 126, 234, 0.1);
+            padding: 10px;
+            border-radius: 4px;
+            margin: 8px 0;
+        }
+
+        .service-area strong {
+            color: #667eea;
+        }
+
+        .coordinates {
+            font-size: 12px;
+            color: #999;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #ddd;
+            font-family: 'Courier New', monospace;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .info-box {
+            background: #f0f7ff;
+            border-left: 4px solid #2196f3;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+            font-size: 13px;
+            color: #1565c0;
+            line-height: 1.6;
+        }
+
+        .info-box strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        @media (max-width: 480px) {
+            .content {
+                padding: 25px 20px;
+            }
+
+            .header h1 {
+                font-size: 22px;
+            }
+
+            button {
+                padding: 12px 16px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚚 Service Availability</h1>
+            <p>Check if we deliver to your location</p>
+        </div>
+
+        <div class="content">
+            <!-- Status Messages -->
+            <div id="statusMessage" class="location-status"></div>
+
+            <!-- Info Box -->
+            <div class="info-box">
+                <strong>ℹ️ How it works:</strong>
+                <div>Click "Get My Location" to allow us to access your device location. We'll check if your area is within our service zone.</div>
+            </div>
+
+            <!-- Buttons -->
+            <div class="button-group">
+                <button id="getLocationBtn" class="btn-primary" onclick="getLocation()">
+                    📍 Get My Location
+                </button>
+                <button class="btn-secondary" onclick="toggleManualInput()">
+                    ⌨️ Enter Manually
+                </button>
+            </div>
+
+            <!-- Manual Input -->
+            <div id="manualInput" class="manual-input">
+                <form onsubmit="checkManualLocation(event)">
+                    <div class="form-group">
+                        <label for="latitude">Latitude</label>
+                        <input type="number" id="latitude" step="0.0001" placeholder="e.g., 40.7128" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="longitude">Longitude</label>
+                        <input type="number" id="longitude" step="0.0001" placeholder="e.g., -74.0060" required>
+                    </div>
+                    <button type="submit" class="btn-primary" style="width: 100%;">Check Availability</button>
+                </form>
+            </div>
+
+            <!-- Availability Result -->
+            <div id="availabilityResult" class="availability-result"></div>
+
+            <!-- Debug Info (optional) -->
+            <div id="debugInfo" style="display: none; margin-top: 30px; padding-top: 30px; border-top: 1px solid #eee;">
+                <h4 style="margin-bottom: 10px; color: #999;">Debug Information</h4>
+                <pre id="debugContent" style="background: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 11px; overflow-x: auto; color: #666;"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = '/api/v1/wms/location';  // Adjust based on your Django URL config
+        
+        // Show/hide status message
+        function showStatus(message, type = 'loading') {
+            const statusEl = document.getElementById('statusMessage');
+            statusEl.textContent = message;
+            statusEl.className = `location-status ${type}`;
+        }
+
+        function hideStatus() {
+            document.getElementById('statusMessage').style.display = 'none';
+        }
+
+        // Get location from browser
+        function getLocation() {
+            const btn = document.getElementById('getLocationBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading-spinner"></span>Getting Location...';
+
+            if (!navigator.geolocation) {
+                showStatus('❌ Geolocation is not supported by your browser', 'error');
+                btn.disabled = false;
+                btn.innerHTML = '📍 Get My Location';
+                return;
+            }
+
+            showStatus('📍 Accessing your location... Please allow location access in your browser.', 'loading');
+
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    const latitude = position.coords.latitude;
+                    const longitude = position.coords.longitude;
+                    const accuracy = position.coords.accuracy;
+
+                    showStatus(`✓ Location detected (Accuracy: ${accuracy.toFixed(0)}m)`, 'success');
+                    checkServiceAvailability(latitude, longitude);
+
+                    btn.disabled = false;
+                    btn.innerHTML = '📍 Get My Location';
+                },
+                (error) => {
+                    let errorMessage = 'Unable to get your location';
+                    if (error.code === error.PERMISSION_DENIED) {
+                        errorMessage = 'Location access denied. Please enable location permission in your browser settings.';
+                    } else if (error.code === error.POSITION_UNAVAILABLE) {
+                        errorMessage = 'Location information is unavailable.';
+                    } else if (error.code === error.TIMEOUT) {
+                        errorMessage = 'Location request timed out. Please try again.';
+                    }
+                    showStatus(`❌ ${errorMessage}`, 'error');
+                    btn.disabled = false;
+                    btn.innerHTML = '📍 Get My Location';
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                }
+            );
+        }
+
+        // Toggle manual input
+        function toggleManualInput() {
+            const manualInput = document.getElementById('manualInput');
+            manualInput.classList.toggle('active');
+            if (manualInput.classList.contains('active')) {
+                document.getElementById('latitude').focus();
+            }
+        }
+
+        // Check manual location
+        function checkManualLocation(event) {
+            event.preventDefault();
+            const latitude = parseFloat(document.getElementById('latitude').value);
+            const longitude = parseFloat(document.getElementById('longitude').value);
+            
+            if (isNaN(latitude) || isNaN(longitude)) {
+                showStatus('❌ Please enter valid latitude and longitude', 'error');
+                return;
+            }
+
+            checkServiceAvailability(latitude, longitude);
+        }
+
+        // Check service availability API call
+        async function checkServiceAvailability(latitude, longitude) {
+            showStatus('🔍 Checking service availability...', 'loading');
+            document.getElementById('availabilityResult').innerHTML = '';
+
+            try {
+                const response = await fetch(
+                    `${API_BASE_URL}/check-service/?latitude=${latitude}&longitude=${longitude}`,
+                    {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        }
+                    }
+                );
+
+                const data = await response.json();
+                hideStatus();
+
+                if (data.is_available) {
+                    displayAvailableResult(data);
+                } else {
+                    displayNotAvailableResult(data, latitude, longitude);
+                }
+
+                logDebug({
+                    status: 'success',
+                    latitude,
+                    longitude,
+                    response: data
+                });
+
+            } catch (error) {
+                console.error('Error:', error);
+                showStatus(`❌ Error: ${error.message}`, 'error');
+                logDebug({
+                    status: 'error',
+                    error: error.message,
+                    latitude,
+                    longitude
+                });
+            }
+        }
+
+        // Display available result
+        function displayAvailableResult(data) {
+            const resultEl = document.getElementById('availabilityResult');
+            resultEl.className = 'availability-result available';
+
+            let html = `
+                <div class="result-icon">✅</div>
+                <div class="result-title">Service Available!</div>
+                <div class="result-message">${data.message || 'Your location is within our service area.'}</div>
+            `;
+
+            if (data.warehouse) {
+                html += `
+                    <div class="warehouse-info">
+                        <h4>🏢 ${data.warehouse.name}</h4>
+                        <p><strong>Code:</strong> ${data.warehouse.code}</p>
+                        <p><strong>Address:</strong> ${data.warehouse.address}</p>
+                    </div>
+                `;
+            }
+
+            if (data.service_area) {
+                html += `
+                    <div class="service-area">
+                        <strong>📍 Service Area:</strong> ${data.service_area.name}<br>
+                        <small>Distance: ${data.distance_km} km</small><br>
+                        <small>Est. Delivery: ${data.delivery_time_minutes} minutes</small>
+                    </div>
+                `;
+            }
+
+            html += `<div class="coordinates">Coordinates: Location detected</div>`;
+
+            resultEl.innerHTML = html;
+        }
+
+        // Display not available result
+        function displayNotAvailableResult(data, latitude, longitude) {
+            const resultEl = document.getElementById('availabilityResult');
+            resultEl.className = 'availability-result not-available';
+
+            let html = `
+                <div class="result-icon">No Service Icon</div>
+                <div class="result-title">Service Not Available</div>
+                <div class="result-message">${data.message || 'Unfortunately, we don\'t currently deliver to this location.'}</div>
+                <div class="info-box" style="margin: 15px 0; background: #fff8e1; border-left-color: #ffa000; color: #e65100;">
+                    <strong>Good news! Expanding soon...</strong>
+                    <div>We are actively expanding our service areas. Check back soon!</div>
+                </div>
+            `;
+
+            html += `
+                <div class="coordinates">
+                    Your Coordinates: Latitude ${latitude.toFixed(6)}, Longitude ${longitude.toFixed(6)}
+                </div>
+            `;
+
+            resultEl.innerHTML = html;
+        }
+
+        // Debug logging
+        function logDebug(info) {
+            const debugInfo = document.getElementById('debugInfo');
+            const debugContent = document.getElementById('debugContent');
+            
+            // Uncomment to show debug info
+            // debugInfo.style.display = 'block';
+            // debugContent.textContent = JSON.stringify(info, null, 2);
+            
+            console.log('Service Check Debug:', info);
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Service Availability Checker initialized');
+            console.log('API Base URL:', API_BASE_URL);
+        });
+    </script>
+</body>
+</html>

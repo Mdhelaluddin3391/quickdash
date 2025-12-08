@@ -316,3 +316,25 @@ class LogoutView(views.APIView):
                 {"error": "Invalid token or logout failed"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+
+# ============================================
+# SERVICE AVAILABILITY CHECKER PAGE
+# ============================================
+
+from django.views.generic import TemplateView
+
+class LocationServiceCheckView(TemplateView):
+    """
+    Renders the location service availability checker page.
+    This page allows users to check if their location is within service area.
+    
+    URL: /location/service-check/
+    Template: location_service_check.html
+    """
+    template_name = 'location_service_check.html'
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['page_title'] = 'Service Availability Checker'
+        return context

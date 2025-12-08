@@ -3,6 +3,7 @@ from rest_framework import serializers
 
 from .models import (
     Warehouse,
+    ServiceArea,
     Zone,
     Bin,
     BinInventory,
@@ -29,6 +30,36 @@ class WarehouseSerializer(serializers.ModelSerializer):
     class Meta:
         model = Warehouse
         fields = ["id", "name", "code", "address", "lat", "lng", "is_active"]
+
+
+class ServiceAreaSerializer(serializers.ModelSerializer):
+    """Serializer for Service Areas with location details"""
+    warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+    
+    class Meta:
+        model = ServiceArea
+        fields = [
+            'id',
+            'warehouse',
+            'warehouse_name',
+            'name',
+            'description',
+            'center_point',
+            'radius_km',
+            'delivery_time_minutes',
+            'is_active',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+    def to_representation(self, instance):
+        """Convert location data to lat/lng for API response"""
+        ret = super().to_representation(instance)
+        if instance.center_point:
+            ret['center_lat'] = instance.center_point.y
+            ret['center_lng'] = instance.center_point.x
+        return ret
 
 
 class BinSerializer(serializers.ModelSerializer):

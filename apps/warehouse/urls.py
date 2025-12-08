@@ -104,4 +104,21 @@ urlpatterns = [
         _resolve("record_cycle_count_view") or _NotImplementedAPIView.as_view(),
         name="wms-cc-record",
     ),
+    # Location-based service availability
+    path(
+        "location/check-service/",
+        (_resolve("CheckServiceAvailabilityAPIView") or _NotImplementedAPIView).as_view(),
+        name="wms-check-service-availability",
+    ),
+    path(
+        "location/nearest-service/",
+        (_resolve("GetNearestServiceAreaAPIView") or _NotImplementedAPIView).as_view(),
+        name="wms-nearest-service-area",
+    ),
+    path(
+        "location/service-areas/",
+        (_resolve("ServiceAreaListAPIView") or _NotImplementedAPIView).as_view(),
+        name="wms-service-areas-list",
+    ),
 ]
+

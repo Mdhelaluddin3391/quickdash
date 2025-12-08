@@ -1,10 +1,13 @@
 # apps/accounts/serializers.py
 from rest_framework import serializers
+import logging
 from django.contrib.auth import get_user_model
 from django.contrib.gis.geos import Point 
 from .models import RiderProfile, EmployeeProfile, Address, CustomerProfile
 
 User = get_user_model()
+
+logger = logging.getLogger(__name__)
 
 # ======================
 # Helper
@@ -92,6 +95,10 @@ class AddressSerializer(serializers.ModelSerializer):
     # Frontend ko data DENE ke liye (Read)
     latitude = serializers.SerializerMethodField()
     longitude = serializers.SerializerMethodField()
+    
+    # Service availability info
+    service_available = serializers.SerializerMethodField(read_only=True)
+    service_message = serializers.SerializerMethodField(read_only=True)
 
     # Read-only user show karne ke liye (optional but useful)
     user = serializers.PrimaryKeyRelatedField(read_only=True)
@@ -112,14 +119,41 @@ class AddressSerializer(serializers.ModelSerializer):
             'lng',
             'latitude',
             'longitude',
+            'service_available',
+            'service_message',
         ]
-        read_only_fields = ['location', 'user']
+        read_only_fields = ['location', 'user', 'service_available', 'service_message']
 
     def get_latitude(self, obj):
         return obj.location.y if obj.location else None
 
     def get_longitude(self, obj):
         return obj.location.x if obj.location else None
+    
+    def get_service_available(self, obj):
+        """Check if this address location is serviceable"""
+        if not obj.location:
+            return None
+        try:
+            from apps.warehouse.services import check_service_availability
+            result = check_service_availability(obj.location.y, obj.location.x)
+            return result.get('is_available', False)
+        except Exception as e:
+            logger.exception("Service availability check failed: %s", e)
+            # Return False (not available) when the service check fails to avoid 500s
+            return False
+    
+    def get_service_message(self, obj):
+        """Get service availability message"""
+        if not obj.location:
+            return None
+        try:
+            from apps.warehouse.services import check_service_availability
+            result = check_service_availability(obj.location.y, obj.location.x)
+            return result.get('message', '')
+        except Exception as e:
+            logger.exception("Service availability message retrieval failed: %s", e)
+            return ''
 
     def create(self, validated_data):
         """

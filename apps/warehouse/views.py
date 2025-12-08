@@ -6,12 +6,11 @@ from django.core.exceptions import ValidationError
 
 from rest_framework import viewsets, views, generics, status
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from .models import (
     Warehouse, BinInventory, PickingTask, PickItem,
-    PackingTask, GRN, CycleCountTask,
-    PickSkip, ShortPickIncident, FulfillmentCancel
+    PackingTask, GRN, CycleCountTask, ServiceArea
 )
 from .serializers import (
     WarehouseSerializer, BinInventorySerializer, PickingTaskSerializer,
@@ -19,6 +18,7 @@ from .serializers import (
     FulfillmentCancelSerializer, CreateGRNSerializer, GRNSerializer,
     PlacePutawaySerializer, PutawayTaskSerializer, CreateCycleCountSerializer,
     CycleCountTaskSerializer, RecordCycleCountSerializer, DispatchOTPVerifySerializer,
+    ServiceAreaSerializer,
 )
 from .permissions import (
     PickerOnly, PackerOnly, WarehouseManagerOnly, AnyEmployee,
@@ -28,6 +28,7 @@ from .services import (
     resolve_skip_as_shortpick, admin_fulfillment_cancel,
     create_grn_and_putaway, place_putaway_item,
     create_cycle_count, record_cycle_count_item, verify_dispatch_otp,
+    check_service_availability, get_nearest_service_area,
 )
 
 logger = logging.getLogger(__name__)
@@ -468,6 +469,7 @@ class RecordCycleCountView(views.APIView):
 # COMPATIBLE FUNCTION-STYLE VIEWS FOR urls.py
 # =========================================================
 
+
 # urls.py dynamic resolver names expect these:
 
 scan_pick_view = ScanPickAPIView.as_view()
@@ -476,3 +478,168 @@ complete_packing_view = CompletePackingAPIView.as_view()
 place_putaway_item_view = PlacePutawayItemView.as_view()
 record_cycle_count_view = RecordCycleCountView.as_view()
 dispatch_otp_verify_view = DispatchOTPVerifyAPIView.as_view()
+
+
+# =========================================================
+# SERVICE AVAILABILITY & LOCATION-BASED CHECKS
+# =========================================================
+
+class CheckServiceAvailabilityAPIView(views.APIView):
+    """
+    Check if a customer location is serviceable.
+    
+    Query params or POST:
+    - latitude (required)
+    - longitude (required)
+    - warehouse_id (optional)
+    
+    Response:
+    {
+        'is_available': bool,
+        'warehouse': {...},
+        'service_area': {...},
+        'distance_km': float,
+        'delivery_time_minutes': int,
+        'message': str
+    }
+    """
+    permission_classes = [AllowAny]  # Allow unauthenticated users to check service availability
+    
+    def get(self, request):
+        """Handle GET request with query params"""
+        latitude = request.query_params.get('latitude')
+        longitude = request.query_params.get('longitude')
+        warehouse_id = request.query_params.get('warehouse_id')
+        
+        if not latitude or not longitude:
+            return Response(
+                {
+                    'is_available': False,
+                    'message': 'latitude and longitude are required',
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            latitude = float(latitude)
+            longitude = float(longitude)
+        except ValueError:
+            return Response(
+                {
+                    'is_available': False,
+                    'message': 'latitude and longitude must be valid numbers',
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        result = check_service_availability(latitude, longitude, warehouse_id)
+        return Response(result, status=status.HTTP_200_OK)
+    
+    def post(self, request):
+        """Handle POST request with JSON body"""
+        latitude = request.data.get('latitude')
+        longitude = request.data.get('longitude')
+        warehouse_id = request.data.get('warehouse_id')
+        
+        if not latitude or not longitude:
+            return Response(
+                {
+                    'is_available': False,
+                    'message': 'latitude and longitude are required',
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            latitude = float(latitude)
+            longitude = float(longitude)
+        except (ValueError, TypeError):
+            return Response(
+                {
+                    'is_available': False,
+                    'message': 'latitude and longitude must be valid numbers',
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        result = check_service_availability(latitude, longitude, warehouse_id)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class GetNearestServiceAreaAPIView(views.APIView):
+    """
+    Get nearest service area to a location.
+    Useful for showing "service coming soon to your area" messages.
+    
+    Query params or POST:
+    - latitude (required)
+    - longitude (required)
+    
+    Response:
+    {
+        'service_area': {
+            'id': int,
+            'name': str,
+            'warehouse': str,
+        },
+        'distance_km': float
+    }
+    or null if no service area found.
+    """
+    permission_classes = [AllowAny]
+    
+    def get(self, request):
+        """Handle GET request"""
+        latitude = request.query_params.get('latitude')
+        longitude = request.query_params.get('longitude')
+        
+        if not latitude or not longitude:
+            return Response(
+                {'error': 'latitude and longitude are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            latitude = float(latitude)
+            longitude = float(longitude)
+        except ValueError:
+            return Response(
+                {'error': 'latitude and longitude must be valid numbers'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        result = get_nearest_service_area(latitude, longitude)
+        return Response(result, status=status.HTTP_200_OK)
+    
+    def post(self, request):
+        """Handle POST request"""
+        latitude = request.data.get('latitude')
+        longitude = request.data.get('longitude')
+        
+        if not latitude or not longitude:
+            return Response(
+                {'error': 'latitude and longitude are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            latitude = float(latitude)
+            longitude = float(longitude)
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'latitude and longitude must be valid numbers'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        result = get_nearest_service_area(latitude, longitude)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class ServiceAreaListAPIView(generics.ListAPIView):
+    """
+    List all active service areas.
+    Can be used to display coverage zones on a map.
+    """
+    queryset = ServiceArea.objects.filter(is_active=True)
+    serializer_class = ServiceAreaSerializer
+    permission_classes = [AllowAny]

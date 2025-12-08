@@ -12,6 +12,7 @@ from .views import (
     CustomerAddressListCreateView,
     CustomerAddressDetailView,
     SetDefaultAddressView,
+    LocationServiceCheckView,
 )
 from .views_social import GoogleLoginView 
 from .views_roles import ChangeUserRole
@@ -47,6 +48,9 @@ urlpatterns = [
     path("users/<uuid:user_id>/role/", ChangeUserRole.as_view()),
 
     path('auth/google/', GoogleLoginView.as_view(), name='google-login'),
+    
+    # Location-based service checker page
+    path('location/service-check/', LocationServiceCheckView.as_view(), name='location-service-check'),
 ]
 
 

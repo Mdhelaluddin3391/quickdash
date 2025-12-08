@@ -62,9 +62,26 @@ async function apiCall(endpoint, method = 'GET', body = null, requireAuth = true
         }
 
         if (response.status === 204) return null;
-        const data = await response.json();
+
+        const contentType = response.headers.get('content-type') || '';
+        let data = null;
+
+        if (contentType.includes('application/json')) {
+            data = await response.json();
+        } else {
+            // Non-JSON response (often an HTML error page). Read text for debugging.
+            const text = await response.text();
+            console.error('Received non-JSON response:', text);
+            if (!response.ok) {
+                // Surface useful info to the caller instead of throwing a JSON parse error
+                throw new Error(`HTTP ${response.status} ${response.statusText}: ${text}`);
+            }
+            // If response is OK but not JSON, return the raw text
+            return text;
+        }
+
         if (!response.ok) {
-            throw new Error(data.detail || data.error || "Something went wrong");
+            throw new Error(data.detail || data.error || JSON.stringify(data) || "Something went wrong");
         }
         return data;
 
@@ -92,13 +109,23 @@ async function refreshToken() {
         });
 
         if (response.ok) {
-            const data = await response.json();
-            localStorage.setItem('accessToken', data.access);
-            if (data.refresh) localStorage.setItem('refreshToken', data.refresh);
-            console.log("Token successfully refreshed.");
-            return true;
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+                const data = await response.json();
+                localStorage.setItem('accessToken', data.access);
+                if (data.refresh) localStorage.setItem('refreshToken', data.refresh);
+                console.log("Token successfully refreshed.");
+                return true;
+            } else {
+                // Unexpected non-JSON successful response
+                const text = await response.text();
+                console.warn('Token refresh returned non-JSON response:', text);
+                return false;
+            }
         } else {
-            console.error("Token refresh API call failed with status:", response.status);
+            // Try to read any returned message for debugging
+            const text = await response.text();
+            console.error("Token refresh API call failed with status:", response.status, text);
             return false;
         }
     } catch (e) {

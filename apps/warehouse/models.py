@@ -27,6 +27,40 @@ class Warehouse(models.Model):
         return f"{self.name} ({self.code})"
 
 
+class ServiceArea(models.Model):
+    """
+    Define service coverage areas for each warehouse.
+    Uses PostGIS polygon geometry to define delivery zones.
+    Supports multiple service areas per warehouse (e.g., different zones within a city).
+    """
+    warehouse = models.ForeignKey(
+        Warehouse,
+        on_delete=models.CASCADE,
+        related_name="service_areas",
+    )
+    name = models.CharField(max_length=255, help_text="e.g., 'North Zone', 'Downtown Area'")
+    description = models.TextField(null=True, blank=True)
+    
+    # Geometry - can be polygon, multipolygon, or point with radius
+    geometry = gis_models.PolygonField(srid=4326, null=True, blank=True, help_text="Service area boundary")
+    center_point = gis_models.PointField(srid=4326, null=True, blank=True, help_text="Center of service area")
+    radius_km = models.FloatField(default=5.0, help_text="Radius in kilometers if using point-based coverage")
+    
+    # Delivery settings
+    delivery_time_minutes = models.IntegerField(default=30, help_text="Estimated delivery time in minutes")
+    is_active = models.BooleanField(default=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.warehouse.name} - {self.name}"
+
+    class Meta:
+        verbose_name = "Service Area"
+        verbose_name_plural = "Service Areas"
+
+
 class Zone(models.Model):
     warehouse = models.ForeignKey(
         Warehouse,

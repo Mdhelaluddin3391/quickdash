@@ -517,3 +517,161 @@ def record_cycle_count_item(task_id, bin_id, sku_id, counted_qty, user):
 
     cc_item.save()
     return cc_item
+
+
+# =========================================================
+# SERVICE AVAILABILITY (LOCATION-BASED DELIVERY CHECK)
+# =========================================================
+
+from django.contrib.gis.geos import Point
+from django.contrib.gis.db.models.functions import Distance
+from django.db.models import F
+from django.db.models.expressions import RawSQL
+
+def check_service_availability(latitude, longitude, warehouse_id=None):
+    """
+    Check if a location is serviceable.
+    
+    Args:
+        latitude: Customer's latitude
+        longitude: Customer's longitude
+        warehouse_id: Optional specific warehouse to check. If None, checks all active warehouses.
+    
+    Returns:
+        {
+            'is_available': bool,
+            'warehouse': {...},
+            'service_area': {...},
+            'distance_km': float,
+            'delivery_time_minutes': int,
+            'message': str
+        }
+    """
+    try:
+        customer_location = Point(longitude, latitude, srid=4326)
+    except Exception as e:
+        logger.error(f"Invalid coordinates: lat={latitude}, lng={longitude}, error={e}")
+        return {
+            'is_available': False,
+            'message': 'Invalid location coordinates',
+            'warehouse': None,
+            'service_area': None,
+        }
+    
+    # Import here to avoid circular imports
+    from .models import Warehouse, ServiceArea
+    
+    # Filter warehouses
+    warehouses = Warehouse.objects.filter(is_active=True)
+    if warehouse_id:
+        warehouses = warehouses.filter(id=warehouse_id)
+    
+    if not warehouses.exists():
+        return {
+            'is_available': False,
+            'message': 'No active warehouses available',
+            'warehouse': None,
+            'service_area': None,
+        }
+    
+    # Check service areas
+    for warehouse in warehouses:
+        # First check point-based service areas (center_point + radius)
+        point_areas = warehouse.service_areas.filter(
+            is_active=True,
+            center_point__isnull=False
+        )
+        
+        for area in point_areas:
+            distance = customer_location.distance(area.center_point)
+            distance_km = distance.km
+            
+            if distance_km <= area.radius_km:
+                return {
+                    'is_available': True,
+                    'warehouse': {
+                        'id': warehouse.id,
+                        'name': warehouse.name,
+                        'code': warehouse.code,
+                        'address': warehouse.address,
+                    },
+                    'service_area': {
+                        'id': area.id,
+                        'name': area.name,
+                        'radius_km': area.radius_km,
+                    },
+                    'distance_km': round(distance_km, 2),
+                    'delivery_time_minutes': area.delivery_time_minutes,
+                    'message': f'Service available in {area.name}. Estimated delivery: {area.delivery_time_minutes} minutes',
+                }
+        
+        # Then check polygon-based service areas if geometry exists
+        polygon_areas = warehouse.service_areas.filter(
+            is_active=True,
+            geometry__isnull=False
+        ).annotate(
+            distance=Distance('geometry', customer_location)
+        )
+        
+        for area in polygon_areas:
+            # Check if point is within polygon
+            if area.geometry.contains(customer_location):
+                return {
+                    'is_available': True,
+                    'warehouse': {
+                        'id': warehouse.id,
+                        'name': warehouse.name,
+                        'code': warehouse.code,
+                        'address': warehouse.address,
+                    },
+                    'service_area': {
+                        'id': area.id,
+                        'name': area.name,
+                    },
+                    'distance_km': round(area.distance.km, 2),
+                    'delivery_time_minutes': area.delivery_time_minutes,
+                    'message': f'Service available in {area.name}. Estimated delivery: {area.delivery_time_minutes} minutes',
+                }
+    
+    return {
+        'is_available': False,
+        'message': 'Service not available in your location. We are working to expand our coverage.',
+        'warehouse': None,
+        'service_area': None,
+    }
+
+
+def get_nearest_service_area(latitude, longitude):
+    """
+    Get the nearest service area to a given location.
+    Useful for showing "coming soon to your area" messages.
+    
+    Returns the nearest service area even if customer location is not covered.
+    """
+    try:
+        customer_location = Point(longitude, latitude, srid=4326)
+    except Exception as e:
+        logger.error(f"Invalid coordinates: lat={latitude}, lng={longitude}, error={e}")
+        return None
+    
+    from .models import ServiceArea
+    
+    nearest = ServiceArea.objects.filter(
+        is_active=True,
+        center_point__isnull=False
+    ).annotate(
+        distance=Distance('center_point', customer_location)
+    ).order_by('distance').first()
+    
+    if nearest:
+        distance = customer_location.distance(nearest.center_point)
+        return {
+            'service_area': {
+                'id': nearest.id,
+                'name': nearest.name,
+                'warehouse': nearest.warehouse.name,
+            },
+            'distance_km': round(distance.km, 2),
+        }
+    
+    return None
