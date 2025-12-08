@@ -2,8 +2,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const list = document.getElementById('orders-list');
     
     try {
-        const orders = await apiCall('/orders/');
-        
+        const ordersResp = await apiCall('/orders/');
+        // Handle paginated or non-paginated response
+        const orders = Array.isArray(ordersResp) ? ordersResp : (ordersResp.results || []);
+
         list.innerHTML = '';
         if (!orders || orders.length === 0) {
             document.getElementById('no-orders').style.display = 'block';
@@ -13,7 +15,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         orders.forEach(o => {
             const date = new Date(o.created_at).toLocaleDateString();
             const statusClass = `status-${o.status.toLowerCase()}`;
-            
+
             const div = document.createElement('div');
             div.className = 'order-card';
             div.innerHTML = `

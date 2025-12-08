@@ -4,7 +4,6 @@
 {% block title %}Track Order - QuickDash{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <link rel="stylesheet" href="{% static 'assets/css/track_order_style.css' %}">
 {% endblock %}
 
@@ -19,19 +18,32 @@
         <div class="timeline-container">
             <div class="status-step active" id="step-confirmed">
                 <div class="dot"></div>
-                <div class="info">Order Confirmed</div>
+                <div class="info">Order Confirmed <span class="step-time" id="time-confirmed"></span></div>
             </div>
             <div class="status-step" id="step-packed">
                 <div class="dot"></div>
-                <div class="info">Packed</div>
+                <div class="info">Packed <span class="step-time" id="time-packed"></span></div>
             </div>
             <div class="status-step" id="step-dispatched">
                 <div class="dot"></div>
-                <div class="info">Out for Delivery <br><small id="rider-info">Assigning Rider...</small></div>
+                <div class="info">Out for Delivery <br><small id="rider-info">Assigning Rider...</small> <span class="step-time" id="time-dispatched"></span></div>
             </div>
             <div class="status-step" id="step-delivered">
                 <div class="dot"></div>
-                <div class="info">Delivered</div>
+                <div class="info">Delivered <span class="step-time" id="time-delivered"></span></div>
+            </div>
+        </div>
+
+        <div class="order-details-box">
+            <h4>Order Details</h4>
+            <div id="order-items-list"></div>
+            <div class="order-summary">
+                <div><b>Total:</b> <span id="order-total">₹...</span></div>
+                <div><b>Payment:</b> <span id="order-payment">...</span></div>
+            </div>
+            <div class="order-address">
+                <b>Delivery Address:</b>
+                <div id="order-address-text">...</div>
             </div>
         </div>
     </div>
@@ -41,6 +53,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Google Maps JS API (key from settings) -->
+<script src="https://maps.googleapis.com/maps/api/js?key={{ GOOGLE_MAPS_API_KEY }}&callback=initMap" async defer></script>
 <script src="{% static 'assets/js/pages/account/track_order.js' %}"></script>
 {% endblock %}

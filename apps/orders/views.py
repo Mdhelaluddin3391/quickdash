@@ -36,7 +36,7 @@ class AddToCartView(APIView):
     def post(self, request):
         serializer = AddToCartSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         cart, _ = Cart.objects.get_or_create(customer=request.user)
         sku_id = serializer.validated_data["sku_id"]
         qty = serializer.validated_data["quantity"]
@@ -44,10 +44,12 @@ class AddToCartView(APIView):
         if qty == 0:
             CartItem.objects.filter(cart=cart, sku_id=sku_id).delete()
         else:
-            CartItem.objects.update_or_create(
+            item, created = CartItem.objects.update_or_create(
                 cart=cart, sku_id=sku_id, defaults={"quantity": qty}
             )
-        
+            # Ensure save() is called to recalc total_price
+            item.save()
+
         cart.refresh_from_db()
         return Response(CartSerializer(cart).data)
 

@@ -124,10 +124,10 @@ async function addToCart(skuId) {
     try {
         // requireAuth = true (default)
         await apiCall('/orders/cart/add/', 'POST', { sku_id: skuId, quantity: 1 });
-        alert("Item added to cart!");
-        // Update cart count in navbar if helper function exists
+        // Optionally, show a non-blocking toast or highlight the cart icon here
         if(window.updateGlobalCartCount) window.updateGlobalCartCount();
     } catch (e) {
-        alert(e.message || "Failed to add");
+        // Optionally, show a non-blocking error message
+        console.error(e.message || "Failed to add");
     }
 }

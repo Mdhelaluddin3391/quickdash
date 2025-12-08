@@ -1,3 +1,6 @@
+def google_maps_api_key(request):
+    """Expose GOOGLE_MAPS_API_KEY to all templates."""
+    return {"GOOGLE_MAPS_API_KEY": GOOGLE_MAPS_API_KEY}
 # config/settings.py
 import logging
 from pathlib import Path
@@ -88,6 +91,8 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                # Custom context processor for Google Maps API key
+                "config.settings.google_maps_api_key",
             ],
         },
     },
@@ -248,6 +253,9 @@ TWILIO_FROM_NUMBER = config("TWILIO_FROM_NUMBER", default=None)
 
 GOOGLE_CLIENT_ID = config("GOOGLE_CLIENT_ID", default="")
 FIREBASE_CREDENTIALS_PATH = config("FIREBASE_CREDENTIALS_PATH", default=None)
+
+# Google Maps API Key
+GOOGLE_MAPS_API_KEY = config("GOOGLE_MAPS_API_KEY", default="fake-key")
 
 BASE_DELIVERY_FEE = config("BASE_DELIVERY_FEE", default=20.00, cast=Decimal)
 ORDER_CANCELLATION_WINDOW = config("ORDER_CANCELLATION_WINDOW", default=300, cast=int)
