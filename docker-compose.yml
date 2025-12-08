@@ -50,6 +50,8 @@ services:
         condition: service_healthy
     networks:
       - quickdash_net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   worker:
     build: .
