@@ -1,6 +1,7 @@
 # apps/catalog/views_assistant.py
 
 import re
+import logging
 from decimal import Decimal
 from django.db.models import Q, Sum
 from django.contrib.postgres.search import TrigramSimilarity
@@ -11,6 +12,8 @@ from rest_framework.permissions import AllowAny
 
 from apps.catalog.models import SKU, FlashSale
 from apps.orders.models import Cart, CartItem
+
+logger = logging.getLogger(__name__)
 
 
 class ShoppingAssistantView(APIView):
@@ -307,7 +310,8 @@ class ShoppingAssistantView(APIView):
                 .order_by("-similarity")
                 .first()
             )
-        except:
+        except (ValueError, Exception) as e:
+            logger.warning(f"Trigram search failed, falling back to icontains: {e}")
             return SKU.objects.filter(name__icontains=query).first()
 
     # ---------------------------------------------------------------------

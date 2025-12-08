@@ -254,8 +254,9 @@ def process_successful_payment(order):
             transaction.on_commit(lambda: send_order_created.send(
                 sender=Order,
                 order_id=order.id,
+                customer_id=order.customer.id,
                 order_items=wms_items,
-                metadata={"warehouse_id": str(order.warehouse_id), "customer_id": str(order.customer_id)}
+                metadata={"warehouse_id": str(order.warehouse_id)}
             ))
             return True, "Success"
     except Exception as e:

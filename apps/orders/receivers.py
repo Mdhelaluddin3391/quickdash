@@ -34,10 +34,10 @@ def handle_payment_success(sender, order, **kwargs):
             send_order_created.send(
                 sender=Order,
                 order_id=order.id,
+                customer_id=order.customer.id if order.customer else None,
                 order_items=wms_items_list,
                 metadata={
-                    "warehouse_id": str(order.warehouse.id) if order.warehouse else None,
-                    "customer_id": str(order.customer.id) if order.customer else None
+                    "warehouse_id": str(order.warehouse.id) if order.warehouse else None
                 }
             )
             logger.info(f"WMS signal sent for confirmed order {order.id}")

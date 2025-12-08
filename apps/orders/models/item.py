@@ -1,9 +1,12 @@
 import uuid
+import logging
 from decimal import Decimal
 
 from django.db import models
 
 from .order import Order
+
+logger = logging.getLogger(__name__)
 
 
 class OrderItem(models.Model):
@@ -58,6 +61,6 @@ class OrderItem(models.Model):
         # Order totals recalc
         try:
             self.order.recalculate_totals(save=True)
-        except Exception:
+        except Exception as e:
             # Best-effort; errors ko swallow karna zyada safe hai yahan
-            pass
+            logger.exception("Failed to recalculate order totals for order %s", self.order_id)

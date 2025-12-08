@@ -97,7 +97,8 @@ class PaymentVerificationView(APIView):
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
         try:
             client.utility.verify_payment_signature(data)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Payment signature verification failed: {e}")
             return Response({"error": "Invalid signature"}, status=400)
 
         payment = get_object_or_404(Payment, gateway_order_id=data["razorpay_order_id"])
