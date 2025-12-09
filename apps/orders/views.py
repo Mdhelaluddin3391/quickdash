@@ -97,11 +97,16 @@ class PaymentVerificationView(APIView):
         data = serializer.validated_data
 
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        
+        # FIX: Explicit error handling for signature verification
         try:
             client.utility.verify_payment_signature(data)
-        except Exception as e:
-            logger.warning(f"Payment signature verification failed: {e}")
+        except razorpay.errors.SignatureVerificationError:
+            logger.warning(f"Payment signature verification failed for order {data.get('razorpay_order_id')}")
             return Response({"error": "Invalid signature"}, status=400)
+        except Exception as e:
+            logger.exception(f"Unexpected error during payment verification: {e}")
+            return Response({"error": "Payment verification failed due to a system error"}, status=500)
 
         payment = get_object_or_404(Payment, gateway_order_id=data["razorpay_order_id"])
         

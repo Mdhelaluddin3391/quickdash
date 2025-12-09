@@ -1,6 +1,10 @@
+# config/urls.py
+
 from django.contrib import admin
 from django.urls import path, include
 from django.views.generic import TemplateView
+from django.conf import settings
+from django.conf.urls.static import static
 
 urlpatterns = [
     # --- Admin Panels ---
@@ -57,3 +61,8 @@ urlpatterns = [
     path("404.html", TemplateView.as_view(template_name="frontend/pages/404.html"), name="not-found"),
     path("service-unavailable.html", TemplateView.as_view(template_name="frontend/pages/not_serviceable.html"), name="not-serviceable"),
 ]
+
+# FIX: Serve media files in development so images don't break
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

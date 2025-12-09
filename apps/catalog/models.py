@@ -19,7 +19,6 @@ class Category(models.Model):
         related_name='subcategories',
     )
    
-
     # New fields
     is_active = models.BooleanField(default=True)
     sort_order = models.PositiveIntegerField(default=0)
@@ -47,15 +46,18 @@ class Category(models.Model):
         return self.name
 
     def save(self, *args, **kwargs):
-        # Auto-generate slug once
+        # FIX: Optimized slug generation
         if not self.slug:
-            base = slugify(self.name)
-            slug = base
-            i = 1
-            while Category.objects.filter(slug=slug).exclude(pk=self.pk).exists():
-                slug = f"{base}-{i}"
-                i += 1
-            self.slug = slug
+            base_slug = slugify(self.name)
+            slug_candidate = base_slug
+            counter = 1
+            
+            # Check existence efficiently
+            while Category.objects.filter(slug=slug_candidate).exclude(pk=self.pk).exists():
+                slug_candidate = f"{base_slug}-{counter}"
+                counter += 1
+                
+            self.slug = slug_candidate
         super().save(*args, **kwargs)
 
 

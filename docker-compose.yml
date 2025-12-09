@@ -21,7 +21,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    container_name: quickdash_redis
     restart: always
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
     networks:
@@ -31,6 +33,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
 
   web:
     build: .

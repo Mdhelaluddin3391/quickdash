@@ -25,7 +25,7 @@ async function loadAddresses() {
     try {
         const response = await apiCall('/auth/customer/addresses/');
         
-        // --- FIX: Handle Pagination (response.results) ---
+        // Handle Pagination (response.results) vs Flat List
         const addresses = response.results || response; 
         console.log("Addresses loaded:", addresses);
 
@@ -67,13 +67,16 @@ async function handleAddAddress(e) {
     btn.innerText = "Saving...";
     btn.disabled = true;
 
-    // Demo Coordinates (Production mein Map Picker use karein)
+    // FIX: Get selected radio button value
+    const addressTypeInput = document.querySelector('input[name="address_type"]:checked');
+    const addressTypeValue = addressTypeInput ? addressTypeInput.value : 'HOME';
+
     const payload = {
         full_address: document.getElementById('a-line').value,
         city: document.getElementById('a-city').value,
         pincode: document.getElementById('a-pincode').value,
-        address_type: document.getElementById('a-type').value,
-        lat: 12.9716, 
+        address_type: addressTypeValue, 
+        lat: 12.9716, // Dummy coords
         lng: 77.5946 
     };
 

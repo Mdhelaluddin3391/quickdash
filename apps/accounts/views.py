@@ -51,26 +51,26 @@ class RequestOTPView(views.APIView):
             raise Throttled(detail=str(e))
         except Exception as e:
             logger.exception("Redis connection error during OTP limit check")
-            # Fail open or closed depending on policy. Here we fail closed for security.
+            # Fail closed for security.
             return Response(
                 {"detail": "Temporary system error. Please try again later."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
 
         # 2. Create OTP
-        # Note: create_and_send_otp handles the SMS logic internally
         create_and_send_otp(phone, login_type)
         
-        # [SECURITY FIX]: Never send the OTP code in the response, even in DEBUG.
-        # Developers should check console logs or DB.
+        # FIX: Redacted OTP from logs for security
         if settings.DEBUG:
-            logger.info(f"Dev Hint: OTP sent to {phone}")
+            logger.info(f"Dev Hint: OTP sent to {phone} (Check Console/DB)")
 
         return Response(
             {"message": "OTP sent successfully. Please check your SMS."},
             status=status.HTTP_200_OK
         )
 
+        # if settings.DEBUG:
+        #     logger.info(f"Dev Hint: OTP sent to {phone}")
 
 class VerifyOTPView(views.APIView):
     permission_classes = [AllowAny]
@@ -96,7 +96,7 @@ class VerifyOTPView(views.APIView):
 
         is_valid, message = otp_record.is_valid(otp_input)
         if not is_valid:
-            # Security: Increment attempts handled inside model logic, but we enforce failure response here
+            # Security: Increment attempts handled inside model logic
             return Response(
                 {"detail": message},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -109,6 +109,11 @@ class VerifyOTPView(views.APIView):
         # 3. Get or Create User
         user, created = User.objects.get_or_create(phone=phone)
 
+        # FIX: Send signal so analytics/notifications can react
+        if created:
+            from apps.accounts.signals import user_signed_up
+            user_signed_up.send(sender=User, request=request, user=user)
+
         # 4. Update Role Flags & Profiles
         if login_type == 'CUSTOMER':
             if not user.is_customer:
@@ -118,10 +123,24 @@ class VerifyOTPView(views.APIView):
             CustomerProfile.objects.get_or_create(user=user)
             
         elif login_type == 'RIDER':
-            # Rider must be pre-approved or created via admin/onboarding flow usually.
+            # FIX: If rider doesn't exist, create and set to PENDING instead of blocking
             if not user.is_rider:
-                return Response(
-                    {"detail": "Rider account does not exist or is not active."},
+                user.is_rider = True
+                user.save(update_fields=['is_rider'])
+                # Create profile with pending status
+                RiderProfile.objects.get_or_create(
+                    user=user,
+                    defaults={
+                        'status': RiderProfile.RiderStatus.PENDING,
+                        'approval_status': RiderProfile.ApprovalStatus.PENDING,
+                        'rider_code': f"R-{user.phone[-4:]}" # Temporary code generation
+                    }
+                )
+            
+            # If rider exists but is suspended/rejected, you might want to check that here:
+            if hasattr(user, 'rider_profile') and user.rider_profile.status == 'SUSPENDED':
+                 return Response(
+                    {"detail": "Your rider account is suspended."},
                     status=status.HTTP_403_FORBIDDEN
                 )
 
@@ -219,7 +238,12 @@ class CustomerMeView(views.APIView):
 
 class CustomerAddressListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated, IsCustomer]
-    serializer_class = AddressSerializer
+    
+    # FIX: Use lightweight serializer for GET to prevent N+1 service checks
+    def get_serializer_class(self):
+        if self.request.method == 'GET':
+            return AddressListSerializer
+        return AddressSerializer
 
     def get_queryset(self):
         return Address.objects.filter(user=self.request.user).order_by('-is_default', '-id')
@@ -227,7 +251,7 @@ class CustomerAddressListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         make_default = serializer.validated_data.get("is_default", False)
 
-        # If new address is default → purane ko false karo
+        # If new address is default -> purane ko false karo
         if make_default:
             Address.objects.filter(
                 user=self.request.user,

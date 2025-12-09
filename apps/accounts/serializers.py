@@ -107,7 +107,7 @@ class AddressSerializer(serializers.ModelSerializer):
         model = Address
         fields = [
             'id',
-            'user',          # 👈 yeh add karo
+            'user',
             'address_type',
             'full_address',
             'landmark',
@@ -122,7 +122,14 @@ class AddressSerializer(serializers.ModelSerializer):
             'service_available',
             'service_message',
         ]
-        read_only_fields = ['location', 'user', 'service_available', 'service_message']
+        read_only_fields = ['location', 'user', 'service_available', 'service_message', 'latitude', 'longitude']
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        if instance.location:
+            ret['lat'] = instance.location.y
+            ret['lng'] = instance.location.x
+        return ret
 
     def get_latitude(self, obj):
         return obj.location.y if obj.location else None
@@ -135,12 +142,12 @@ class AddressSerializer(serializers.ModelSerializer):
         if not obj.location:
             return None
         try:
+            # FIX: Local import to prevent circular dependency
             from apps.warehouse.services import check_service_availability
             result = check_service_availability(obj.location.y, obj.location.x)
             return result.get('is_available', False)
         except Exception as e:
             logger.exception("Service availability check failed: %s", e)
-            # Return False (not available) when the service check fails to avoid 500s
             return False
     
     def get_service_message(self, obj):
@@ -148,6 +155,7 @@ class AddressSerializer(serializers.ModelSerializer):
         if not obj.location:
             return None
         try:
+            # FIX: Local import to prevent circular dependency
             from apps.warehouse.services import check_service_availability
             result = check_service_availability(obj.location.y, obj.location.x)
             return result.get('message', '')
@@ -261,3 +269,13 @@ class EmployeeAdminListSerializer(serializers.ModelSerializer):
             "id", "phone", "full_name", "employee_code", "role",
             "warehouse_code", "is_active_employee",
         ]
+
+
+class AddressListSerializer(AddressSerializer):
+    class Meta(AddressSerializer.Meta):
+        # Exclude expensive computed fields that require external service calls
+        fields = [
+            f for f in AddressSerializer.Meta.fields 
+            if f not in ('service_available', 'service_message')
+        ]
+        read_only_fields = ['location', 'user']

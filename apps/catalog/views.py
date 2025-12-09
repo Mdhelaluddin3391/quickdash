@@ -67,11 +67,16 @@ class SKUViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
 
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['brand__slug', 'is_featured', 'is_active']
-    search_fields = ["name", "sku_code", "search_keywords", "metadata__values"]
+    
+    # FIX: Removed 'metadata__values' which causes 500 errors (invalid lookup).
+    # If you need deep JSON search, use specific keys like 'metadata__color'.
+    search_fields = ["name", "sku_code", "search_keywords"]
+    
     ordering_fields = ["sale_price", "created_at", "name"]
     ordering = ["name"]
 
     def get_queryset(self):
+        # Optimized queryset with select_related
         qs = SKU.objects.all().select_related("category", "brand")
         user = self.request.user
 
@@ -84,18 +89,11 @@ class SKUViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
 
         category_slug = self.request.query_params.get('category__slug')
         if category_slug:
-            try:
-                cat = Category.objects.get(slug=category_slug)
-
-                subcats = cat.subcategories.all()
-
-                if subcats.exists():
-                    qs = qs.filter(category__in=subcats)
-                else:
-                    qs = qs.filter(category=cat)
-
-            except Category.DoesNotExist:
-                qs = qs.none()
+            # FIX: Use Q objects to filter parent or direct category in one query
+            qs = qs.filter(
+                Q(category__slug=category_slug) | 
+                Q(category__parent__slug=category_slug)
+            )
 
         return qs
 

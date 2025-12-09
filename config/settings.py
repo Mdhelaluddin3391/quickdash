@@ -19,7 +19,23 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config("SECRET_KEY", default="unsafe-secret-key-change-in-prod")
 DEBUG = config("DEBUG", default=False, cast=bool)
 
-ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="127.0.0.1,localhost", cast=Csv())
+# FIX: In production, default to empty list to force explicit configuration
+if not DEBUG:
+    ALLOWED_HOSTS = config("ALLOWED_HOSTS", cast=Csv())
+    
+    # FIX: Enforce SSL/Security in Production
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'
+else:
+    ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="127.0.0.1,localhost", cast=Csv())
+    # Dev settings
+    SECURE_SSL_REDIRECT = False
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
 
 # CORS & CSRF
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="http://localhost:3000", cast=Csv())
@@ -91,8 +107,8 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
-                # Custom context processor for Google Maps API key
-                "config.settings.google_maps_api_key",
+                # FIX: Point to the new file in apps/utils
+                "apps.utils.context_processors.google_maps_api_key",
             ],
         },
     },
@@ -273,7 +289,11 @@ LOGGING = {
     "disable_existing_loggers": False,
     "formatters": {
         "verbose": {
-            "format": "{levelname} {asctime} {module} {message}",
+            "format": "{levelname} {asctime} {module} {process:d} {thread:d} {message}",
+            "style": "{",
+        },
+        "simple": {
+            "format": "{levelname} {message}",
             "style": "{",
         },
     },
@@ -284,8 +304,31 @@ LOGGING = {
         },
     },
     "loggers": {
-        "django": {"handlers": ["console"], "level": "INFO", "propagate": True},
-        "apps": {"handlers": ["console"], "level": "DEBUG" if DEBUG else "INFO", "propagate": True},
-        "celery": {"handlers": ["console"], "level": "INFO", "propagate": True},
+        "django": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": True,
+        },
+        "django.request": {
+            "handlers": ["console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+        "apps": {
+            "handlers": ["console"],
+            "level": "DEBUG" if DEBUG else "INFO",
+            "propagate": True,
+        },
+        "celery": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": True,
+        },
+        # Catch-all for other libraries
+        "": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": True,
+        },
     },
 }

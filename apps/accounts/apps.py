@@ -2,12 +2,10 @@ from django.apps import AppConfig
 
 
 class AccountsConfig(AppConfig):
-    default_auto_field = "django.db.models.BigAutoField"
-    name = "apps.accounts"
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'apps.accounts'
 
     def ready(self):
-        """
-        App init pe receivers import karna jaruri hai
-        (customer profile / flags auto create ke liye).
-        """
-        from . import receivers  # noqa
+        # FIX: Explicitly import receivers to register signals on startup.
+        # Without this, the @receiver decorators in receivers.py are never executed.
+        import apps.accounts.receivers
