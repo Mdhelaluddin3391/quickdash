@@ -4,7 +4,8 @@ import logging
 from django.conf import settings
 from django.utils import timezone
 from django.db import transaction
-from django.core.exceptions import ValidationError
+# [CHANGE] Django ka standard ValidationError hata kar DRF wala use karein
+from rest_framework.exceptions import ValidationError 
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from django.core.cache import cache
 from .models import PhoneOTP, UserSession
@@ -44,27 +45,25 @@ def check_otp_rate_limit(phone: str, login_type: str, ip=None):
     # 1. Phone Throttle (1 request per 60s)
     rate_limit_key = f"otp_limit:{login_type}:{phone}"
     
-    # set(key, val, nx=True, ex=60) returns True if key was set (lock acquired), False if already exists
     is_allowed = cache.set(rate_limit_key, "locked", timeout=60, nx=True)
     
     if not is_allowed:
         ttl = cache.ttl(rate_limit_key)
-        raise ValidationError(f"Please wait {ttl} seconds before requesting another OTP.")
+        # Ab ye 400 Bad Request return karega JSON format mein
+        raise ValidationError({"detail": f"Please wait {ttl} seconds before requesting another OTP."})
 
     # 2. IP Throttle (Max 20 requests per hour)
     if ip:
         ip_key = f"otp_spam_ip:{ip}"
         try:
-            # Atomic increment
             request_count = cache.incr(ip_key)
         except ValueError:
-            # If key doesn't exist, set it to 1
             cache.set(ip_key, 1, timeout=3600)
             request_count = 1
             
         if request_count > 20: 
              logger.warning(f"OTP Spam detected from IP: {ip}")
-             raise ValidationError("Too many requests from this IP. Try again later.")
+             raise ValidationError({"detail": "Too many requests from this IP. Try again later."})
 
 def create_tokens_with_session(user, role, client, extra_claims=None, request=None, single_session_for_client=False):
     extra_claims = extra_claims or {}
@@ -100,17 +99,11 @@ def create_tokens_with_session(user, role, client, extra_claims=None, request=No
 
 @transaction.atomic
 def rotate_refresh_token(old_refresh_token_str: str, request=None):
-    """
-    JWT Rotation Logic: Purane refresh token ko blacklist karta hai aur naya deta hai.
-    """
-    # 1. Purana Token Validate aur Blacklist karein
     old_token = RefreshToken(old_refresh_token_str)
     old_jti = str(old_token["jti"])
     
-    # Blacklist the old token
     old_token.blacklist()
 
-    # 2. Purana Session dhoondein aur uske User ko fetch karein
     try:
         session = UserSession.objects.select_for_update().get(jti=old_jti, is_active=True)
     except UserSession.DoesNotExist:
@@ -118,13 +111,8 @@ def rotate_refresh_token(old_refresh_token_str: str, request=None):
     
     user = session.user
     
-    # 3. Naya Token Set banayein
     refresh = RefreshToken.for_user(user)
-    
-    # Purane claims copy karein (role, client, aur custom claims)
     new_claims = {k: old_token.get(k) for k in ['user_id', 'role', 'client'] if k in old_token}
-    
-    # Add custom claims
     new_claims["role"] = session.role
     new_claims["client"] = session.client
     for k, v in new_claims.items():
@@ -132,10 +120,8 @@ def rotate_refresh_token(old_refresh_token_str: str, request=None):
         
     new_jti = str(refresh["jti"])
 
-    # 4. Session Update karein (Old session ko revoke karke naye jti ke saath update karein)
     session.revoke()
     
-    # Naya Session Record Create Karein
     new_session = UserSession.objects.create(
         user=user, 
         role=session.role, 
@@ -145,7 +131,6 @@ def rotate_refresh_token(old_refresh_token_str: str, request=None):
         ip_address=get_client_ip(request),
     )
     
-    # 5. Tokens return karein
     access = refresh.access_token
     access["role"] = new_session.role
 

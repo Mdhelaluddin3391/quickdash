@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Backend API Call
             await apiCall('/auth/customer/request-otp/', 'POST', { 
                 phone: userPhone 
-            }, false); // false = Auth not required yet
+            }, false); 
 
             // UI Switch
             phoneForm.style.display = 'none';
@@ -45,7 +45,6 @@ document.addEventListener('DOMContentLoaded', () => {
     otpForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         
-        // Collect OTP from inputs
         let otpCode = '';
         document.querySelectorAll('.otp-field').forEach(input => {
             otpCode += input.value;
@@ -65,12 +64,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 otp: otpCode
             }, false);
 
-            // SUCCESS: Token Save karo
-            localStorage.setItem('accessToken', response.access);
-            localStorage.setItem('refreshToken', response.refresh);
+            // [FIX HERE] Sahi Keys use karein ('access_token' instead of 'accessToken')
+            localStorage.setItem('access_token', response.access);
+            localStorage.setItem('refresh_token', response.refresh);
             localStorage.setItem('user', JSON.stringify(response.user));
 
-            window.location.href = '/'; // Redirect to Home
+            window.location.href = '/'; 
 
         } catch (error) {
             alert(error.message);

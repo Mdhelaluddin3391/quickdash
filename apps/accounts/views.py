@@ -17,6 +17,7 @@ from .serializers import (
     UserProfileSerializer,
     CustomerMeSerializer,
     AddressSerializer,
+    AddressListSerializer,
 )
 from .utils import (
     create_and_send_otp,
@@ -79,7 +80,7 @@ class VerifyOTPView(views.APIView):
     def perform_verification(self, request, validated_data):
         phone = normalize_phone(validated_data['phone'])
         otp_input = validated_data['otp']
-        login_type = validated_data['login_type']
+        login_type = validated_data['login_type']  # <--- Ye variable already yahan hai
         
         # 1. Check OTP Record
         otp_record = PhoneOTP.objects.filter(
@@ -96,7 +97,6 @@ class VerifyOTPView(views.APIView):
 
         is_valid, message = otp_record.is_valid(otp_input)
         if not is_valid:
-            # Security: Increment attempts handled inside model logic
             return Response(
                 {"detail": message},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -109,10 +109,17 @@ class VerifyOTPView(views.APIView):
         # 3. Get or Create User
         user, created = User.objects.get_or_create(phone=phone)
 
-        # FIX: Send signal so analytics/notifications can react
+        # [FIX HERE] Signal bhejte waqt 'login_type' pass karna zaroori hai
         if created:
             from apps.accounts.signals import user_signed_up
-            user_signed_up.send(sender=User, request=request, user=user)
+            # Purana code: user_signed_up.send(sender=User, request=request, user=user)
+            # Naya code niche hai:
+            user_signed_up.send(
+                sender=User, 
+                request=request, 
+                user=user, 
+                login_type=login_type  # <--- Added missing argument
+            )
 
         # 4. Update Role Flags & Profiles
         if login_type == 'CUSTOMER':
@@ -123,7 +130,6 @@ class VerifyOTPView(views.APIView):
             CustomerProfile.objects.get_or_create(user=user)
             
         elif login_type == 'RIDER':
-            # FIX: If rider doesn't exist, create and set to PENDING instead of blocking
             if not user.is_rider:
                 user.is_rider = True
                 user.save(update_fields=['is_rider'])
@@ -133,11 +139,10 @@ class VerifyOTPView(views.APIView):
                     defaults={
                         'status': RiderProfile.RiderStatus.PENDING,
                         'approval_status': RiderProfile.ApprovalStatus.PENDING,
-                        'rider_code': f"R-{user.phone[-4:]}" # Temporary code generation
+                        'rider_code': f"R-{user.phone[-4:]}"
                     }
                 )
             
-            # If rider exists but is suspended/rejected, you might want to check that here:
             if hasattr(user, 'rider_profile') and user.rider_profile.status == 'SUSPENDED':
                  return Response(
                     {"detail": "Your rider account is suspended."},
@@ -166,7 +171,6 @@ class VerifyOTPView(views.APIView):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
         return self.perform_verification(request, serializer.validated_data)
-
 
 class CustomerRequestOTPView(views.APIView):
     permission_classes = [AllowAny]
@@ -239,8 +243,8 @@ class CustomerMeView(views.APIView):
 class CustomerAddressListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated, IsCustomer]
     
-    # FIX: Use lightweight serializer for GET to prevent N+1 service checks
     def get_serializer_class(self):
+        # Ab ye code chalega kyunki humne upar import kar liya hai
         if self.request.method == 'GET':
             return AddressListSerializer
         return AddressSerializer
@@ -251,7 +255,6 @@ class CustomerAddressListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         make_default = serializer.validated_data.get("is_default", False)
 
-        # If new address is default -> purane ko false karo
         if make_default:
             Address.objects.filter(
                 user=self.request.user,
