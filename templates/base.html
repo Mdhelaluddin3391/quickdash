@@ -25,7 +25,7 @@
         window.APP_CONFIG = {
             API_BASE: "/api/v1",
             USER: JSON.parse(localStorage.getItem('user') || 'null'),
-            
+
             // [FIX HERE] 'accessToken' ko 'access_token' se badal dein
             IS_LOGGED_IN: !!localStorage.getItem('access_token')
         };
@@ -45,7 +45,8 @@
     {% include "partials/footer.html" %}
 
     <div id="ast-btn" class="assistant-btn">
-        <img src="{% static 'assets/img/robot_icon.png' %}" alt="Bot" style="width: 40px; height: 40px; object-fit: contain;">
+        <img src="{% static 'assets/img/robot_icon.png' %}" alt="Bot"
+            style="width: 40px; height: 40px; object-fit: contain;">
     </div>
 
     <div id="ast-box" class="assistant-box">
@@ -61,20 +62,90 @@
         </div>
     </div>
 
-    <script src="{% static 'assets/js/utils/api.js' %}"></script>
-    <script src="{% static 'assets/js/utils/validators.js' %}"></script>
-    <script src="{% static 'assets/js/utils/formatters.js' %}"></script>
-    <script src="{% static 'assets/js/utils/assistant.js' %}"></script>
-    <script src="{% static 'assets/js/utils/search.js' %}"></script>
-    <script src="{% static 'assets/js/utils/base.js' %}"></script>
 
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            if (window.updateGlobalCartCount) window.updateGlobalCartCount();
-        });
-    </script>
+    <div id="location-popup-overlay"
+        style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9998;"></div>
 
-    {% block extra_js %}{% endblock %}
+    <div id="location-bottom-sheet" style="
+        position: fixed; 
+        bottom: -100%; 
+        left: 0; 
+        width: 100%; 
+        background: white; 
+        border-radius: 20px 20px 0 0; 
+        padding: 20px; 
+        z-index: 9999; 
+        transition: bottom 0.3s ease-in-out; 
+        box-shadow: 0 -4px 10px rgba(0,0,0,0.1);
+    ">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+            <h3 style="margin:0; font-size:1.1rem; font-weight:700;">Delivery Location</h3>
+            <button onclick="closeLocationPopup()"
+                style="background:none; border:none; font-size:1.2rem; cursor:pointer;">&times;</button>
+        </div>
+
+        <p style="font-size:0.9rem; color:#666; margin-bottom:20px;">
+            Please select your delivery location to check product availability and faster delivery.
+        </p>
+
+        <div style="display:flex; flex-direction:column; gap:10px;">
+            <button onclick="requestUserLocation()" style="
+                background: #32CD32; 
+                color: white; 
+                border: none; 
+                padding: 12px; 
+                border-radius: 8px; 
+                font-weight: 600; 
+                display:flex; align-items:center; justify-content:center; gap:8px;
+            ">
+                <i class="fas fa-location-arrow"></i> Use Current Location
+            </button>
+
+            {% if request.user.is_authenticated %}
+            <a href="/addresses.html" style="
+                background: #f0f0f0; 
+                color: #333; 
+                text-decoration:none;
+                padding: 12px; 
+                border-radius: 8px; 
+                font-weight: 600; 
+                text-align:center;
+            ">
+                Select Saved Address
+            </a>
+            {% else %}
+            <a href="/auth.html" style="
+                background: #fff; 
+                color: #32CD32; 
+                border: 1px solid #32CD32;
+                text-decoration:none;
+                padding: 12px; 
+                border-radius: 8px; 
+                font-weight: 600; 
+                text-align:center;
+            ">
+                Login to Select Address
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+</body>
+
+<script src="{% static 'assets/js/utils/api.js' %}"></script>
+<script src="{% static 'assets/js/utils/validators.js' %}"></script>
+<script src="{% static 'assets/js/utils/formatters.js' %}"></script>
+<script src="{% static 'assets/js/utils/assistant.js' %}"></script>
+<script src="{% static 'assets/js/utils/search.js' %}"></script>
+<script src="{% static 'assets/js/utils/base.js' %}"></script>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        if (window.updateGlobalCartCount) window.updateGlobalCartCount();
+    });
+</script>
+
+{% block extra_js %}{% endblock %}
 </body>
 
 </html>

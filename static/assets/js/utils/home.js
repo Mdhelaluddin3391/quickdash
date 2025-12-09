@@ -18,7 +18,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 2. Infinite Shelves Start Karein
     initProductShelves();
-
 });
 
 // =========================================================
@@ -69,7 +68,6 @@ async function loadBanners() {
     } catch (e) {
         console.error("Banner Error:", e);
     }
-
 }
 
 // =========================================================
@@ -97,7 +95,6 @@ async function loadHomeCategories() {
     } catch (e) {
         console.error("Home Category Grid Error:", e);
     }
-
 }
 
 // =========================================================
@@ -138,7 +135,6 @@ async function loadFlashSales() {
     } catch (e) {
         container.style.display = 'none';
     }
-
 }
 
 function startTimer(endTime) {
@@ -223,14 +219,16 @@ async function loadNextBatch() {
     
     // Loader dikhao
     let loader = document.getElementById('shelves-loader');
-    if (loader) loader.style.display = 'block';
+    if (loader) {
+        loader.style.display = 'block';
+        // Reset loader content to spinner (in case it was showing "Try Again")
+        loader.innerHTML = '<div class="loader">Loading more...</div>';
+    }
 
-    // Agla Batch nikalo (e.g., Index 0 se 2, phir 2 se 4...)
+    // Agla Batch nikalo
     const batch = parentCategories.slice(loadedCount, loadedCount + BATCH_SIZE);
     
-    console.log(`Loading Batch: ${loadedCount} - ${loadedCount + BATCH_SIZE}`);
-
-    // Parallel Request: Sabhi categories ka data ek saath mangwao fast loading ke liye
+    // Parallel Request: Sabhi categories ka data ek saath mangwao
     const promises = batch.map(cat => renderSingleShelf(cat));
     const results = await Promise.all(promises);
 
@@ -240,7 +238,7 @@ async function loadNextBatch() {
     loadedCount += batch.length;
     isLoadingShelves = false;
 
-    // --- LOGIC UPDATED FOR DISCOVERY CARD ---
+    // --- LOGIC UPDATED FOR DISCOVERY CARD & AUTO-SKIP ---
     if (loadedCount >= parentCategories.length) {
         if (loader) {
             // Show Discovery Card at the end
@@ -252,15 +250,12 @@ async function loadNextBatch() {
                     <h3 class="cta-title">Can't find what you're looking for?</h3>
                     <p class="cta-desc">
                         QuickDash gets your order in minutes.
-
                         Still missing something? Just ask to your assistant.
                     </p>
-                    
                     <div class="cta-buttons">
                         <button class="btn-cta-action btn-search-trigger" onclick="scrollToSearch()">
                             <i class="fas fa-search"></i> Search Item
                         </button>
-                        
                         <button class="btn-cta-action btn-ai-trigger" onclick="triggerAssistant()">
                             <i class="fas fa-robot"></i> Ask Assistant
                         </button>
@@ -270,21 +265,11 @@ async function loadNextBatch() {
             if (shelfObserver) shelfObserver.disconnect();
         }
     } 
-    // [FIX] Prevent infinite loop on API errors
+    // [FIX] Agar batch empty tha (shelvesCreated == 0), toh user ko pareshan mat karo,
+    // chupchap agla batch load kar lo.
     else if (shelvesCreated === 0) {
-        console.log("Batch empty or error. Stopping auto-retry to prevent loop.");
-        
-        // Loop rok dein aur user ko "Try Again" ka button dikhayein
-        if (loader) {
-            loader.innerHTML = `
-                <div class="text-center py-4">
-                    <p class="text-muted small">Kuch items load nahi ho paye.</p>
-                    <button class="btn btn-sm btn-outline-primary" style="margin-top:5px;" onclick="loadNextBatch()">
-                        Try Again
-                    </button>
-                </div>
-            `;
-        }
+        console.log("Batch empty, skipping to next automatically...");
+        loadNextBatch(); // Recursive call to try next items immediately
     }
 }
 
@@ -367,7 +352,8 @@ function setupObserver() {
 // 6. CART LOGIC
 // =========================================================
 async function addToCart(skuId, btn) {
-    if (!localStorage.getItem('accessToken')) {
+    // FIX: Sahi key 'access_token' use karein
+    if (!localStorage.getItem('access_token')) {
         window.location.href = '/auth.html';
         return;
     }
@@ -375,12 +361,14 @@ async function addToCart(skuId, btn) {
     const origText = btn.innerText;
     const origBg = btn.style.background;
 
+    // UX: Loading State
     btn.innerText = "..";
     btn.disabled = true;
 
     try {
         await apiCall('/orders/cart/add/', 'POST', { sku_id: skuId, quantity: 1 });
 
+        // Success State
         btn.innerText = "✔";
         btn.style.background = "#32CD32";
         btn.style.color = "#fff";
@@ -399,11 +387,10 @@ async function addToCart(skuId, btn) {
         btn.innerText = "ADD";
         btn.disabled = false;
     }
-
 }
 
 // =========================================================
-// 7. BOTTOM CTA ACTIONS (New Helper Functions)
+// 7. BOTTOM CTA ACTIONS
 // =========================================================
 
 function scrollToSearch() {
@@ -412,16 +399,15 @@ function scrollToSearch() {
         const searchInput = document.querySelector('input[name="q"]');
         if (searchInput) {
             searchInput.focus();
-            searchInput.style.borderColor = '#32CD32'; // Highlight effect
-            // Thodi der baad border normal kar dein
+            searchInput.style.borderColor = '#32CD32'; 
             setTimeout(() => searchInput.style.borderColor = '', 1500);
         }
-    }, 800); // Scroll khatam hone ka approximate time
+    }, 800); 
 }
 
 function triggerAssistant() {
     const astBtn = document.getElementById('ast-btn');
     if (astBtn) {
-        astBtn.click(); // Bot button par click simulate karega
+        astBtn.click(); 
     }
 }

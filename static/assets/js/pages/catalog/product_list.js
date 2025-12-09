@@ -16,7 +16,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     if (categorySlug) {
         // Case A: Category Filter
-        // Pehle category ka naam laate hain taaki Title update kar sakein
         try {
             // requireAuth = false rakha hai
             const catResponse = await apiCall(`/catalog/categories/${categorySlug}/`, 'GET', null, false);
@@ -40,7 +39,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                         chip.className = 'chip';
                         chip.innerText = sub.name;
                         chip.onclick = () => {
-                            // Subcategory par click karne se naya page load hoga
                             window.location.href = `/search_results.html?slug=${sub.slug}`;
                         };
                         filterContainer.appendChild(chip);
@@ -85,6 +83,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const price = parseFloat(p.sale_price).toFixed(0);
                 const imgUrl = p.image_url || 'https://cdn-icons-png.flaticon.com/512/1147/1147805.png'; // Generic Placeholder
 
+                // UX Update: Added 'this' to addToCart to show loading state
                 card.innerHTML = `
                     <div class="prod-img-box">
                         ${p.is_featured ? '<span class="prod-badge">HOT</span>' : ''}
@@ -94,7 +93,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <div class="prod-unit">${p.unit}</div>
                     <div class="prod-footer">
                         <div class="prod-price">₹${price}</div>
-                        <button class="prod-add-btn" onclick="addToCart('${p.id}')">ADD</button>
+                        <button class="prod-add-btn" onclick="addToCart('${p.id}', this)">ADD</button>
                     </div>
                     <a href="/product.html?code=${p.sku_code}" style="position:absolute; inset:0; z-index:1;"></a>
                 `;
@@ -115,22 +114,55 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // Cart Logic (Auth Required here)
-async function addToCart(skuId) {
-    if (!localStorage.getItem('accessToken')) {
-        // Agar login nahi hai, toh login page par bhejo
+async function addToCart(skuId, btn) {
+    // FIX: Correct key 'access_token' used here
+    if (!localStorage.getItem('access_token')) {
         window.location.href = '/auth.html';
         return;
     }
+
+    // UX: Button Loading State
+    let origText = "ADD";
+    if (btn) {
+        origText = btn.innerText;
+        btn.innerText = "..";
+        btn.disabled = true;
+    }
+
     try {
-        // requireAuth = true (default)
         await apiCall('/orders/cart/add/', 'POST', { sku_id: skuId, quantity: 1 });
-        // Show success toast notification
-        showSuccess('Item added to cart!', 2000);
-        // Update cart count
+        
+        // Success Feedback
+        if (btn) {
+            btn.innerText = "✔";
+            btn.style.backgroundColor = "#32CD32"; // Green
+            btn.style.color = "#fff";
+        }
+        
+        // Toast Notification (agar toast.js hai toh)
+        if (window.showSuccess) showSuccess('Item added to cart!', 2000);
+        
+        // Update cart count badge
         if(window.updateGlobalCartCount) window.updateGlobalCartCount();
+
+        // Reset Button
+        setTimeout(() => {
+            if (btn) {
+                btn.innerText = "ADD";
+                btn.disabled = false;
+                btn.style.backgroundColor = ""; // Reset to CSS default
+                btn.style.color = "";
+            }
+        }, 1500);
+
     } catch (e) {
-        // Show error toast notification
-        showError(e.message || "Failed to add item", 3000);
+        if (window.showError) showError(e.message || "Failed to add item", 3000);
         console.error(e.message || "Failed to add");
+        
+        // Reset Button on Error
+        if (btn) {
+            btn.innerText = origText;
+            btn.disabled = false;
+        }
     }
 }
