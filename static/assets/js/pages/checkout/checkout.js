@@ -1,3 +1,4 @@
+// static/assets/js/pages/checkout/checkout.js
 let selectedAddressId = null;
 let selectedPayment = 'COD';
 let cartTotal = 0;
@@ -12,15 +13,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupAddressModal();
 });
 
-// --- 1. Address Logic (FIXED) ---
+// --- 1. Address Logic ---
 async function loadAddresses() {
     const container = document.getElementById('address-list');
     container.innerHTML = '<div class="loader">Loading...</div>';
 
     try {
         const response = await apiCall('/auth/customer/addresses/'); 
-        
-        // [FIX] Handle Backend Pagination (results) or Direct List
         const addresses = response.results || response; 
 
         container.innerHTML = '';
@@ -32,14 +31,12 @@ async function loadAddresses() {
 
         addresses.forEach((addr, index) => {
             const card = document.createElement('div');
-            // Select first address by default
             const isSelected = index === 0;
             if (isSelected) selectedAddressId = addr.id;
 
             card.className = `addr-card ${isSelected ? 'selected' : ''}`; 
             card.onclick = () => selectAddr(addr.id, card);
 
-            // Display Logic
             card.innerHTML = `
                 <span class="addr-tag">${addr.address_type}</span>
                 <strong>${addr.city}</strong>
@@ -65,7 +62,7 @@ async function loadOrderSummary() {
     try {
         const cart = await apiCall('/orders/cart/');
         const subtotal = parseFloat(cart.total_amount);
-        cartTotal = subtotal + 20; // Delivery Fee (Hardcoded for now)
+        cartTotal = subtotal + 20; // Delivery Fee
         
         document.getElementById('checkout-total').innerText = `₹${cartTotal.toFixed(2)}`;
         
@@ -92,7 +89,7 @@ window.selectPayment = function(method) {
     }
 };
 
-// --- 3. Place Order (Fixed 400 Error) ---
+// --- 3. Place Order ---
 document.getElementById('place-order-btn').addEventListener('click', async () => {
     if (!selectedAddressId) {
         alert("Please select a delivery address.");
@@ -112,8 +109,6 @@ document.getElementById('place-order-btn').addEventListener('click', async () =>
         if (!addrObj) throw new Error("Selected address invalid.");
 
         // [STEP 2] Prepare Payload
-        // FIX: Removed hardcoded 'warehouse_id: "1"'. 
-        // The backend will now automatically find the warehouse using delivery_lat/lng.
         const payload = {
             payment_method: selectedPayment,
             delivery_address_json: {
@@ -121,25 +116,22 @@ document.getElementById('place-order-btn').addEventListener('click', async () =>
                 city: addrObj.city,
                 pincode: addrObj.pincode
             },
-            // Lat/Lng is CRITICAL for auto-assigning warehouse in backend
-            delivery_lat: addrObj.latitude || addrObj.lat || 12.9716, 
-            delivery_lng: addrObj.longitude || addrObj.lng || 77.5946
+            // FIX: Use address coordinates if available, otherwise allow backend to handle it (do not hardcode)
+            delivery_lat: addrObj.latitude || addrObj.lat || null, 
+            delivery_lng: addrObj.longitude || addrObj.lng || null
         };
 
         // [STEP 3] Order Create API Call
         const orderData = await apiCall('/orders/create/', 'POST', payload);
 
         if (selectedPayment === 'COD') {
-            // COD Success
             window.location.href = `/order_success.html?order_id=${orderData.order.id}`;
         } else {
-            // Online Payment Trigger
             await handleRazorpay(orderData);
         }
 
     } catch (e) {
         console.error("Order Failed:", e);
-        // Show clearer error message
         alert("Order Failed: " + (e.message || JSON.stringify(e)));
         btn.disabled = false;
         btn.innerText = "Place Order";
@@ -154,25 +146,30 @@ async function handleRazorpay(orderData) {
         return;
     }
 
-    // Get Config Key or Fallback
-    let keyId = "rzp_test_YOUR_KEY_HERE"; 
+    let keyId = null;
     try {
         const config = await apiCall('/utils/config/', 'GET', null, false);
         if (config.razorpay_key_id) keyId = config.razorpay_key_id;
     } catch (e) {
-        console.warn("Config fetch failed, using fallback key");
+        console.warn("Config fetch failed");
+    }
+
+    // FIX: Do not use a fallback key that breaks in prod. Fail fast.
+    if (!keyId || keyId === "rzp_test_placeholder") {
+        alert("Payment configuration missing. Please contact support or use COD.");
+        document.getElementById('place-order-btn').disabled = false;
+        return;
     }
 
     const options = {
         "key": keyId, 
-        "amount": orderData.amount, // Amount in paise
+        "amount": orderData.amount,
         "currency": "INR",
         "name": "QuickDash",
         "description": "Order Payment",
         "image": "/static/assets/img/robot_icon.png", 
         "order_id": orderData.razorpay_order_id, 
         "handler": async function (response) {
-            // Payment Success -> Verify on Backend
             await verifyPayment(response, orderData.order_id);
         },
         "prefill": {
@@ -198,7 +195,7 @@ async function handleRazorpay(orderData) {
         document.getElementById('place-order-btn').disabled = false;
     });
 
-    rzp1.open(); // Opens Popup
+    rzp1.open();
 }
 
 async function verifyPayment(paymentResponse, localOrderId) {
@@ -207,15 +204,13 @@ async function verifyPayment(paymentResponse, localOrderId) {
 
     try {
         const verifyPayload = {
-            payment_intent_id: localOrderId, // Backend requirement
+            payment_intent_id: localOrderId,
             razorpay_order_id: paymentResponse.razorpay_order_id,
             razorpay_payment_id: paymentResponse.razorpay_payment_id,
             razorpay_signature: paymentResponse.razorpay_signature
         };
 
         await apiCall('/orders/payment/verify/', 'POST', verifyPayload);
-        
-        // Success Redirect
         window.location.href = `/order_success.html?order_id=${localOrderId}`;
 
     } catch (e) {
@@ -238,12 +233,13 @@ window.setupAddressModal = function() {
     if (form) {
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
+            // FIX: Removed hardcoded lat/lng. Send blank if unknown.
             const payload = {
                 full_address: document.getElementById('addr-line').value,
                 city: document.getElementById('addr-city').value,
                 pincode: document.getElementById('addr-pincode').value,
                 address_type: document.getElementById('addr-type').value,
-                lat: 12.9716, lng: 77.5946 // Demo location
+                // Optional: If you have a map picker, add lat/lng here.
             };
 
             try {

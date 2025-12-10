@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser
 from django.utils import timezone
 from django.contrib.postgres.search import TrigramSimilarity
+from django.db import transaction  # <--- Added Import
 import csv
 from io import TextIOWrapper
 
@@ -58,8 +59,6 @@ class BrandViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
         return qs
 
 
-
-
 class SKUViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
     serializer_class = SKUSerializer
     lookup_field = "sku_code"
@@ -68,15 +67,12 @@ class SKUViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['brand__slug', 'is_featured', 'is_active']
     
-    # FIX: Removed 'metadata__values' which causes 500 errors (invalid lookup).
-    # If you need deep JSON search, use specific keys like 'metadata__color'.
     search_fields = ["name", "sku_code", "search_keywords"]
     
     ordering_fields = ["sale_price", "created_at", "name"]
     ordering = ["name"]
 
     def get_queryset(self):
-        # Optimized queryset with select_related
         qs = SKU.objects.all().select_related("category", "brand")
         user = self.request.user
 
@@ -89,15 +85,12 @@ class SKUViewSet(ReadAnyWriteAdminMixin, viewsets.ModelViewSet):
 
         category_slug = self.request.query_params.get('category__slug')
         if category_slug:
-            # FIX: Use Q objects to filter parent or direct category in one query
             qs = qs.filter(
                 Q(category__slug=category_slug) | 
                 Q(category__parent__slug=category_slug)
             )
 
         return qs
-
-
 
 
 class BannerViewSet(viewsets.ReadOnlyModelViewSet):
@@ -117,7 +110,6 @@ class FlashSaleViewSet(viewsets.ReadOnlyModelViewSet):
             start_time__lte=now, 
             end_time__gte=now
         ).select_related('sku').order_by('end_time')
-
 
 
 class SearchSuggestView(APIView):
@@ -148,6 +140,7 @@ class SearchSuggestView(APIView):
                 is_active=True
             ).order_by('-similarity')[:6]
         except Exception:
+            # Fallback if pg_trgm extension is not installed
             products = SKU.objects.filter(
                 name__icontains=query, 
                 is_active=True
@@ -165,7 +158,6 @@ class SearchSuggestView(APIView):
         return Response(cat_data + prod_data)
 
 
-
 class BulkImportSKUView(APIView):
     permission_classes = [IsAdminUser]
     parser_classes = [MultiPartParser]
@@ -180,28 +172,30 @@ class BulkImportSKUView(APIView):
             reader = csv.DictReader(csv_file)
             count = 0
             
-            for row in reader:
-                cat_name = row.get('category', '').strip()
-                brand_name = row.get('brand', '').strip()
-                
-                if cat_name and brand_name:
-                    category, _ = Category.objects.get_or_create(name=cat_name)
-                    brand, _ = Brand.objects.get_or_create(name=brand_name)
+            # FIX: Use atomic transaction to prevent partial imports on failure
+            with transaction.atomic():
+                for row in reader:
+                    cat_name = row.get('category', '').strip()
+                    brand_name = row.get('brand', '').strip()
                     
-                    SKU.objects.update_or_create(
-                        sku_code=row.get('sku_code', '').strip(),
-                        defaults={
-                            'name': row.get('name', ''),
-                            'category': category,
-                            'brand': brand,
-                            'sale_price': row.get('price', 0.0),
-                            'unit': row.get('unit', 'pcs'),
-                            'is_active': True
-                        }
-                    )
-                    count += 1
+                    if cat_name and brand_name:
+                        category, _ = Category.objects.get_or_create(name=cat_name)
+                        brand, _ = Brand.objects.get_or_create(name=brand_name)
+                        
+                        SKU.objects.update_or_create(
+                            sku_code=row.get('sku_code', '').strip(),
+                            defaults={
+                                'name': row.get('name', ''),
+                                'category': category,
+                                'brand': brand,
+                                'sale_price': row.get('price', 0.0),
+                                'unit': row.get('unit', 'pcs'),
+                                'is_active': True
+                            }
+                        )
+                        count += 1
 
             return Response({"message": f"Processed {count} SKUs."}, status=200)
 
         except Exception as e:
-            return Response({"error": str(e)}, status=500)
+            return Response({"error": f"Import failed: {str(e)}"}, status=500)

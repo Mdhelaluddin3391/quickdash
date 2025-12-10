@@ -100,7 +100,6 @@ class AddressSerializer(serializers.ModelSerializer):
     service_available = serializers.SerializerMethodField(read_only=True)
     service_message = serializers.SerializerMethodField(read_only=True)
 
-    # Read-only user show karne ke liye (optional but useful)
     user = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
@@ -138,11 +137,9 @@ class AddressSerializer(serializers.ModelSerializer):
         return obj.location.x if obj.location else None
     
     def get_service_available(self, obj):
-        """Check if this address location is serviceable"""
         if not obj.location:
             return None
         try:
-            # FIX: Local import to prevent circular dependency
             from apps.warehouse.services import check_service_availability
             result = check_service_availability(obj.location.y, obj.location.x)
             return result.get('is_available', False)
@@ -151,11 +148,9 @@ class AddressSerializer(serializers.ModelSerializer):
             return False
     
     def get_service_message(self, obj):
-        """Get service availability message"""
         if not obj.location:
             return None
         try:
-            # FIX: Local import to prevent circular dependency
             from apps.warehouse.services import check_service_availability
             result = check_service_availability(obj.location.y, obj.location.x)
             return result.get('message', '')
@@ -164,17 +159,12 @@ class AddressSerializer(serializers.ModelSerializer):
             return ''
 
     def create(self, validated_data):
-        """
-        lat/lng se Point banana + baaki data save karna.
-        NOTE: user ko viewset ke perform_create se inject karenge.
-        """
         lat = validated_data.pop('lat', None)
         lng = validated_data.pop('lng', None)
 
         if lat is not None and lng is not None:
             validated_data['location'] = Point(float(lng), float(lat), srid=4326)
 
-        # yahan user already aayega: serializer.save(user=request.user) se
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
@@ -187,6 +177,17 @@ class AddressSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
+# [PERFORMANCE FIX] Moved optimized serializer UP so it can be used by CustomerMeSerializer
+class AddressListSerializer(AddressSerializer):
+    class Meta(AddressSerializer.Meta):
+        # Exclude expensive computed fields that require external service calls
+        fields = [
+            f for f in AddressSerializer.Meta.fields 
+            if f not in ('service_available', 'service_message')
+        ]
+        read_only_fields = ['location', 'user']
+
+
 class CustomerProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomerProfile
@@ -196,7 +197,8 @@ class CustomerProfileSerializer(serializers.ModelSerializer):
 class CustomerMeSerializer(serializers.Serializer):
     user = UserProfileSerializer()
     customer = CustomerProfileSerializer()
-    addresses = AddressSerializer(many=True)
+    # FIX: Use lightweight serializer to avoid N+1 spatial queries
+    addresses = AddressListSerializer(many=True)
 
 
 # ======================
@@ -269,13 +271,3 @@ class EmployeeAdminListSerializer(serializers.ModelSerializer):
             "id", "phone", "full_name", "employee_code", "role",
             "warehouse_code", "is_active_employee",
         ]
-
-
-class AddressListSerializer(AddressSerializer):
-    class Meta(AddressSerializer.Meta):
-        # Exclude expensive computed fields that require external service calls
-        fields = [
-            f for f in AddressSerializer.Meta.fields 
-            if f not in ('service_available', 'service_message')
-        ]
-        read_only_fields = ['location', 'user']

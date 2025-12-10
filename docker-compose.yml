@@ -13,7 +13,7 @@ services:
     networks:
       - quickdash_net
     healthcheck:
-      # FIX: Added -d to specify database name explicitly
+      # FIX: Ensure user variable is expanded or defaults cleanly
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-quickdash_db}"]
       interval: 5s
       timeout: 5s
@@ -29,11 +29,11 @@ services:
     networks:
       - quickdash_net
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # FIX: Use grep to ensure we get the specific PONG response, avoid hanging
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
       interval: 5s
       timeout: 3s
       retries: 5
-
 
   web:
     build: .

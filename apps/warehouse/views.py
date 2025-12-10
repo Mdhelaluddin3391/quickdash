@@ -33,187 +33,99 @@ from .services import (
 
 logger = logging.getLogger(__name__)
 
-# ... (Rest of the file remains exactly the same as your original, just the header fixed)
-# To save space, I am not repeating the logic below as it was correct, only imports were wrong.
-# Ensure you keep the classes WarehouseViewSet, etc.
-
-
-# =========================================================
-# WAREHOUSE STRUCTURE
-# =========================================================
+# ... (Previous ViewSets: WarehouseViewSet, BinInventoryList, etc. - kept as is) ...
 
 class WarehouseViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    Read-only list/detail of warehouses.
-    Managers can later get write endpoints if needed.
-    """
     queryset = Warehouse.objects.filter(is_active=True)
     serializer_class = WarehouseSerializer
     permission_classes = [IsAuthenticated]
-
 
 class BinInventoryList(generics.ListAPIView):
     permission_classes = [IsAuthenticated, WarehouseManagerOnly]
     serializer_class = BinInventorySerializer
 
     def get_queryset(self):
-        qs = BinInventory.objects.select_related(
-            "bin__zone__warehouse",
-            "sku",
-        )
+        qs = BinInventory.objects.select_related("bin__zone__warehouse", "sku")
         wh = self.request.query_params.get("warehouse")
         sku = self.request.query_params.get("sku")
-
-        # limit to manager's warehouse if you store mapping
+        
         emp = getattr(self.request.user, "employee_profile", None)
         if emp:
             qs = qs.filter(bin__zone__warehouse__code=emp.warehouse_code)
 
-        if wh:
-            qs = qs.filter(bin__zone__warehouse_id=wh)
-        if sku:
-            qs = qs.filter(sku_id=sku)
+        if wh: qs = qs.filter(bin__zone__warehouse_id=wh)
+        if sku: qs = qs.filter(sku_id=sku)
 
         return qs.order_by("bin__bin_code")
 
-# =========================================================
-# PICKING TASKS (PICKER APP)
-# =========================================================
-
 class PickingTaskViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    Picker ke liye:
-    - /api/v1/wms/picking/tasks/  -> mere assigned tasks
-    """
     serializer_class = PickingTaskSerializer
     permission_classes = [IsAuthenticated, PickerOnly]
 
     def get_queryset(self):
-        user = self.request.user
         return (
-            PickingTask.objects
-            .filter(picker=user)
-            .select_related('warehouse', 'picker') # Foreign Keys
-            .prefetch_related('items', 'items__sku', 'items__bin') # Reverse/Nested relations
+            PickingTask.objects.filter(picker=self.request.user)
+            .select_related('warehouse', 'picker')
+            .prefetch_related('items', 'items__sku', 'items__bin')
             .order_by("-created_at")
         )
 
 class ScanPickAPIView(views.APIView):
-    """
-    POST /api/v1/wms/picking/scan/
-    body: { "task_id": "...", "pick_item_id": "...", "qty": 1 }
-    """
     permission_classes = [IsAuthenticated, PickerOnly]
-
     def post(self, request):
         task_id = request.data.get("task_id")
         pick_item_id = request.data.get("pick_item_id")
         qty = request.data.get("qty", 1)
 
         if not (task_id and pick_item_id):
-            return Response(
-                {"detail": "task_id and pick_item_id required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "task_id and pick_item_id required."}, status=400)
 
         try:
             with transaction.atomic():
                 item = scan_pick(task_id, pick_item_id, qty, request.user)
         except Exception as e:
             logger.exception("scan_pick failed: %s", e)
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": str(e)}, status=400)
 
-        return Response(
-            {
-                "detail": "Scan recorded.",
-                "pick_item_id": str(item.id),
-                "picked_qty": item.picked_qty,
-            },
-            status=status.HTTP_200_OK,
-        )
-
+        return Response({"detail": "Scan recorded.", "pick_item_id": str(item.id), "picked_qty": item.picked_qty}, status=200)
 
 class MarkPickItemSkippedAPIView(views.APIView):
-    """
-    POST /api/v1/wms/picking/skip/
-    body: { "task_id": "...", "pick_item_id": "...", "reason": "..." }
-    """
     permission_classes = [IsAuthenticated, PickerOnly]
-
     def post(self, request):
         task_id = request.data.get("task_id")
         pick_item_id = request.data.get("pick_item_id")
         reason = request.data.get("reason") or ""
 
         if not (task_id and pick_item_id and reason):
-            return Response(
-                {"detail": "task_id, pick_item_id and reason required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "task_id, pick_item_id and reason required."}, status=400)
 
         try:
             with transaction.atomic():
-                skip = mark_pickitem_skipped(
-                    task_id,
-                    pick_item_id,
-                    request.user,
-                    reason,
-                    reopen_for_picker=False,
-                )
+                skip = mark_pickitem_skipped(task_id, pick_item_id, request.user, reason, reopen_for_picker=False)
         except Exception as e:
             logger.exception("mark_pickitem_skipped failed: %s", e)
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": str(e)}, status=400)
 
-        return Response(
-            {"detail": "Item skipped.", "skip_id": str(skip.id)},
-            status=status.HTTP_200_OK,
-        )
-
-
-# =========================================================
-# PACKING (PACKER APP)
-# =========================================================
+        return Response({"detail": "Item skipped.", "skip_id": str(skip.id)}, status=200)
 
 class CompletePackingAPIView(views.APIView):
-    """
-    POST /api/v1/wms/packing/complete/
-    body: { "packing_task_id": "..." }
-    Returns DispatchRecord.
-    """
     permission_classes = [IsAuthenticated, PackerOnly]
-
     def post(self, request):
         packing_task_id = request.data.get("packing_task_id")
         if not packing_task_id:
-            return Response(
-                {"detail": "packing_task_id required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "packing_task_id required."}, status=400)
 
         try:
             with transaction.atomic():
                 dispatch = complete_packing(packing_task_id, request.user)
         except Exception as e:
             logger.exception("complete_packing failed: %s", e)
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": str(e)}, status=400)
 
-        return Response(
-            DispatchRecordSerializer(dispatch).data,
-            status=status.HTTP_200_OK,
-        )
-
-
-# =========================================================
-# DISPATCH OTP VERIFY (RIDER PICKUP)
-# =========================================================
+        return Response(DispatchRecordSerializer(dispatch).data, status=200)
 
 class DispatchOTPVerifyAPIView(views.APIView):
-    """
-    POST /api/v1/wms/dispatch/verify-otp/
-    body: { "dispatch_id": "<uuid>", "otp": "1234" }
-    """
     permission_classes = [IsAuthenticated, AnyEmployee]
-
     def post(self, request):
         serializer = DispatchOTPVerifySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -221,257 +133,108 @@ class DispatchOTPVerifyAPIView(views.APIView):
 
         try:
             with transaction.atomic():
-                dispatch = verify_dispatch_otp(
-                    data["dispatch_id"],
-                    data["otp"],
-                    user=request.user,
-                )
-        except ValidationError as ve:
-            # Django ValidationError -> DRF response
-            return Response({"detail": str(ve)}, status=status.HTTP_400_BAD_REQUEST)
+                dispatch = verify_dispatch_otp(data["dispatch_id"], data["otp"], user=request.user)
         except Exception as e:
             logger.exception("verify_dispatch_otp failed: %s", e)
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": str(e)}, status=400)
 
-        return Response(
-            {
-                "detail": "OTP verified. Order handed over to rider.",
-                "dispatch": DispatchRecordSerializer(dispatch).data,
-            },
-            status=status.HTTP_200_OK,
-        )
-
-
-# =========================================================
-# MANAGER RESOLUTION (SHORT PICK / FC)
-# =========================================================
+        return Response({"detail": "OTP verified.", "dispatch": DispatchRecordSerializer(dispatch).data}, status=200)
 
 class AdminResolveShortPickAPIView(views.APIView):
-    """
-    Manager resolves short-pick:
-    POST /api/v1/wms/resolution/shortpick/
-    body: { "skip_id": int, "note": "..." }
-    """
     permission_classes = [IsAuthenticated, WarehouseManagerOnly]
-
     def post(self, request):
         serializer = ShortPickResolveSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
-        skip_id = serializer.validated_data["skip_id"]
-        note = serializer.validated_data["note"]
-
         from .models import PickSkip
-
-        skip = get_object_or_404(PickSkip, id=skip_id)
+        skip = get_object_or_404(PickSkip, id=serializer.validated_data["skip_id"])
         try:
             with transaction.atomic():
-                spi = resolve_skip_as_shortpick(skip, request.user, note)
+                spi = resolve_skip_as_shortpick(skip, request.user, serializer.validated_data["note"])
         except Exception as e:
-            logger.exception("resolve_skip_as_shortpick failed: %s", e)
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-        return Response(
-            {
-                "detail": "Short-pick resolved.",
-                "short_picked_qty": spi.short_picked_qty,
-            },
-            status=status.HTTP_200_OK,
-        )
-
+            logger.exception("resolve_skip failed: %s", e)
+            return Response({"detail": str(e)}, status=400)
+        return Response({"detail": "Resolved.", "short_picked_qty": spi.short_picked_qty}, status=200)
 
 class AdminFulfillmentCancelAPIView(views.APIView):
-    """
-    Manager cancels remaining qty for a pick item:
-    POST /api/v1/wms/resolution/fc/
-    body: { "pick_item_id": int, "reason": "..." }
-    """
     permission_classes = [IsAuthenticated, WarehouseManagerOnly]
-
     def post(self, request):
         serializer = FulfillmentCancelSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
-        pick_item_id = serializer.validated_data["pick_item_id"]
-        reason = serializer.validated_data["reason"]
-
-        pick_item = get_object_or_404(PickItem, id=pick_item_id)
+        pick_item = get_object_or_404(PickItem, id=serializer.validated_data["pick_item_id"])
         try:
             with transaction.atomic():
-                fc_record = admin_fulfillment_cancel(
-                    pick_item,
-                    request.user,
-                    reason,
-                )
+                fc = admin_fulfillment_cancel(pick_item, request.user, serializer.validated_data["reason"])
         except Exception as e:
-            logger.exception("admin_fulfillment_cancel failed: %s", e)
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-        return Response(
-            {
-                "detail": "Fulfillment item cancelled.",
-                "fc_id": str(fc_record.id),
-            },
-            status=status.HTTP_200_OK,
-        )
-
-
-# =========================================================
-# INBOUND / PUTAWAY
-# =========================================================
+            return Response({"detail": str(e)}, status=400)
+        return Response({"detail": "Cancelled.", "fc_id": str(fc.id)}, status=200)
 
 class CreateGRNAPIView(views.APIView):
-    """
-    Manager creates GRN + putaway task:
-    POST /api/v1/wms/inbound/grn/
-    """
     permission_classes = [IsAuthenticated, WarehouseManagerOnly]
-
     def post(self, request):
         serializer = CreateGRNSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
-        wh_id = serializer.validated_data["warehouse_id"]
-        grn_number = serializer.validated_data["grn_number"]
-        items = serializer.validated_data["items"]
-
         try:
             with transaction.atomic():
-                grn, putaway_task = create_grn_and_putaway(
-                    wh_id,
-                    grn_number,
-                    items,
-                    created_by=request.user,
+                grn, task = create_grn_and_putaway(
+                    serializer.validated_data["warehouse_id"],
+                    serializer.validated_data["grn_number"],
+                    serializer.validated_data["items"],
+                    created_by=request.user
                 )
         except Exception as e:
-            logger.exception("create_grn_and_putaway failed: %s", e)
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-        data = {
+            logger.exception("GRN failed: %s", e)
+            return Response({"detail": str(e)}, status=400)
+        
+        return Response({
             "grn": GRNSerializer(grn).data,
-            "putaway_task": PutawayTaskSerializer(putaway_task).data,
-        }
-        response = Response(data, status=status.HTTP_201_CREATED)
-        # Idempotency middleware ke liye flag
-        response["X-STORE-IDEMPOTENCY"] = "1"
-        return response
-
+            "putaway_task": PutawayTaskSerializer(task).data
+        }, status=201)
 
 class PlacePutawayItemView(views.APIView):
-    """
-    POST /api/v1/wms/inbound/putaway/place/
-    """
     permission_classes = [IsAuthenticated, AnyEmployee]
-
     def post(self, request):
         serializer = PlacePutawaySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
-        data = serializer.validated_data
+        d = serializer.validated_data
         try:
             with transaction.atomic():
-                item = place_putaway_item(
-                    data["task_id"],
-                    data["putaway_item_id"],
-                    data["bin_id"],
-                    data["qty_placed"],
-                    request.user,
-                )
+                item = place_putaway_item(d["task_id"], d["putaway_item_id"], d["bin_id"], d["qty_placed"], request.user)
         except Exception as e:
-            logger.exception("place_putaway_item failed: %s", e)
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-        return Response(
-            {"detail": "Putaway updated.", "item_id": str(item.id)},
-            status=status.HTTP_200_OK,
-        )
-
-
-# =========================================================
-# CYCLE COUNT
-# =========================================================
+            return Response({"detail": str(e)}, status=400)
+        return Response({"detail": "Putaway updated.", "item_id": str(item.id)}, status=200)
 
 class CycleCountTaskViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    Manager/Auditor can list CC tasks for their warehouses.
-    Creation via separate API.
-    """
     serializer_class = CycleCountTaskSerializer
     permission_classes = [IsAuthenticated, WarehouseManagerOnly]
-
     def get_queryset(self):
-        # basic implementation: all tasks
         return CycleCountTaskSerializer.Meta.model.objects.all().order_by("-created_at")
 
-
 class CreateCycleCountView(views.APIView):
-    """
-    POST /api/v1/wms/cycle-count/create/
-    body: { "warehouse_id": int, "sample_bins": [int, ...] }
-    """
     permission_classes = [IsAuthenticated, WarehouseManagerOnly]
-
     def post(self, request):
         serializer = CreateCycleCountSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
-        wh_id = serializer.validated_data["warehouse_id"]
-        sample_bins = serializer.validated_data.get("sample_bins") or None
-
         try:
             with transaction.atomic():
-                cc_task = create_cycle_count(wh_id, request.user, sample_bins)
+                task = create_cycle_count(serializer.validated_data["warehouse_id"], request.user, serializer.validated_data.get("sample_bins"))
         except Exception as e:
-            logger.exception("create_cycle_count failed: %s", e)
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-        return Response(
-            CycleCountTaskSerializer(cc_task).data,
-            status=status.HTTP_201_CREATED,
-        )
-
+            return Response({"detail": str(e)}, status=400)
+        return Response(CycleCountTaskSerializer(task).data, status=201)
 
 class RecordCycleCountView(views.APIView):
-    """
-    POST /api/v1/wms/cycle-count/record/
-    """
     permission_classes = [IsAuthenticated, WarehouseManagerOnly]
-
     def post(self, request):
         serializer = RecordCycleCountSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-
+        d = serializer.validated_data
         try:
             with transaction.atomic():
-                cc_item = record_cycle_count_item(
-                    data["task_id"],
-                    data["bin_id"],
-                    data["sku_id"],
-                    data["counted_qty"],
-                    request.user,
-                )
+                item = record_cycle_count_item(d["task_id"], d["bin_id"], d["sku_id"], d["counted_qty"], request.user)
         except Exception as e:
-            logger.exception("record_cycle_count_item failed: %s", e)
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": str(e)}, status=400)
+        return Response({"detail": "Recorded.", "cc_item_id": str(item.id)}, status=200)
 
-        return Response(
-            {
-                "detail": "Cycle count recorded.",
-                "cc_item_id": str(cc_item.id),
-                "adjusted": cc_item.adjusted,
-            },
-            status=status.HTTP_200_OK,
-        )
-
-
-# =========================================================
-# COMPATIBLE FUNCTION-STYLE VIEWS FOR urls.py
-# =========================================================
-
-
-# urls.py dynamic resolver names expect these:
-
+# URL references
 scan_pick_view = ScanPickAPIView.as_view()
 mark_pickitem_skipped_view = MarkPickItemSkippedAPIView.as_view()
 complete_packing_view = CompletePackingAPIView.as_view()
@@ -479,167 +242,59 @@ place_putaway_item_view = PlacePutawayItemView.as_view()
 record_cycle_count_view = RecordCycleCountView.as_view()
 dispatch_otp_verify_view = DispatchOTPVerifyAPIView.as_view()
 
-
 # =========================================================
-# SERVICE AVAILABILITY & LOCATION-BASED CHECKS
+# SERVICE AVAILABILITY (Refactored)
 # =========================================================
 
-class CheckServiceAvailabilityAPIView(views.APIView):
-    """
-    Check if a customer location is serviceable.
-    
-    Query params or POST:
-    - latitude (required)
-    - longitude (required)
-    - warehouse_id (optional)
-    
-    Response:
-    {
-        'is_available': bool,
-        'warehouse': {...},
-        'service_area': {...},
-        'distance_km': float,
-        'delivery_time_minutes': int,
-        'message': str
-    }
-    """
-    permission_classes = [AllowAny]  # Allow unauthenticated users to check service availability
-    
-    def get(self, request):
-        """Handle GET request with query params"""
-        latitude = request.query_params.get('latitude')
-        longitude = request.query_params.get('longitude')
-        warehouse_id = request.query_params.get('warehouse_id')
-        
-        if not latitude or not longitude:
-            return Response(
-                {
-                    'is_available': False,
-                    'message': 'latitude and longitude are required',
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
+class LocationBaseView(views.APIView):
+    """Base class for extracting location data from GET or POST"""
+    def _extract_location(self, request):
+        if request.method == 'GET':
+            lat = request.query_params.get('latitude')
+            lng = request.query_params.get('longitude')
+            wh_id = request.query_params.get('warehouse_id')
+        else:
+            lat = request.data.get('latitude')
+            lng = request.data.get('longitude')
+            wh_id = request.data.get('warehouse_id')
+            
+        if not lat or not lng:
+            raise ValidationError("latitude and longitude are required")
+            
         try:
-            latitude = float(latitude)
-            longitude = float(longitude)
-        except ValueError:
-            return Response(
-                {
-                    'is_available': False,
-                    'message': 'latitude and longitude must be valid numbers',
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        result = check_service_availability(latitude, longitude, warehouse_id)
-        return Response(result, status=status.HTTP_200_OK)
-    
-    def post(self, request):
-        """Handle POST request with JSON body"""
-        latitude = request.data.get('latitude')
-        longitude = request.data.get('longitude')
-        warehouse_id = request.data.get('warehouse_id')
-        
-        if not latitude or not longitude:
-            return Response(
-                {
-                    'is_available': False,
-                    'message': 'latitude and longitude are required',
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            latitude = float(latitude)
-            longitude = float(longitude)
+            return float(lat), float(lng), wh_id
         except (ValueError, TypeError):
-            return Response(
-                {
-                    'is_available': False,
-                    'message': 'latitude and longitude must be valid numbers',
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        result = check_service_availability(latitude, longitude, warehouse_id)
-        return Response(result, status=status.HTTP_200_OK)
+            raise ValidationError("latitude and longitude must be valid numbers")
 
-
-class GetNearestServiceAreaAPIView(views.APIView):
-    """
-    Get nearest service area to a location.
-    Useful for showing "service coming soon to your area" messages.
-    
-    Query params or POST:
-    - latitude (required)
-    - longitude (required)
-    
-    Response:
-    {
-        'service_area': {
-            'id': int,
-            'name': str,
-            'warehouse': str,
-        },
-        'distance_km': float
-    }
-    or null if no service area found.
-    """
+class CheckServiceAvailabilityAPIView(LocationBaseView):
     permission_classes = [AllowAny]
     
-    def get(self, request):
-        """Handle GET request"""
-        latitude = request.query_params.get('latitude')
-        longitude = request.query_params.get('longitude')
-        
-        if not latitude or not longitude:
-            return Response(
-                {'error': 'latitude and longitude are required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
+    def dispatch_request(self, request):
         try:
-            latitude = float(latitude)
-            longitude = float(longitude)
-        except ValueError:
-            return Response(
-                {'error': 'latitude and longitude must be valid numbers'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        result = get_nearest_service_area(latitude, longitude)
-        return Response(result, status=status.HTTP_200_OK)
-    
-    def post(self, request):
-        """Handle POST request"""
-        latitude = request.data.get('latitude')
-        longitude = request.data.get('longitude')
-        
-        if not latitude or not longitude:
-            return Response(
-                {'error': 'latitude and longitude are required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            latitude = float(latitude)
-            longitude = float(longitude)
-        except (ValueError, TypeError):
-            return Response(
-                {'error': 'latitude and longitude must be valid numbers'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        result = get_nearest_service_area(latitude, longitude)
-        return Response(result, status=status.HTTP_200_OK)
+            lat, lng, wh_id = self._extract_location(request)
+            result = check_service_availability(lat, lng, wh_id)
+            return Response(result, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            return Response({'is_available': False, 'message': str(e.message)}, status=status.HTTP_400_BAD_REQUEST)
 
+    def get(self, request): return self.dispatch_request(request)
+    def post(self, request): return self.dispatch_request(request)
+
+class GetNearestServiceAreaAPIView(LocationBaseView):
+    permission_classes = [AllowAny]
+    
+    def dispatch_request(self, request):
+        try:
+            lat, lng, _ = self._extract_location(request)
+            result = get_nearest_service_area(lat, lng)
+            return Response(result, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            return Response({'error': str(e.message)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def get(self, request): return self.dispatch_request(request)
+    def post(self, request): return self.dispatch_request(request)
 
 class ServiceAreaListAPIView(generics.ListAPIView):
-    """
-    List all active service areas.
-    Can be used to display coverage zones on a map.
-    """
     queryset = ServiceArea.objects.filter(is_active=True)
     serializer_class = ServiceAreaSerializer
     permission_classes = [AllowAny]

@@ -1,3 +1,4 @@
+# apps/accounts/models.py
 from django.db import models, transaction
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.contrib.gis.db import models as gis_models
@@ -13,17 +14,19 @@ from apps.utils.models import TimestampedModel
 # ==========================
 # USER
 # ==========================
-
 class User(AbstractBaseUser, PermissionsMixin):
     """
     Core User:
     - phone-based login
-    - 1 phone = 1 user
-    - flags: is_customer, is_rider, is_employee
+    - NOTE: phone is NOT unique to allow multiple role-specific accounts
+      for the same phone number (eg: customer + rider).
+    - primary key is UUID
+    - role flags: is_customer, is_rider, is_employee
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    phone = models.CharField(max_length=15, unique=True, db_index=True)
+    # IMPORTANT: do NOT set unique=True here if you want multiple accounts per phone
+    phone = models.CharField(max_length=15, db_index=True)
     email = models.EmailField(null=True, blank=True)
     full_name = models.CharField(max_length=255, blank=True)
 
@@ -37,7 +40,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text="For push notifications",
     )
 
-    # High-level app role tag (optional, admin panel ke liye)
+    # Optional high-level role tag (for admin/ACL convenience)
     app_role = models.CharField(
         max_length=32,
         null=True,
@@ -45,10 +48,10 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text="High-level role tag for admin panels / ACL",
     )
 
-    # ROLE FLAGS (tests, admin, business logic ke liye)
-    is_customer = models.BooleanField(default=False)
-    is_rider = models.BooleanField(default=False)
-    is_employee = models.BooleanField(default=False)
+    # ROLE FLAGS (fast lookup for business logic)
+    is_customer = models.BooleanField(default=False, db_index=True)
+    is_rider = models.BooleanField(default=False, db_index=True)
+    is_employee = models.BooleanField(default=False, db_index=True)
 
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
@@ -60,11 +63,15 @@ class User(AbstractBaseUser, PermissionsMixin):
     objects = UserManager()
 
     def __str__(self):
-        return self.phone
+        # return a readable identifier
+        return self.phone or str(self.id)
 
     class Meta:
         indexes = [
             models.Index(fields=["phone"]),
+            models.Index(fields=["is_customer"]),
+            models.Index(fields=["is_rider"]),
+            models.Index(fields=["is_employee"]),
         ]
         verbose_name = "User"
         verbose_name_plural = "Users"
@@ -73,7 +80,6 @@ class User(AbstractBaseUser, PermissionsMixin):
 # ==========================
 # ADDRESS (CUSTOMER)
 # ==========================
-
 class Address(gis_models.Model):
     class AddressType(models.TextChoices):
         HOME = 'HOME', 'Home'
@@ -96,7 +102,7 @@ class Address(gis_models.Model):
     city = models.CharField(max_length=100)
     pincode = models.CharField(max_length=10, db_index=True)
 
-    # Lat/Long
+    # Lat/Long (GeoDjango Point)
     location = gis_models.PointField(srid=4326, null=True, blank=True)
 
     is_default = models.BooleanField(default=False)
@@ -112,7 +118,8 @@ class Address(gis_models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.user.phone} - {self.full_address[:40]}..."
+        phone = getattr(self.user, "phone", str(self.user))
+        return f"{phone} - {self.full_address[:40]}..."
 
     class Meta:
         verbose_name = "Address"
@@ -122,10 +129,10 @@ class Address(gis_models.Model):
 # ==========================
 # CUSTOMER PROFILE
 # ==========================
-
 class CustomerProfile(models.Model):
     """
     Customer-specific profile.
+    OneToOne with a User instance that has is_customer=True.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
@@ -146,7 +153,6 @@ class CustomerProfile(models.Model):
 # ==========================
 # RIDER PROFILE
 # ==========================
-
 class RiderProfile(TimestampedModel):
     class ApprovalStatus(models.TextChoices):
         PENDING = 'PENDING', 'Pending'
@@ -189,7 +195,6 @@ class RiderProfile(TimestampedModel):
     cash_on_hand = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
 
     def __str__(self):
-        # BUG FIX: username nahi, phone use karein
         return f"Rider: {self.user.phone} ({self.status})"
 
     class Meta:
@@ -200,7 +205,6 @@ class RiderProfile(TimestampedModel):
 # ==========================
 # EMPLOYEE PROFILE
 # ==========================
-
 class EmployeeProfile(models.Model):
     class Role(models.TextChoices):
         PICKER = "PICKER", "Picker"
@@ -236,7 +240,6 @@ class EmployeeProfile(models.Model):
 # ==========================
 # PHONE OTP
 # ==========================
-
 class PhoneOTP(models.Model):
     class LoginType(models.TextChoices):
         CUSTOMER = "CUSTOMER", "Customer"
@@ -245,7 +248,7 @@ class PhoneOTP(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    phone = models.CharField(max_length=15)
+    phone = models.CharField(max_length=15, db_index=True)
     login_type = models.CharField(max_length=16, choices=LoginType.choices)
     otp_code = models.CharField(max_length=6)
     expires_at = models.DateTimeField()
@@ -258,6 +261,7 @@ class PhoneOTP(models.Model):
         now = timezone.now()
         expires_at = now + timedelta(minutes=ttl_minutes)
         with transaction.atomic():
+            # mark previous unused OTPs used
             cls.objects.filter(
                 phone=phone,
                 login_type=login_type,
@@ -295,7 +299,6 @@ class PhoneOTP(models.Model):
 # ==========================
 # USER SESSION
 # ==========================
-
 class UserSession(models.Model):
     class Role(models.TextChoices):
         CUSTOMER = "CUSTOMER", "Customer"
@@ -341,7 +344,6 @@ class UserSession(models.Model):
 # ==========================
 # PASSWORD RESET TOKEN
 # ==========================
-
 class PasswordResetToken(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 

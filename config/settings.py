@@ -1,6 +1,3 @@
-def google_maps_api_key(request):
-    """Expose GOOGLE_MAPS_API_KEY to all templates."""
-    return {"GOOGLE_MAPS_API_KEY": GOOGLE_MAPS_API_KEY}
 # config/settings.py
 import logging
 from pathlib import Path
@@ -10,6 +7,7 @@ from datetime import timedelta
 from decimal import Decimal
 import dj_database_url
 from celery.schedules import crontab
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -19,11 +17,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config("SECRET_KEY", default="unsafe-secret-key-change-in-prod")
 DEBUG = config("DEBUG", default=False, cast=bool)
 
-# FIX: In production, default to empty list to force explicit configuration
 if not DEBUG:
     ALLOWED_HOSTS = config("ALLOWED_HOSTS", cast=Csv())
-    
-    # FIX: Enforce SSL/Security in Production
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
@@ -32,7 +27,6 @@ if not DEBUG:
     X_FRAME_OPTIONS = 'DENY'
 else:
     ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="127.0.0.1,localhost", cast=Csv())
-    # Dev settings
     SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = False
     CSRF_COOKIE_SECURE = False
@@ -55,7 +49,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "django.contrib.gis", # PostGIS
+    "django.contrib.gis",
     "django.contrib.postgres",
 
     # Third Party
@@ -83,7 +77,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware", # Added for static files in Docker
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -107,7 +101,6 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
-                # FIX: Point to the new file in apps/utils
                 "apps.utils.context_processors.google_maps_api_key",
             ],
         },
@@ -117,7 +110,7 @@ TEMPLATES = [
 ASGI_APPLICATION = "config.asgi.application"
 
 # ==========================================
-# DATABASE (PostGIS)
+# DATABASE
 # ==========================================
 DB_SSL_REQUIRE = config("DB_SSL_REQUIRE", default=not DEBUG, cast=bool)
 
@@ -131,7 +124,7 @@ DATABASES = {
 DATABASES["default"]["ENGINE"] = "django.contrib.gis.db.backends.postgis"
 
 # ==========================================
-# REDIS / CACHE / CHANNELS / CELERY
+# REDIS / CELERY
 # ==========================================
 DEFAULT_REDIS_URL = config("REDIS_URL", default="redis://redis:6379")
 
@@ -169,7 +162,8 @@ CELERY_BEAT_SCHEDULE = {
         "args": (),
     },
     "orders-auto-cancel": {
-        "task": "auto_cancel_unpaid_orders",
+        # FIX: Fully qualified path to ensure Celery finds the task
+        "task": "apps.orders.tasks.auto_cancel_unpaid_orders",
         "schedule": crontab(minute="*/5"),
     },
     "nightly-inventory-reconciliation": {
@@ -194,7 +188,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # I18N / TZ
 # ==========================================
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = config("TIME_ZONE", default="Asia/Kolkata") # Set to India as per logs
+TIME_ZONE = config("TIME_ZONE", default="Asia/Kolkata")
 USE_I18N = True
 USE_TZ = True
 
@@ -270,7 +264,6 @@ TWILIO_FROM_NUMBER = config("TWILIO_FROM_NUMBER", default=None)
 GOOGLE_CLIENT_ID = config("GOOGLE_CLIENT_ID", default="")
 FIREBASE_CREDENTIALS_PATH = config("FIREBASE_CREDENTIALS_PATH", default=None)
 
-# Google Maps API Key
 GOOGLE_MAPS_API_KEY = config("GOOGLE_MAPS_API_KEY", default="fake-key")
 
 BASE_DELIVERY_FEE = config("BASE_DELIVERY_FEE", default=20.00, cast=Decimal)
@@ -309,11 +302,6 @@ LOGGING = {
             "level": "INFO",
             "propagate": True,
         },
-        "django.request": {
-            "handlers": ["console"],
-            "level": "ERROR",
-            "propagate": False,
-        },
         "apps": {
             "handlers": ["console"],
             "level": "DEBUG" if DEBUG else "INFO",
@@ -324,7 +312,6 @@ LOGGING = {
             "level": "INFO",
             "propagate": True,
         },
-        # Catch-all for other libraries
         "": {
             "handlers": ["console"],
             "level": "WARNING",
@@ -332,3 +319,6 @@ LOGGING = {
         },
     },
 }
+
+if not DEBUG and SECRET_KEY == "unsafe-secret-key-change-in-prod":
+    raise ImproperlyConfigured("Production requires a secure SECRET_KEY.")

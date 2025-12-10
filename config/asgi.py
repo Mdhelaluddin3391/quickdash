@@ -1,23 +1,28 @@
+# config/asgi.py
 import os
 import django
-from django.core.asgi import get_asgi_application
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 django.setup()
 
+from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
+from channels.auth import AuthMiddlewareStack
 from channels.security.websocket import AllowedHostsOriginValidator
-from apps.accounts.middleware import JwtAuthMiddleware
-import apps.delivery.routing
-import apps.warehouse.routing
+
+# Import routing from apps
+from apps.warehouse import websocket as warehouse_routing
+# FIX: Import the delivery routing we are about to create
+from apps.delivery import routing as delivery_routing
+
+websocket_urlpatterns = warehouse_routing.websocket_urlpatterns + delivery_routing.websocket_urlpatterns
 
 application = ProtocolTypeRouter({
     "http": get_asgi_application(),
     "websocket": AllowedHostsOriginValidator(
-        JwtAuthMiddleware(
+        AuthMiddlewareStack(
             URLRouter(
-                apps.delivery.routing.websocket_urlpatterns +
-                apps.warehouse.routing.websocket_urlpatterns
+                websocket_urlpatterns
             )
         )
     ),

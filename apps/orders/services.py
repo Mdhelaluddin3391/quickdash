@@ -15,24 +15,6 @@ from apps.inventory.services import check_and_lock_inventory
 from apps.orders.signals import send_order_created
 from apps.payments.services import create_razorpay_order
 
-
-
-import logging
-from decimal import Decimal
-from django.db import transaction
-from django.utils import timezone
-from django.conf import settings
-from django.contrib.gis.geos import Point
-from django.contrib.gis.db.models.functions import Distance
-from django.contrib.gis.measure import D
-
-from apps.orders.models import Order, OrderItem, Cart
-from apps.payments.models import Payment
-from apps.warehouse.models import Warehouse
-from apps.inventory.services import check_and_lock_inventory
-from apps.orders.signals import send_order_created
-from apps.payments.services import create_razorpay_order
-
 logger = logging.getLogger(__name__)
 
 
@@ -45,34 +27,6 @@ class CheckoutOrchestrator:
         self.lat = data.get("delivery_lat")
         self.lng = data.get("delivery_lng")
         self.payment_method = data.get("payment_method", "RAZORPAY")
-
-    # ---------------------------------------------
-    # LOAD ITEMS: (items from frontend OR cart)
-    # ---------------------------------------------
-    def _load_items(self, cart):
-        """
-        Priority:
-        1. If frontend sends items -> use them.
-        2. Otherwise -> load items from user's cart.
-        """
-        # If frontend sends items
-        if self.data.get("items"):
-            return [
-                {
-                    "sku_id": item["sku_id"],
-                    "quantity": item["quantity"]
-                }
-                for item in self.data["items"]
-            ]
-
-        # Fallback: load from cart
-        return [
-            {
-                "sku_id": i.sku.id,
-                "quantity": i.quantity
-            }
-            for i in cart.items.all()
-        ]
 
     # ---------------------------------------------
     # GET WAREHOUSE
@@ -112,19 +66,13 @@ class CheckoutOrchestrator:
         if not cart.items.exists():
             return None, None, "Cart is empty."
 
-        # -----------------------------------------
-        # 🔥 FIXED: LOAD ITEMS (from cart or passed JSON)
-        # -----------------------------------------
-        payload_items = self._load_items(cart)
-
-        if not payload_items:
-            return None, None, "Cart is empty or no items selected."
-
         # 3. Create order in safe transaction
         try:
             with transaction.atomic():
 
                 # A. Lock inventory
+                # We strictly use the Cart for checkout to ensure DB locking works correctly.
+                # Any frontend 'items' payload is ignored in favor of the persisted cart.
                 cart_items = list(cart.items.select_for_update().select_related('sku'))
                 cart_items.sort(key=lambda x: x.sku.id)
 

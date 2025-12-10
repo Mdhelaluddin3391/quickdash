@@ -18,7 +18,7 @@ from .serializers import (
     CartSerializer, AddToCartSerializer, PaymentVerificationSerializer, CancelOrderSerializer
 )
 from .services import (
-    CheckoutOrchestrator, # <--- NEW
+    CheckoutOrchestrator,
     process_successful_payment,
     cancel_order
 )
@@ -27,12 +27,15 @@ logger = logging.getLogger(__name__)
 
 class CartView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    
     def get(self, request):
-        cart, _ = Cart.objects.get_or_create(customer=request.user)
+        # FIX: Prefetch items and SKU to avoid N+1 queries during serialization
+        cart, _ = Cart.objects.prefetch_related('items__sku').get_or_create(customer=request.user)
         return Response(CartSerializer(cart).data)
 
 class AddToCartView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    
     def post(self, request):
         serializer = AddToCartSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -47,10 +50,10 @@ class AddToCartView(APIView):
             item, created = CartItem.objects.update_or_create(
                 cart=cart, sku_id=sku_id, defaults={"quantity": qty}
             )
-            # Ensure save() is called to recalc total_price
             item.save()
 
-        cart.refresh_from_db()
+        # FIX: Refresh with prefetch to ensure clean serialization
+        cart = Cart.objects.prefetch_related('items__sku').get(id=cart.id)
         return Response(CartSerializer(cart).data)
 
 class CheckoutView(APIView):
@@ -59,7 +62,7 @@ class CheckoutView(APIView):
     def post(self, request):
         serializer = CreateOrderSerializer(
             data=request.data,
-            context={"request": request}   # <-- FIXED
+            context={"request": request}
         )
         serializer.is_valid(raise_exception=True)
 
@@ -87,7 +90,6 @@ class CheckoutView(APIView):
         }, status=201)
 
 
-
 class PaymentVerificationView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -98,7 +100,6 @@ class PaymentVerificationView(APIView):
 
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
         
-        # FIX: Explicit error handling for signature verification
         try:
             client.utility.verify_payment_signature(data)
         except razorpay.errors.SignatureVerificationError:
@@ -110,7 +111,6 @@ class PaymentVerificationView(APIView):
 
         payment = get_object_or_404(Payment, gateway_order_id=data["razorpay_order_id"])
         
-        # Idempotency check
         if payment.status == Payment.PaymentStatus.SUCCESSFUL:
              return Response({"status": "success", "message": "Already processed"})
 
@@ -127,7 +127,7 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = OrderSerializer
 
     def get_queryset(self):
-        # Optimization: select_related
+        # Optimized queryset with select_related
         qs = Order.objects.select_related("customer", "warehouse").prefetch_related("items", "items__sku").all()
         if self.request.user.is_staff:
             return qs
@@ -141,8 +141,6 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
         order = self.get_object()
-        # ... validation logic (keep existing) ...
-        # Call service
         ok, msg = cancel_order(order, cancelled_by="CUSTOMER", reason=request.data.get("reason", ""))
         if not ok: return Response({"error": msg}, status=400)
         return Response(OrderSerializer(order).data)

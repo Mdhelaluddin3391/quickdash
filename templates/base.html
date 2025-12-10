@@ -25,12 +25,10 @@
         window.APP_CONFIG = {
             API_BASE: "/api/v1",
             USER: JSON.parse(localStorage.getItem('user') || 'null'),
-
-            // [FIX HERE] 'accessToken' ko 'access_token' se badal dein
+            // FIX: Standardized to 'access_token' to match Login JS
             IS_LOGGED_IN: !!localStorage.getItem('access_token')
         };
     </script>
-</head>
 </head>
 
 <body>
