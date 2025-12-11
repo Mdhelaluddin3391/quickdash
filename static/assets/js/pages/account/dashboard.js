@@ -1,20 +1,23 @@
-// Dashboard State Management
+// static/assets/js/pages/account/dashboard.js
+
 let allOrders = [];
-const recentOrdersCount = 5;  // Show only 5 recent orders on dashboard
+const recentOrdersCount = 5;
 
 document.addEventListener('DOMContentLoaded', async () => {
     // Auth Check
-    if (!APP_CONFIG.IS_LOGGED_IN) {
+    const token = localStorage.getItem('access_token');
+    if (!token) {
         window.location.href = '/auth.html';
         return;
     }
 
     // 1. Populate Sidebar Info
-    const user = APP_CONFIG.USER;
-    if (user) {
-        document.getElementById('nav-name').innerText = user.full_name || "User";
-        document.getElementById('nav-phone').innerText = user.phone;
-        document.getElementById('nav-avatar').innerText = (user.full_name || "U").charAt(0).toUpperCase();
+    const userStr = localStorage.getItem('user');
+    if (userStr) {
+        const user = JSON.parse(userStr);
+        if(document.getElementById('nav-name')) document.getElementById('nav-name').innerText = user.full_name || "User";
+        if(document.getElementById('nav-phone')) document.getElementById('nav-phone').innerText = user.phone;
+        if(document.getElementById('nav-avatar')) document.getElementById('nav-avatar').innerText = (user.full_name || "U").charAt(0).toUpperCase();
     }
 
     // 2. Fetch Dashboard Data
@@ -22,78 +25,58 @@ document.addEventListener('DOMContentLoaded', async () => {
         await loadDashboardData();
     } catch (e) {
         console.error("Dashboard Load Error", e);
-        showError("Failed to load dashboard", 3000);
+        // Don't show error alert immediately on dashboard to avoid annoyance
     }
 });
 
 async function loadDashboardData() {
     try {
-        // Fetch all orders for current user
+        // Endpoint: /api/v1/orders/
         const ordersResp = await apiCall('/orders/', 'GET', null, true);
         allOrders = Array.isArray(ordersResp) ? ordersResp : (ordersResp.results || []);
         
         // Sort orders by date (newest first)
         allOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-        // Calculate Statistics
         calculateStatistics();
-
-        // Display first page of orders
-        currentPage = 1;
         displayOrders();
 
     } catch (e) {
         console.error("Orders Load Error", e);
-        showError("Failed to load orders", 3000);
+        throw e;
     }
 }
 
 function calculateStatistics() {
     const totalCount = allOrders.length;
-    
     let totalSpent = 0;
-    let totalSaved = 0;
 
     allOrders.forEach(order => {
-        // Total spent = final amount paid
         totalSpent += parseFloat(order.final_amount || 0);
-        
-        // Calculate saved = original price - sale price
-        if (order.items && Array.isArray(order.items)) {
-            order.items.forEach(item => {
-                const originalPrice = parseFloat(item.original_price || item.sale_price || 0);
-                const salePrice = parseFloat(item.sale_price || 0);
-                const saved = originalPrice - salePrice;
-                if (saved > 0) {
-                    totalSaved += saved * (item.quantity || 1);
-                }
-            });
-        }
     });
 
-    // Update DOM
-    document.getElementById('total-orders-count').innerText = totalCount;
-    document.getElementById('total-spent').innerText = `₹${totalSpent.toFixed(2)}`;
-    document.getElementById('total-saved').innerText = `₹${totalSaved.toFixed(2)}`;
+    if(document.getElementById('total-orders-count')) document.getElementById('total-orders-count').innerText = totalCount;
+    if(document.getElementById('total-spent')) document.getElementById('total-spent').innerText = `₹${totalSpent.toFixed(2)}`;
 }
 
 function displayOrders() {
     const container = document.getElementById('recent-orders-container');
     const emptyState = document.getElementById('empty-orders-state');
 
+    if (!container) return;
+
     // Handle empty state
     if (allOrders.length === 0) {
         container.innerHTML = '';
-        emptyState.style.display = 'block';
+        if(emptyState) emptyState.style.display = 'block';
         return;
     }
 
-    emptyState.style.display = 'none';
+    if(emptyState) emptyState.style.display = 'none';
 
-    // Show only 5 recent orders on dashboard (no pagination)
+    // Show recent orders
     const recentOrders = allOrders.slice(0, recentOrdersCount);
 
-    // Render recent orders
     container.innerHTML = '';
     recentOrders.forEach(order => {
         const orderCard = createOrderCard(order);
@@ -111,12 +94,11 @@ function createOrderCard(order) {
         day: 'numeric'
     });
     
-    const statusClass = `status-${order.status.toLowerCase()}`;
-    const statusText = order.status.charAt(0).toUpperCase() + order.status.slice(1);
-    const orderId = order.id.slice(0, 8).toUpperCase();
-    const amount = parseFloat(order.final_amount).toFixed(2);
+    const statusClass = `status-${(order.status || 'pending').toLowerCase()}`;
+    const statusText = (order.status || 'Pending').charAt(0).toUpperCase() + (order.status || 'pending').slice(1);
+    const orderId = order.id ? order.id.slice(0, 8).toUpperCase() : '---';
+    const amount = parseFloat(order.final_amount || 0).toFixed(2);
 
-    // Count items in order
     const itemCount = order.items ? order.items.reduce((sum, item) => sum + (item.quantity || 1), 0) : 0;
 
     div.innerHTML = `
@@ -133,7 +115,7 @@ function createOrderCard(order) {
     return div;
 }
 
-function logout() {
+window.logout = function() {
     localStorage.clear();
     window.location.href = '/auth.html';
 }

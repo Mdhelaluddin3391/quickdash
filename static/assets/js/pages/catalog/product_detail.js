@@ -1,15 +1,17 @@
+// static/assets/js/pages/catalog/product_detail.js
+
 document.addEventListener('DOMContentLoaded', async () => {
     const params = new URLSearchParams(window.location.search);
     const skuCode = params.get('code');
 
     if (!skuCode) {
         alert("Product not found");
-        window.location.href = '/';
+        window.location.href = '/category.html';
         return;
     }
 
     try {
-        const product = await apiCall(`/catalog/skus/${skuCode}/`);
+        const product = await apiCall(`/catalog/skus/${skuCode}/`, 'GET', null, false);
         
         // Populate DOM
         document.getElementById('p-name').innerText = product.name;
@@ -22,7 +24,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         img.src = product.image_url || 'https://via.placeholder.com/300?text=No+Image';
 
         if(product.is_featured) {
-            document.getElementById('p-badge').innerText = "BESTSELLER";
+            const badge = document.getElementById('p-badge');
+            if(badge) badge.innerText = "BESTSELLER";
         }
 
         // Add to Cart Logic
@@ -32,12 +35,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (e) {
         console.error(e);
         document.getElementById('product-content').innerHTML = 
-            '<div style="padding:40px; text-align:center;">Product not found.</div>';
+            '<div style="padding:40px; text-align:center;">Product not found or Error loading details.</div>';
     }
 });
 
 async function addToCart(skuId) {
-    if (!APP_CONFIG.IS_LOGGED_IN) {
+    // FIX: Standard Auth Check
+    if (!localStorage.getItem('access_token')) {
         window.location.href = '/auth.html';
         return;
     }
@@ -50,11 +54,18 @@ async function addToCart(skuId) {
     try {
         await apiCall('/orders/cart/add/', 'POST', { sku_id: skuId, quantity: 1 }, true);
         btn.innerText = "ADDED ✔";
-        showSuccess("Item added to cart!", 2000);
+        
+        // Use standard alert if showSuccess is missing
+        if(window.showSuccess) showSuccess("Item added to cart!", 2000);
+        else alert("Item added to cart!");
+
         setTimeout(() => btn.innerText = originalText, 2000);
+        
+        // Update global cart badge if function exists
         if(window.updateGlobalCartCount) window.updateGlobalCartCount();
+        
     } catch (e) {
-        showError(e.message || "Failed to add item", 3000);
+        alert(e.message || "Failed to add item");
         btn.innerText = originalText;
     } finally {
         btn.disabled = false;

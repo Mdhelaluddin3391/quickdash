@@ -1,8 +1,6 @@
 // static/assets/js/pages/account/addresses.js
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("Addresses Page Loaded");
-    
     // Load existing addresses
     loadAddresses();
 
@@ -10,9 +8,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const addForm = document.getElementById('add-addr-form');
     if (addForm) {
         addForm.addEventListener('submit', handleAddAddress);
-        console.log("Add Address Form Listener Attached");
-    } else {
-        console.error("Error: Add Address Form not found in DOM");
     }
 });
 
@@ -23,11 +18,11 @@ async function loadAddresses() {
     grid.innerHTML = '<div class="loader">Loading...</div>';
 
     try {
+        // Correct URL: /api/v1/auth/customer/addresses/
         const response = await apiCall('/auth/customer/addresses/');
         
-        // Handle Pagination (response.results) vs Flat List
-        const addresses = response.results || response; 
-        console.log("Addresses loaded:", addresses);
+        // Handle DRF pagination (response.results) or flat list
+        const addresses = Array.isArray(response) ? response : (response.results || []);
 
         grid.innerHTML = '';
 
@@ -60,14 +55,12 @@ async function loadAddresses() {
 
 async function handleAddAddress(e) {
     e.preventDefault();
-    console.log("Save Button Clicked");
 
     const btn = e.target.querySelector('button[type="submit"]');
     const originalText = btn.innerText;
     btn.innerText = "Saving...";
     btn.disabled = true;
 
-    // FIX: Get selected radio button value
     const addressTypeInput = document.querySelector('input[name="address_type"]:checked');
     const addressTypeValue = addressTypeInput ? addressTypeInput.value : 'HOME';
 
@@ -75,8 +68,8 @@ async function handleAddAddress(e) {
         full_address: document.getElementById('a-line').value,
         city: document.getElementById('a-city').value,
         pincode: document.getElementById('a-pincode').value,
-        address_type: addressTypeValue, 
-        lat: 12.9716, // Dummy coords
+        address_type: addressTypeValue,
+        lat: 12.9716, // Placeholder coordinates
         lng: 77.5946 
     };
 

@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
         e.preventDefault();
         userPhone = phoneInput.value;
 
+        // Basic validation
         if (userPhone.length < 10) {
             alert("Please enter a valid phone number");
             return;
@@ -22,17 +23,19 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.innerText = "Sending...";
 
         try {
-            // Backend API Call
-            await apiCall('/auth/customer/request-otp/', 'POST', { 
-                phone: userPhone 
+            // FIX: Correct Endpoint & Add ROLE parameter
+            // Endpoint matches apps/accounts/urls.py: path('auth/otp/send/', ...)
+            await apiCall('/auth/auth/otp/send/', 'POST', { 
+                phone: userPhone,
+                role: 'CUSTOMER' // Required by backend
             }, false); 
 
-            // UI Switch
+            // Switch UI to OTP Form
             phoneForm.style.display = 'none';
             otpForm.style.display = 'block';
             document.getElementById('display-phone').innerText = userPhone;
             
-            alert("OTP Sent! (Dev Mode: Check Console/Terminal)");
+            // alert("OTP Sent! (Check Server Console in Dev Mode)");
 
         } catch (error) {
             alert(error.message);
@@ -59,29 +62,39 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.innerText = "Verifying...";
 
         try {
-            const response = await apiCall('/auth/customer/verify-otp/', 'POST', {
+            // FIX: Correct Endpoint & Add ROLE parameter
+            // Endpoint matches apps/accounts/urls.py: path('auth/otp/login/', ...)
+            const response = await apiCall('/auth/auth/otp/login/', 'POST', {
                 phone: userPhone,
-                otp: otpCode
+                otp: otpCode,
+                role: 'CUSTOMER', // Required by backend
+                device_id: navigator.userAgent // Optional but good for tracking
             }, false);
 
-            // [FIX HERE] Sahi Keys use karein ('access_token' instead of 'accessToken')
+            // Store Tokens (DRF SimpleJWT returns 'access' and 'refresh')
             localStorage.setItem('access_token', response.access);
             localStorage.setItem('refresh_token', response.refresh);
             localStorage.setItem('user', JSON.stringify(response.user));
 
-            window.location.href = '/'; 
+            // Redirect to Home
+            window.location.href = '/index.html'; 
 
         } catch (error) {
-            alert(error.message);
+            console.error(error);
+            alert(error.message || "Invalid OTP");
             btn.innerText = "Verify & Login";
         }
     });
 
     // Edit Phone Link
-    document.getElementById('edit-phone').addEventListener('click', () => {
-        otpForm.style.display = 'none';
-        phoneForm.style.display = 'block';
-        phoneForm.querySelector('button').disabled = false;
-        phoneForm.querySelector('button').innerText = "Get OTP";
-    });
+    const editPhoneBtn = document.getElementById('edit-phone');
+    if(editPhoneBtn){
+        editPhoneBtn.addEventListener('click', () => {
+            otpForm.style.display = 'none';
+            phoneForm.style.display = 'block';
+            const btn = phoneForm.querySelector('button');
+            btn.disabled = false;
+            btn.innerText = "Get OTP";
+        });
+    }
 });

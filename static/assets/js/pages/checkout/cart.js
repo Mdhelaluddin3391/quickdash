@@ -1,7 +1,9 @@
+// static/assets/js/pages/checkout/cart.js
+
 document.addEventListener('DOMContentLoaded', async () => {
-    // Check Auth
-    if (!APP_CONFIG.IS_LOGGED_IN) {
-        window.location.href = '/auth.html?next=/cart.html';
+    // FIX: Standard Auth Check
+    if (!localStorage.getItem('access_token')) {
+        window.location.href = '/auth.html';
         return;
     }
 
@@ -12,7 +14,6 @@ async function loadCart() {
     const loader = document.getElementById('cart-loader');
     const content = document.getElementById('cart-content');
     const emptyState = document.getElementById('empty-cart');
-    const list = document.getElementById('cart-items-list');
 
     try {
         const cart = await apiCall('/orders/cart/');
@@ -25,7 +26,7 @@ async function loadCart() {
             return;
         }
 
-        content.style.display = 'flex'; // Restore grid
+        content.style.display = 'flex'; 
         renderCartItems(cart.items);
         renderSummary(cart);
 
@@ -46,21 +47,21 @@ function renderCartItems(items) {
                 <div class="c-price mt-1">₹${item.total_price}</div>
             </div>
             <div class="c-qty">
-                <btn onclick="updateQty('${item.sku_id}', ${item.quantity - 1})">-</btn>
+                <button class="btn-qty" onclick="updateQty('${item.sku_id}', ${item.quantity - 1})">-</button>
                 <span>${item.quantity}</span>
-                <btn onclick="updateQty('${item.sku_id}', ${item.quantity + 1})">+</btn>
+                <button class="btn-qty" onclick="updateQty('${item.sku_id}', ${item.quantity + 1})">+</button>
             </div>
         </div>
     `).join('');
     
     // Update Badge
-    document.getElementById('cart-count-badge').innerText = `(${items.length})`;
+    const badge = document.getElementById('cart-count-badge');
+    if(badge) badge.innerText = `(${items.length})`;
 }
 
 function renderSummary(cart) {
     const subtotal = parseFloat(cart.total_amount);
-    // Hardcoded for now, ideal to fetch from /utils/config/
-    const fee = 20; 
+    const fee = 20; // Delivery Fee
     const total = subtotal + fee;
 
     document.getElementById('subtotal').innerText = `₹${subtotal.toFixed(2)}`;
@@ -70,9 +71,8 @@ function renderSummary(cart) {
 
 async function updateQty(skuId, newQty) {
     try {
-        // Optimistic UI update could be done here, but simple reload is safer for syncing
         await apiCall('/orders/cart/add/', 'POST', { sku_id: skuId, quantity: newQty });
-        loadCart(); // Reload to get fresh calculations
+        loadCart(); 
         if(window.updateGlobalCartCount) window.updateGlobalCartCount();
     } catch (e) {
         alert(e.message || "Failed to update");

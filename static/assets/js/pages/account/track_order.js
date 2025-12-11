@@ -1,3 +1,5 @@
+// static/assets/js/pages/account/track_order.js
+
 function renderOrderDetails(order) {
     // Items
     const itemsList = document.getElementById('order-items-list');
@@ -53,7 +55,6 @@ window.initMap = async function() {
         return;
     }
 
-
     // 2. Render timeline/status dynamically
     renderTimeline(order);
 
@@ -61,85 +62,53 @@ window.initMap = async function() {
     renderOrderDetails(order);
 
     // 3. Initialize Google Map (default center: India)
-    map = new google.maps.Map(document.getElementById('map'), {
-        center: { lat: 22.9734, lng: 78.6569 },
-        zoom: 13,
-        styles: [
-            { elementType: 'geometry', stylers: [{ color: '#f5f5f5' }] },
-            { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-            { elementType: 'labels.text.fill', stylers: [{ color: '#616161' }] },
-            { elementType: 'labels.text.stroke', stylers: [{ color: '#f5f5f5' }] },
-            { featureType: 'administrative.land_parcel', elementType: 'labels.text.fill', stylers: [{ color: '#bdbdbd' }] },
-            { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#eeeeee' }] },
-            { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#757575' }] },
-            { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#e5e5e5' }] },
-            { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#9e9e9e' }] },
-            { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
-            { featureType: 'road.arterial', elementType: 'labels.text.fill', stylers: [{ color: '#757575' }] },
-            { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#dadada' }] },
-            { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#616161' }] },
-            { featureType: 'road.local', elementType: 'labels.text.fill', stylers: [{ color: '#9e9e9e' }] },
-            { featureType: 'transit.line', elementType: 'geometry', stylers: [{ color: '#e5e5e5' }] },
-            { featureType: 'transit.station', elementType: 'geometry', stylers: [{ color: '#eeeeee' }] },
-            { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#c9c9c9' }] },
-            { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#9e9e9e' }] }
-        ]
-    });
-
-
-    // 4. Geocode delivery address and show marker
-    let address = '';
-    if (order.delivery_address_json && order.delivery_address_json.address) {
-        address = order.delivery_address_json.address;
-    }
-    let deliveryLatLng = null;
-    if (order.delivery_lat && order.delivery_lng) {
-        deliveryLatLng = { lat: parseFloat(order.delivery_lat), lng: parseFloat(order.delivery_lng) };
-        showAddressMarker(order.delivery_lat, order.delivery_lng, address);
-    } else if (address) {
-        geocodeAddress(address, (lat, lng) => {
-            deliveryLatLng = { lat, lng };
-            showAddressMarker(lat, lng, address);
-            tryDrawRoute();
+    const mapEl = document.getElementById('map');
+    if (mapEl && window.google) {
+        map = new google.maps.Map(mapEl, {
+            center: { lat: 12.9716, lng: 77.5946 }, // Bangalore Default
+            zoom: 13,
+            styles: [] // Keep default styles for simplicity
         });
-    }
 
-    // 4b. Draw route if warehouse and delivery coordinates are available
-    let warehouseLatLng = null;
-    if (order.warehouse_lat && order.warehouse_lng) {
-        warehouseLatLng = { lat: parseFloat(order.warehouse_lat), lng: parseFloat(order.warehouse_lng) };
-    }
-    function tryDrawRoute() {
-        if (warehouseLatLng && deliveryLatLng) {
-            drawRoute(warehouseLatLng, deliveryLatLng);
+        // 4. Geocode delivery address and show marker
+        let address = '';
+        if (order.delivery_address_json && order.delivery_address_json.full_address) {
+            address = order.delivery_address_json.full_address;
         }
-    }
-    if (warehouseLatLng && deliveryLatLng) {
-        drawRoute(warehouseLatLng, deliveryLatLng);
+        
+        let deliveryLatLng = null;
+        if (order.delivery_lat && order.delivery_lng) {
+            deliveryLatLng = { lat: parseFloat(order.delivery_lat), lng: parseFloat(order.delivery_lng) };
+            showAddressMarker(order.delivery_lat, order.delivery_lng, address);
+        } else if (address) {
+            geocodeAddress(address, (lat, lng) => {
+                deliveryLatLng = { lat, lng };
+                showAddressMarker(lat, lng, address);
+            });
+        }
     }
 
     // 5. Connect WebSocket for live rider tracking
     connectTracking(orderId);
 }
 
-function geocodeAddress(address) {
+function geocodeAddress(address, callback) {
+    if(!window.google) return;
     const geocoder = new google.maps.Geocoder();
     geocoder.geocode({ address: address }, (results, status) => {
         if (status === 'OK' && results[0]) {
             const loc = results[0].geometry.location;
-            showAddressMarker(loc.lat(), loc.lng(), address);
-        } else {
-            console.warn('Geocode failed:', status);
+            callback(loc.lat(), loc.lng());
         }
     });
 }
 
 function showAddressMarker(lat, lng, address) {
+    if(!map) return;
     if (addressMarker) addressMarker.setMap(null);
     addressMarker = new google.maps.Marker({
         position: { lat: parseFloat(lat), lng: parseFloat(lng) },
         map: map,
-        icon: 'https://cdn-icons-png.flaticon.com/512/684/684908.png', // Home/Pin icon
         title: address || 'Delivery Address'
     });
     map.setCenter({ lat: parseFloat(lat), lng: parseFloat(lng) });
@@ -148,7 +117,12 @@ function showAddressMarker(lat, lng, address) {
 function connectTracking(orderId) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    const token = localStorage.getItem('accessToken');
+    
+    // [FIX] Correct Key: access_token
+    const token = localStorage.getItem('access_token');
+    
+    if (!token) return;
+
     const wsUrl = `${protocol}//${host}/ws/order/track/${orderId}/?token=${token}`;
     const socket = new WebSocket(wsUrl);
 
@@ -163,37 +137,49 @@ function connectTracking(orderId) {
 }
 
 function updateRiderPosition(lat, lng) {
+    if(!map || !window.google) return;
+    
     if (!riderMarker) {
         riderMarker = new google.maps.Marker({
             position: { lat: parseFloat(lat), lng: parseFloat(lng) },
             map: map,
-            icon: 'https://cdn-icons-png.flaticon.com/512/3034/3034874.png', // Rider Icon
+            icon: {
+                url: 'https://cdn-icons-png.flaticon.com/512/3034/3034874.png',
+                scaledSize: new google.maps.Size(40, 40)
+            },
             title: 'Rider Location'
         });
     } else {
         riderMarker.setPosition({ lat: parseFloat(lat), lng: parseFloat(lng) });
     }
-    map.panTo({ lat: parseFloat(lat), lng: parseFloat(lng) });
 }
 
 function renderTimeline(order) {
-    // Example: update status steps based on order.timeline or order.status
     const steps = [
         { id: 'step-confirmed', status: 'CONFIRMED' },
         { id: 'step-packed', status: 'PACKED' },
         { id: 'step-dispatched', status: 'DISPATCHED' },
         { id: 'step-delivered', status: 'DELIVERED' }
     ];
-    let currentIdx = steps.findIndex(s => s.status === order.status);
-    if (currentIdx === -1) currentIdx = 0;
+    
+    // Normalize status
+    const currentStatus = (order.status || '').toUpperCase();
+    
+    // Find index
+    let currentIdx = steps.findIndex(s => s.status === currentStatus);
+    
+    // Handle 'PENDING' or other statuses
+    if (currentStatus === 'PENDING') currentIdx = -1; 
+    
     steps.forEach((step, idx) => {
         const el = document.getElementById(step.id);
         if (!el) return;
         el.classList.remove('active');
         if (idx <= currentIdx) el.classList.add('active');
     });
-    // Optionally, update rider info, timestamps, etc.
+
     if (order.rider_name) {
-        document.getElementById('rider-info').innerText = order.rider_name;
+        const riderInfo = document.getElementById('rider-info');
+        if(riderInfo) riderInfo.innerText = `Rider: ${order.rider_name}`;
     }
 }

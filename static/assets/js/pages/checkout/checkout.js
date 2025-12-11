@@ -5,7 +5,8 @@ let selectedPayment = 'COD';
 let cartTotal = 0;
 
 document.addEventListener('DOMContentLoaded', async () => {
-    if (!APP_CONFIG.IS_LOGGED_IN) {
+    // FIX: Standard Auth Check
+    if (!localStorage.getItem('access_token')) {
         window.location.href = '/auth.html';
         return;
     }
@@ -21,7 +22,6 @@ async function loadAddresses() {
 
     try {
         const response = await apiCall('/auth/customer/addresses/'); 
-        // Handle Backend Pagination (results) or Direct List
         const addresses = response.results || response; 
 
         container.innerHTML = '';
@@ -66,17 +66,19 @@ async function loadOrderSummary() {
     try {
         const cart = await apiCall('/orders/cart/');
         const subtotal = parseFloat(cart.total_amount);
-        cartTotal = subtotal + 20; // Delivery Fee (Hardcoded for now)
+        cartTotal = subtotal + 20; // Delivery Fee
         
         document.getElementById('checkout-total').innerText = `₹${cartTotal.toFixed(2)}`;
         
         const preview = document.getElementById('checkout-items-preview');
-        preview.innerHTML = cart.items.map(i => 
-            `<div style="display:flex; justify-content:space-between; font-size:0.85rem; margin-bottom:5px;">
-                <span>${i.quantity} x ${i.sku_name.substring(0, 15)}...</span>
-                <span>₹${i.total_price}</span>
-            </div>`
-        ).join('');
+        if(preview && cart.items) {
+            preview.innerHTML = cart.items.map(i => 
+                `<div style="display:flex; justify-content:space-between; font-size:0.85rem; margin-bottom:5px;">
+                    <span>${i.quantity} x ${i.sku_name.substring(0, 15)}...</span>
+                    <span>₹${i.total_price}</span>
+                </div>`
+            ).join('');
+        }
     } catch(e) {
         console.error("Cart Error", e);
     }
@@ -113,7 +115,6 @@ document.getElementById('place-order-btn').addEventListener('click', async () =>
         if (!addrObj) throw new Error("Selected address invalid.");
 
         // [STEP 2] Prepare Payload
-        // The backend will now automatically find the warehouse using delivery_lat/lng (if available)
         const payload = {
             payment_method: selectedPayment,
             delivery_address_json: {
@@ -121,7 +122,6 @@ document.getElementById('place-order-btn').addEventListener('click', async () =>
                 city: addrObj.city,
                 pincode: addrObj.pincode
             },
-            // [FIX] Use address coordinates if available, otherwise allow backend to handle it (do not hardcode)
             delivery_lat: addrObj.latitude || addrObj.lat || null, 
             delivery_lng: addrObj.longitude || addrObj.lng || null
         };
@@ -130,65 +130,60 @@ document.getElementById('place-order-btn').addEventListener('click', async () =>
         const orderData = await apiCall('/orders/create/', 'POST', payload);
 
         if (selectedPayment === 'COD') {
-            // COD Success
             window.location.href = `/order_success.html?order_id=${orderData.order.id}`;
         } else {
-            // Online Payment Trigger
             await handleRazorpay(orderData);
         }
 
     } catch (e) {
         console.error("Order Failed:", e);
-        // Show clearer error message
         alert("Order Failed: " + (e.message || JSON.stringify(e)));
         btn.disabled = false;
         btn.innerText = "Place Order";
     }
 });
 
-// --- 4. Razorpay Integration (FIXED) ---
+// --- 4. Razorpay Integration ---
 async function handleRazorpay(orderData) {
     if (!orderData.razorpay_order_id) {
-        alert("Payment initialization failed. Please try COD or contact support.");
+        alert("Payment initialization failed. Please try COD.");
         document.getElementById('place-order-btn').disabled = false;
         return;
     }
 
-    // [FIX] Secure Key Logic: Fetch from backend config, fail if missing.
+    // Attempt to get key, fallback to test key if missing
     let keyId = null;
     try {
         const config = await apiCall('/utils/config/', 'GET', null, false);
-        if (config.razorpay_key_id) keyId = config.razorpay_key_id;
+        keyId = config.razorpay_key_id;
     } catch (e) {
-        console.warn("Config fetch failed");
+        console.warn("Config fetch failed, using order data key if present");
     }
+    
+    // Ideally backend sends public key in orderData too
+    if(!keyId && orderData.key) keyId = orderData.key; 
 
-    // [FIX] Removed unsafe fallback "rzp_test_YOUR_KEY_HERE".
-    if (!keyId || keyId.includes("placeholder")) {
-        alert("Payment Gateway Error: Invalid Configuration (Key Missing). Please contact support.");
+    if (!keyId) {
+        alert("Payment Error: Gateway Key missing.");
         document.getElementById('place-order-btn').disabled = false;
         return;
     }
 
     const options = {
         "key": keyId, 
-        "amount": orderData.amount, // Amount in paise
+        "amount": orderData.amount, 
         "currency": "INR",
         "name": "QuickDash",
         "description": "Order Payment",
-        "image": "/static/assets/img/robot_icon.png", 
         "order_id": orderData.razorpay_order_id, 
         "handler": async function (response) {
-            // Payment Success -> Verify on Backend
             await verifyPayment(response, orderData.order_id);
         },
         "prefill": {
-            "name": APP_CONFIG.USER?.full_name || "",
-            "contact": APP_CONFIG.USER?.phone || ""
+            "name": "",
+            "contact": ""
         },
-        "theme": {
-            "color": "#32CD32" 
-        },
+        "theme": { "color": "#32CD32" },
         "modal": {
             "ondismiss": function(){
                 document.getElementById('place-order-btn').disabled = false;
@@ -199,13 +194,11 @@ async function handleRazorpay(orderData) {
     };
 
     const rzp1 = new Razorpay(options);
-    
     rzp1.on('payment.failed', function (response){
         alert("Payment Failed: " + response.error.description);
         document.getElementById('place-order-btn').disabled = false;
     });
-
-    rzp1.open(); // Opens Popup
+    rzp1.open(); 
 }
 
 async function verifyPayment(paymentResponse, localOrderId) {
@@ -214,15 +207,13 @@ async function verifyPayment(paymentResponse, localOrderId) {
 
     try {
         const verifyPayload = {
-            payment_intent_id: localOrderId, // Backend requirement
+            payment_intent_id: localOrderId,
             razorpay_order_id: paymentResponse.razorpay_order_id,
             razorpay_payment_id: paymentResponse.razorpay_payment_id,
             razorpay_signature: paymentResponse.razorpay_signature
         };
 
         await apiCall('/orders/payment/verify/', 'POST', verifyPayload);
-        
-        // Success Redirect
         window.location.href = `/order_success.html?order_id=${localOrderId}`;
 
     } catch (e) {
@@ -245,10 +236,6 @@ window.setupAddressModal = function() {
     if (form) {
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            
-            // [FIX] Removed hardcoded lat/lng (12.9716, 77.5946). 
-            // Sending payload without them lets the backend decide how to handle it 
-            // (e.g., attempt geocoding or mark as unverified).
             const payload = {
                 full_address: document.getElementById('addr-line').value,
                 city: document.getElementById('addr-city').value,

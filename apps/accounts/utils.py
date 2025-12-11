@@ -1,5 +1,6 @@
 import secrets
 import logging
+import uuid
 from django.conf import settings
 from django.utils import timezone
 from django.db import transaction
@@ -39,6 +40,9 @@ def create_and_send_otp(phone: str, login_type: str):
         send_sms_task.delay(phone=phone, otp_code=otp_code, login_type=login_type)
     
     return otp
+
+
+
 
 def get_client_ip(request):
     if not request: return None
@@ -80,3 +84,31 @@ def validate_staff_email_domain(email):
     if domain not in ALLOWED_DOMAINS:
         raise ValidationError(f"Email domain {domain} is not authorized for staff access.")
     return True
+
+
+def create_tokens_with_session(user, role, client, request):
+    """
+    Creates a user session and generates JWT tokens.
+    """
+    # Import inside function to avoid circular dependency with serializers.py
+    from .serializers import CustomTokenObtainPairSerializer
+
+    jti = str(uuid.uuid4())
+    ip_address = get_client_ip(request)
+    
+    UserSession.objects.create(
+        user=user,
+        role=role,
+        jti=jti,
+        client=client,
+        ip_address=ip_address
+    )
+
+    # Link the JTI to the user for the token claim
+    user.current_session_jti = jti
+    refresh = CustomTokenObtainPairSerializer.get_token(user)
+
+    return {
+        "refresh": str(refresh),
+        "access": str(refresh.access_token),
+    }
