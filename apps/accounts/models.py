@@ -8,6 +8,7 @@ import secrets
 from django.conf import settings
 from .managers import UserManager
 from apps.utils.models import TimestampedModel
+from django.db.models import UniqueConstraint, Q
 
 # ==========================
 # USER (The Identity)
@@ -49,8 +50,13 @@ class User(AbstractBaseUser, PermissionsMixin):
     class Meta:
         verbose_name = "User"
         verbose_name_plural = "Users"
-        # We cannot enforce unique_together on phone because specific roles need their own rows
-        # But for Superadmin login, we will enforce logic in the Manager/Backend.
+        constraints = [
+            UniqueConstraint(
+                fields=['phone'], 
+                condition=Q(is_superuser=True), 
+                name='unique_superuser_phone'
+            )
+        ]
 
     def __str__(self):
         roles = []

@@ -30,6 +30,8 @@ User = get_user_model()
 # ==========================================
 # 1. SEND OTP (UNIFIED)
 # ==========================================
+# apps/accounts/views.py
+
 class SendOTPView(views.APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -44,20 +46,33 @@ class SendOTPView(views.APIView):
         # 1. Rate Limiting (Redis)
         check_otp_rate_limit(phone, role, ip=client_ip)
 
-        # 2. Existence Checks (Strict)
-        if role in ['RIDER', 'EMPLOYEE']:
-            user_exists = User.objects.filter(phone=phone).exists()
+        # 2. Existence Checks (Strictly by Role)
+        if role == 'RIDER':
+            # FIX: Must find a user row that is explicitly a RIDER
+            user_exists = User.objects.filter(phone=phone, is_rider=True).exists()
             if not user_exists:
                 return Response(
-                    {"detail": f"No {role.lower()} account found with this phone number."},
+                    {"detail": "No rider account found with this phone number."},
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            user = User.objects.filter(phone=phone).first()
-            if role == 'RIDER' and not hasattr(user, 'rider_profile'):
-                 return Response({"detail": "Rider profile not found."}, status=status.HTTP_403_FORBIDDEN)
-            if role == 'EMPLOYEE' and not hasattr(user, 'employee_profile'):
-                 return Response({"detail": "Employee profile not found."}, status=status.HTTP_403_FORBIDDEN)
+            # Double check profile integrity
+            user = User.objects.filter(phone=phone, is_rider=True).first()
+            if not hasattr(user, 'rider_profile'):
+                 return Response({"detail": "Rider profile incomplete."}, status=status.HTTP_403_FORBIDDEN)
+
+        elif role == 'EMPLOYEE':
+            # FIX: Must find a user row that is explicitly an EMPLOYEE
+            user_exists = User.objects.filter(phone=phone, is_employee=True).exists()
+            if not user_exists:
+                return Response(
+                    {"detail": "No employee account found with this phone number."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            user = User.objects.filter(phone=phone, is_employee=True).first()
+            if not hasattr(user, 'employee_profile'):
+                 return Response({"detail": "Employee profile incomplete."}, status=status.HTTP_403_FORBIDDEN)
 
         # 3. Generate & Save OTP
         # In production use secure random
@@ -83,6 +98,8 @@ class SendOTPView(views.APIView):
 # ==========================================
 # 2. LOGIN WITH OTP (UNIFIED)
 # ==========================================
+# apps/accounts/views.py
+
 class LoginWithOTPView(views.APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -105,40 +122,54 @@ class LoginWithOTPView(views.APIView):
         if not is_valid:
             return Response({"detail": message}, status=status.HTTP_400_BAD_REQUEST)
         
-        # 2. Get or Create User
-        user = User.objects.filter(phone=phone).first()
+        # 2. Get or Create User (Strict Role Separation)
+        user = None
         created = False
 
-        # Handle Customer Auto-Creation
         if role == 'CUSTOMER':
+            # FIX: Look specifically for a CUSTOMER row. 
+            # Do NOT grab a rider's row even if the phone matches.
+            user = User.objects.filter(phone=phone, is_customer=True).first()
+            
             if not user:
+                # Create a completely NEW row for this customer context
                 user = User.objects.create_user(phone=phone, is_customer=True)
                 CustomerProfile.objects.create(user=user)
                 created = True
-            else:
-                # Ensure existing user has customer flag
-                if not user.is_customer:
-                    user.is_customer = True
-                    CustomerProfile.objects.get_or_create(user=user)
-                    user.save()
             
-            user.app_role = 'CUSTOMER' # context for serializer
+            # Ensure app_role context is set
+            user.app_role = 'CUSTOMER'
             user.save()
 
-        # Handle Rider/Employee Strict Checks
         elif role == 'RIDER':
-            if not user or not user.is_rider:
+            # FIX: Fetch the specific RIDER row
+            user = User.objects.filter(phone=phone, is_rider=True).first()
+            
+            if not user:
                 return Response({"detail": "Rider account does not exist."}, status=status.HTTP_403_FORBIDDEN)
+            
+            if not hasattr(user, 'rider_profile'):
+                 return Response({"detail": "Rider profile missing."}, status=status.HTTP_403_FORBIDDEN)
+
             if user.rider_profile.approval_status != RiderProfile.ApprovalStatus.APPROVED:
                 return Response({"detail": "Rider account is not approved."}, status=status.HTTP_403_FORBIDDEN)
+            
             user.app_role = 'RIDER'
             user.save()
 
         elif role == 'EMPLOYEE':
-            if not user or not user.is_employee:
+            # FIX: Fetch the specific EMPLOYEE row
+            user = User.objects.filter(phone=phone, is_employee=True).first()
+            
+            if not user:
                 return Response({"detail": "Employee account does not exist."}, status=status.HTTP_403_FORBIDDEN)
+                
+            if not hasattr(user, 'employee_profile'):
+                 return Response({"detail": "Employee profile missing."}, status=status.HTTP_403_FORBIDDEN)
+
             if not user.employee_profile.is_active_employee:
                 return Response({"detail": "Employee account is inactive."}, status=status.HTTP_403_FORBIDDEN)
+                
             user.app_role = 'EMPLOYEE'
             user.save()
 
@@ -203,12 +234,17 @@ class StaffGoogleLoginView(views.APIView):
             
             validate_staff_email_domain(email)
 
-            user = User.objects.filter(email=email).first()
+            # FIX: Strictly look for an EMPLOYEE user with this email
+            # Do NOT use .filter(email=email).first() as it might return a Customer row
+            user = User.objects.filter(email=email, is_employee=True).first()
+
             if not user:
                 return Response({"detail": "No staff account found with this email."}, status=status.HTTP_403_FORBIDDEN)
 
             if not hasattr(user, 'employee_profile'):
                  return Response({"detail": "User is not an employee."}, status=status.HTTP_403_FORBIDDEN)
+            
+            # ... (rest of the permissions check logic remains same) ...
             
             profile = user.employee_profile
             if not profile.can_access_admin_panel():
