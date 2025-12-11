@@ -1,13 +1,11 @@
-# apps/accounts/serializers.py
 from rest_framework import serializers
-import logging
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
-from django.contrib.gis.geos import Point 
-from .models import RiderProfile, EmployeeProfile, Address, CustomerProfile
+from django.utils import timezone
+from .models import PhoneOTP, UserSession
+from .utils import validate_staff_email_domain
 
 User = get_user_model()
-
-logger = logging.getLogger(__name__)
 
 # ======================
 # Helper
@@ -21,6 +19,105 @@ def normalize_phone(phone: str) -> str:
 # ======================
 # OTP SERIALIZERS
 # ======================
+
+from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from django.contrib.auth import get_user_model
+from django.utils import timezone
+from .models import PhoneOTP, UserSession
+from .utils import validate_staff_email_domain
+
+User = get_user_model()
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """
+    Customizes the JWT token payload to include user Role and Name.
+    """
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+
+        # Add custom claims
+        token['name'] = user.full_name
+        token['role'] = user.app_role or "CUSTOMER"
+        token['is_staff'] = user.is_staff
+        
+        # Add session ID if available in context (passed from view)
+        if hasattr(user, 'current_session_jti'):
+            token['session_jti'] = user.current_session_jti
+
+        return token
+
+class SendOTPSerializer(serializers.Serializer):
+    phone = serializers.CharField(max_length=15)
+    role = serializers.ChoiceField(choices=[
+        ('CUSTOMER', 'Customer'),
+        ('RIDER', 'Rider'),
+        ('EMPLOYEE', 'Employee')
+    ])
+
+class VerifyOTPSerializer(serializers.Serializer):
+    phone = serializers.CharField(max_length=15)
+    otp = serializers.CharField(max_length=6)
+    role = serializers.ChoiceField(choices=[
+        ('CUSTOMER', 'Customer'),
+        ('RIDER', 'Rider'),
+        ('EMPLOYEE', 'Employee')
+    ])
+    
+    # Optional: Device info for Session tracking
+    device_id = serializers.CharField(required=False, allow_blank=True)
+    client_name = serializers.CharField(required=False, allow_blank=True)
+
+class GoogleLoginSerializer(serializers.Serializer):
+    id_token = serializers.CharField()
+
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """
+    Customizes the JWT token payload to include user Role and Name.
+    """
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+
+        # Add custom claims
+        token['name'] = user.full_name
+        token['role'] = user.app_role or "CUSTOMER"
+        token['is_staff'] = user.is_staff
+        
+        # Add session ID if available in context (passed from view)
+        if hasattr(user, 'current_session_jti'):
+            token['session_jti'] = user.current_session_jti
+
+        return token
+
+class SendOTPSerializer(serializers.Serializer):
+    phone = serializers.CharField(max_length=15)
+    role = serializers.ChoiceField(choices=[
+        ('CUSTOMER', 'Customer'),
+        ('RIDER', 'Rider'),
+        ('EMPLOYEE', 'Employee')
+    ])
+
+class VerifyOTPSerializer(serializers.Serializer):
+    phone = serializers.CharField(max_length=15)
+    otp = serializers.CharField(max_length=6)
+    role = serializers.ChoiceField(choices=[
+        ('CUSTOMER', 'Customer'),
+        ('RIDER', 'Rider'),
+        ('EMPLOYEE', 'Employee')
+    ])
+    
+    # Optional: Device info for Session tracking
+    device_id = serializers.CharField(required=False, allow_blank=True)
+    client_name = serializers.CharField(required=False, allow_blank=True)
+
+class GoogleLoginSerializer(serializers.Serializer):
+    id_token = serializers.CharField()
+
+
+
 
 class RequestOTPSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=15)

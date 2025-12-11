@@ -1,19 +1,15 @@
 from django.contrib.auth.base_user import BaseUserManager
 
-
 class UserManager(BaseUserManager):
     use_in_migrations = True
-
-    def add_arguments(self, parser):
-        """
-        Allow `python manage.py createsuperuser --phone ...` even when USERNAME_FIELD='id'
-        (Django's createsuperuser normally expects the USERNAME_FIELD arg; this adds a friendly --phone).
-        """
-        parser.add_argument('--phone', type=str, required=False)
 
     def _create_user(self, phone, password=None, **extra_fields):
         if not phone:
             raise ValueError("The phone field must be set")
+
+        # NOTE: We do NOT enforce strict uniqueness of 'phone' here generally,
+        # because the same phone can exist for a Rider and a Customer.
+        # However, for Superuser creation, we want uniqueness.
 
         user = self.model(phone=phone, **extra_fields)
 
@@ -30,12 +26,7 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault("is_superuser", False)
         return self._create_user(phone, password, **extra_fields)
 
-    def create_superuser(self, phone=None, password=None, **extra_fields):
-        """
-        create_superuser will be used by management commands and by our management helper.
-        Because USERNAME_FIELD='id', Django may supply an 'id' argument; we accept `phone` here
-        so you can run: python manage.py createsuperuser --phone <number>
-        """
+    def create_superuser(self, phone, password=None, **extra_fields):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         extra_fields.setdefault("is_active", True)
@@ -45,8 +36,8 @@ class UserManager(BaseUserManager):
         if extra_fields.get("is_superuser") is not True:
             raise ValueError("Superuser must have is_superuser=True.")
 
-        if phone is None:
-            # fallback: if phone not provided, allow creation with empty phone (admin will set later)
-            phone = ""
+        # STRICT CHECK: Ensure no other Superuser has this phone
+        if self.model.objects.filter(phone=phone, is_superuser=True).exists():
+            raise ValueError("A superuser with this phone number already exists.")
 
         return self._create_user(phone, password, **extra_fields)

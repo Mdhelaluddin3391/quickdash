@@ -177,6 +177,11 @@ CELERY_BEAT_SCHEDULE = {
 # ==========================================
 AUTH_USER_MODEL = "accounts.User"
 
+AUTHENTICATION_BACKENDS = [
+    'apps.accounts.backends.SuperAdminBackend', # Prioritize Admin login
+    'django.contrib.auth.backends.ModelBackend', # Fallback
+]
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -241,6 +246,7 @@ SIMPLE_JWT = {
     "ALGORITHM": "HS256",
     "SIGNING_KEY": JWT_SIGNING_KEY,
     "AUTH_HEADER_TYPES": ("Bearer",),
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
 }
 
 SPECTACULAR_SETTINGS = {

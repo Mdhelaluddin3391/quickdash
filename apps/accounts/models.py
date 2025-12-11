@@ -9,44 +9,56 @@ from django.conf import settings
 from .managers import UserManager
 from apps.utils.models import TimestampedModel
 
-
 # ==========================
-# USER
+# USER (The Identity)
 # ==========================
 class User(AbstractBaseUser, PermissionsMixin):
     """
-    Option A: One phone -> multiple user rows (customer / rider / employee)
-    Admin/superuser login uses UUID (id). Therefore:
-      - phone is NOT unique
-      - USERNAME_FIELD = 'id'
+    Multi-Role User Model.
+    - USERNAME_FIELD = 'phone' (Required for Admin Panel login)
+    - phone is NOT unique globally (One phone -> Customer, Rider, Employee)
+    - id is UUID (Primary Key)
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    phone = models.CharField(max_length=15, db_index=True)   # NOT unique (Option A)
-    email = models.EmailField(null=True, blank=True)
+    
+    # Phone is indexed but NOT unique to allow multiple roles per number
+    phone = models.CharField(max_length=15, db_index=True) 
+    email = models.EmailField(null=True, blank=True, db_index=True)
     full_name = models.CharField(max_length=255, blank=True)
 
+    # Flags to quickly identify available profiles
     is_customer = models.BooleanField(default=False, db_index=True)
     is_rider = models.BooleanField(default=False, db_index=True)
     is_employee = models.BooleanField(default=False, db_index=True)
 
+    # Current app role context (optional, mostly for frontend state)
     app_role = models.CharField(max_length=32, null=True, blank=True)
 
     profile_picture = models.ImageField(upload_to="profile_pics/", null=True, blank=True)
     fcm_token = models.CharField(max_length=255, null=True, blank=True)
 
     is_active = models.BooleanField(default=True)
-    is_staff = models.BooleanField(default=False)
+    is_staff = models.BooleanField(default=False) # True for Admin/Employee accessing Admin Panel
     date_joined = models.DateTimeField(default=timezone.now)
 
-    # IMPORTANT: admin logs in with 'id' (UUID) as requested
-    USERNAME_FIELD = "id"
-    REQUIRED_FIELDS = []
+    USERNAME_FIELD = "phone"
+    REQUIRED_FIELDS = [] 
 
     objects = UserManager()
 
+    class Meta:
+        verbose_name = "User"
+        verbose_name_plural = "Users"
+        # We cannot enforce unique_together on phone because specific roles need their own rows
+        # But for Superadmin login, we will enforce logic in the Manager/Backend.
+
     def __str__(self):
-        return f"{self.phone} ({self.id})"
+        roles = []
+        if self.is_superuser: roles.append("SuperUser")
+        if self.is_customer: roles.append("Customer")
+        if self.is_rider: roles.append("Rider")
+        if self.is_employee: roles.append("Employee")
+        return f"{self.phone} - {', '.join(roles)} ({self.id})"
 
 
 # ==========================
@@ -73,14 +85,10 @@ class Address(gis_models.Model):
     landmark = models.CharField(max_length=255, null=True, blank=True)
     city = models.CharField(max_length=100)
     pincode = models.CharField(max_length=10, db_index=True)
-
-    # Lat/Long (GeoDjango Point)
     location = gis_models.PointField(srid=4326, null=True, blank=True)
-
     is_default = models.BooleanField(default=False)
 
     def save(self, *args, **kwargs):
-        # Ensure single default address per user
         if self.is_default:
             with transaction.atomic():
                 Address.objects.filter(
@@ -90,8 +98,7 @@ class Address(gis_models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        phone = getattr(self.user, "phone", "Unknown")
-        return f"{phone} - {self.full_address[:40]}..."
+        return f"{self.user.phone} - {self.address_type}"
 
     class Meta:
         verbose_name = "Address"
@@ -99,27 +106,20 @@ class Address(gis_models.Model):
 
 
 # ==========================
-# CUSTOMER PROFILE
+# PROFILES
 # ==========================
 class CustomerProfile(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="customer_profile",
-    )
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="customer_profile")
 
     def __str__(self):
-        return f"Customer({self.user.phone})"
+        return f"Customer: {self.user.phone}"
 
     class Meta:
         verbose_name = "Customer Profile"
         verbose_name_plural = "Customer Profiles"
 
 
-# ==========================
-# RIDER PROFILE
-# ==========================
 class RiderProfile(TimestampedModel):
     class ApprovalStatus(models.TextChoices):
         PENDING = 'PENDING', 'Pending'
@@ -132,31 +132,16 @@ class RiderProfile(TimestampedModel):
         SUSPENDED = "SUSPENDED", "Suspended"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='rider_profile',
-    )
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='rider_profile')
     rider_code = models.CharField(max_length=50, unique=True)
-
-    approval_status = models.CharField(
-        max_length=10,
-        choices=ApprovalStatus.choices,
-        default=ApprovalStatus.PENDING,
-    )
-    status = models.CharField(
-        max_length=16,
-        choices=RiderStatus.choices,
-        default=RiderStatus.PENDING,
-    )
+    
+    approval_status = models.CharField(max_length=10, choices=ApprovalStatus.choices, default=ApprovalStatus.PENDING)
+    status = models.CharField(max_length=16, choices=RiderStatus.choices, default=RiderStatus.PENDING)
 
     current_location = gis_models.PointField(srid=4326, null=True, blank=True)
     last_location_update = models.DateTimeField(null=True, blank=True)
-
     on_duty = models.BooleanField(default=False, db_index=True)
     on_delivery = models.BooleanField(default=False, db_index=True)
-
     vehicle_type = models.CharField(max_length=32, null=True, blank=True)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=5.0)
     cash_on_hand = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
@@ -169,9 +154,6 @@ class RiderProfile(TimestampedModel):
         verbose_name_plural = "Rider Profiles"
 
 
-# ==========================
-# EMPLOYEE PROFILE
-# ==========================
 class EmployeeProfile(models.Model):
     class Role(models.TextChoices):
         PICKER = "PICKER", "Picker"
@@ -182,19 +164,16 @@ class EmployeeProfile(models.Model):
         ADMIN = "ADMIN", "Admin"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="employee_profile",
-    )
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="employee_profile")
     employee_code = models.CharField(max_length=50, unique=True)
     role = models.CharField(max_length=32, choices=Role.choices)
-
     warehouse_code = models.CharField(max_length=50)
     is_active_employee = models.BooleanField(default=True)
-
     last_task_assigned_at = models.DateTimeField(null=True, blank=True)
+
+    def can_access_admin_panel(self):
+        """Helper to determine if this employee can log into the staff portal via Google"""
+        return self.role in [self.Role.ADMIN, self.Role.MANAGER, self.Role.SUPERVISOR, self.Role.AUDITOR]
 
     def __str__(self):
         return f"Employee({self.employee_code} - {self.role})"
@@ -205,7 +184,7 @@ class EmployeeProfile(models.Model):
 
 
 # ==========================
-# PHONE OTP
+# AUTHENTICATION MODELS
 # ==========================
 class PhoneOTP(models.Model):
     class LoginType(models.TextChoices):
@@ -214,7 +193,6 @@ class PhoneOTP(models.Model):
         EMPLOYEE = "EMPLOYEE", "Employee"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
     phone = models.CharField(max_length=15, db_index=True)
     login_type = models.CharField(max_length=16, choices=LoginType.choices)
     otp_code = models.CharField(max_length=6)
@@ -226,33 +204,43 @@ class PhoneOTP(models.Model):
     @classmethod
     def create_otp(cls, phone, login_type, code, ttl_minutes=5):
         now = timezone.now()
+        
+        # Rate Limit: 1 request per 60 seconds
+        last_otp = cls.objects.filter(phone=phone, login_type=login_type).order_by('-created_at').first()
+        if last_otp and last_otp.created_at > now - timedelta(seconds=60):
+            return None, "Please wait 60 seconds before requesting a new OTP."
+
+        # Rate Limit: Max 20 requests per hour
+        one_hour_ago = now - timedelta(hours=1)
+        hourly_count = cls.objects.filter(phone=phone, created_at__gte=one_hour_ago).count()
+        if hourly_count >= 20:
+            return None, "Too many OTP requests. Please try again later."
+
         expires_at = now + timedelta(minutes=ttl_minutes)
+        
         with transaction.atomic():
-            # mark previous unused OTPs used
-            cls.objects.filter(
-                phone=phone,
-                login_type=login_type,
-                is_used=False,
-            ).update(is_used=True)
-            return cls.objects.create(
+            # Invalidate previous unused OTPs
+            cls.objects.filter(phone=phone, login_type=login_type, is_used=False).update(is_used=True)
+            
+            otp_obj = cls.objects.create(
                 phone=phone,
                 login_type=login_type,
                 otp_code=code,
                 expires_at=expires_at,
             )
+            return otp_obj, None
 
     def is_valid(self, otp_code):
         now = timezone.now()
-        if self.is_used:
-            return False, "OTP already used"
-        if self.expires_at < now:
-            return False, "OTP expired"
-        if self.attempts >= 5:
-            return False, "Too many attempts"
+        if self.is_used: return False, "OTP already used"
+        if self.expires_at < now: return False, "OTP expired"
+        if self.attempts >= 5: return False, "Too many attempts"
+        
         if self.otp_code != otp_code:
             self.attempts += 1
             self.save(update_fields=["attempts"])
             return False, "Invalid OTP"
+            
         return True, ""
 
     class Meta:
@@ -263,28 +251,23 @@ class PhoneOTP(models.Model):
         verbose_name_plural = "Phone OTPs"
 
 
-# ==========================
-# USER SESSION
-# ==========================
 class UserSession(models.Model):
+    """
+    Tracks active sessions for JWT invalidation and security
+    """
     class Role(models.TextChoices):
         CUSTOMER = "CUSTOMER", "Customer"
         RIDER = "RIDER", "Rider"
         EMPLOYEE = "EMPLOYEE", "Employee"
-        ADMIN_PANEL = "ADMIN_PANEL", "Admin Panel"
+        ADMIN_PANEL = "ADMIN_PANEL", "Admin Panel" # For Staff/Superadmin on web
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="sessions",
-    )
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sessions")
     role = models.CharField(max_length=16, choices=Role.choices)
-    client = models.CharField(max_length=255)
-
-    jti = models.CharField(max_length=255, db_index=True)
-
+    
+    jti = models.CharField(max_length=255, db_index=True, unique=True) # Unique JTI for blacklist
+    
+    client = models.CharField(max_length=255) # User-Agent
     device_id = models.CharField(max_length=255, blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
 
@@ -293,37 +276,22 @@ class UserSession(models.Model):
     revoked_at = models.DateTimeField(null=True, blank=True)
 
     def revoke(self):
-        if not self.is_active:
-            return
-        self.is_active = False
-        self.revoked_at = timezone.now()
-        self.save(update_fields=["is_active", "revoked_at"])
+        if self.is_active:
+            self.is_active = False
+            self.revoked_at = timezone.now()
+            self.save(update_fields=["is_active", "revoked_at"])
 
     class Meta:
-        indexes = [
-            models.Index(fields=["user", "role", "client", "is_active"]),
-            models.Index(fields=["jti"]),
-        ]
+        indexes = [models.Index(fields=["user", "role", "is_active"])]
+        ordering = ['-created_at']
         verbose_name = "User Session"
         verbose_name_plural = "User Sessions"
 
 
-# ==========================
-# PASSWORD RESET TOKEN
-# ==========================
 class PasswordResetToken(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="reset_tokens",
-    )
-    token = models.CharField(
-        max_length=100,
-        unique=True,
-        default=secrets.token_urlsafe,
-    )
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reset_tokens")
+    token = models.CharField(max_length=100, unique=True, default=secrets.token_urlsafe)
     expires_at = models.DateTimeField()
     is_used = models.BooleanField(default=False)
 
@@ -331,11 +299,8 @@ class PasswordResetToken(models.Model):
     def create_token(cls, user, ttl_minutes=60):
         now = timezone.now()
         cls.objects.filter(user=user, is_used=False).update(is_used=True)
-        return cls.objects.create(
-            user=user,
-            expires_at=now + timedelta(minutes=ttl_minutes),
-        )
-
+        return cls.objects.create(user=user, expires_at=now + timedelta(minutes=ttl_minutes))
+    
     def is_valid(self):
         return (not self.is_used) and (self.expires_at > timezone.now())
 

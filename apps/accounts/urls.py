@@ -25,6 +25,10 @@ from .views_onboarding import (
     AdminEmployeeStatusUpdateView,
 )
 
+from django.urls import path
+from .views import SendOTPView, LoginWithOTPView, StaffGoogleLoginView
+from rest_framework_simplejwt.views import TokenRefreshView
+
 urlpatterns = [
     # Generic endpoints
     path('request-otp/', RequestOTPView.as_view(), name='request-otp'),
@@ -60,4 +64,14 @@ urlpatterns = [
 
     # location service page
     path('location/service-check/', LocationServiceCheckView.as_view(), name='location-service-check'),
+
+    # Mobile App / Web Consumer Auth
+    path('auth/otp/send/', SendOTPView.as_view(), name='send-otp'),
+    path('auth/otp/login/', LoginWithOTPView.as_view(), name='login-otp'),
+    
+    # Admin Panel Staff Auth
+    path('auth/google/login/', StaffGoogleLoginView.as_view(), name='google-login'),
+    
+    # Token Management
+    path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 ]

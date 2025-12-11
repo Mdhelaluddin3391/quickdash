@@ -10,6 +10,8 @@ from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from django.core.cache import cache
 from .models import PhoneOTP, UserSession
 from .tasks import send_sms_task
+from django.core.exceptions import ValidationError
+
 
 logger = logging.getLogger(__name__)
 
@@ -139,3 +141,16 @@ def rotate_refresh_token(old_refresh_token_str: str, request=None):
         "refresh": str(refresh),
         "refresh_jti": new_jti,
     }
+
+
+
+
+def validate_staff_email_domain(email):
+    """
+    Staff login via Google is restricted to specific domains.
+    """
+    ALLOWED_DOMAINS = ['quickdash.com', 'quickdash.in']
+    domain = email.split('@')[-1]
+    if domain not in ALLOWED_DOMAINS:
+        raise ValidationError(f"Email domain {domain} is not authorized for staff access.")
+    return True
