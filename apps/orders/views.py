@@ -29,7 +29,7 @@ class CartView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
-        # FIX: Prefetch items and SKU to avoid N+1 queries during serialization
+        # MERGE NOTE: Kept Branch A's optimization to avoid N+1 queries
         cart, _ = Cart.objects.prefetch_related('items__sku').get_or_create(customer=request.user)
         return Response(CartSerializer(cart).data)
 
@@ -52,7 +52,8 @@ class AddToCartView(APIView):
             )
             item.save()
 
-        # FIX: Refresh with prefetch to ensure clean serialization
+        # MERGE NOTE: Kept Branch A's optimization. 
+        # Branch B used standard .refresh_from_db() which misses relations.
         cart = Cart.objects.prefetch_related('items__sku').get(id=cart.id)
         return Response(CartSerializer(cart).data)
 
@@ -100,6 +101,7 @@ class PaymentVerificationView(APIView):
 
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
         
+        # MERGE NOTE: Included specific error handling from Branch B/A for security
         try:
             client.utility.verify_payment_signature(data)
         except razorpay.errors.SignatureVerificationError:
@@ -111,6 +113,7 @@ class PaymentVerificationView(APIView):
 
         payment = get_object_or_404(Payment, gateway_order_id=data["razorpay_order_id"])
         
+        # Idempotency check
         if payment.status == Payment.PaymentStatus.SUCCESSFUL:
              return Response({"status": "success", "message": "Already processed"})
 
@@ -127,7 +130,7 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = OrderSerializer
 
     def get_queryset(self):
-        # Optimized queryset with select_related
+        # MERGE NOTE: Kept Branch A's select_related optimizations
         qs = Order.objects.select_related("customer", "warehouse").prefetch_related("items", "items__sku").all()
         if self.request.user.is_staff:
             return qs

@@ -1,11 +1,41 @@
 from django.contrib import admin
+from django.contrib.gis.admin import GISModelAdmin # Agar map support chahiye (Optional)
 from .models import (
+    # --- Missing Models Added Here ---
+    Warehouse, ServiceArea, Zone, Aisle, Shelf,
+    # ---------------------------------
     Bin, BinInventory, PickingTask, DispatchRecord, 
-    IdempotencyKey, # Existing
-    # --- New Models Imported ---
+    IdempotencyKey, 
     PickSkip, FulfillmentCancel, GRN, GRNItem, PutawayTask, CycleCountTask
-    # ---------------------------
 )
+
+# 1. Warehouse Admin Register karein
+@admin.register(Warehouse)
+class WarehouseAdmin(admin.ModelAdmin): # Agar map chahiye toh GISModelAdmin use karein
+    list_display = ('name', 'code', 'is_active', 'created_at')
+    search_fields = ('name', 'code')
+    list_filter = ('is_active',)
+
+# 2. Service Area Admin Register karein
+@admin.register(ServiceArea)
+class ServiceAreaAdmin(admin.ModelAdmin):
+    list_display = ('name', 'warehouse', 'radius_km', 'is_active')
+    list_filter = ('warehouse',)
+
+# 3. Zone/Aisle/Shelf (Optional helper models)
+@admin.register(Zone)
+class ZoneAdmin(admin.ModelAdmin):
+    list_display = ('name', 'code', 'warehouse')
+
+@admin.register(Aisle)
+class AisleAdmin(admin.ModelAdmin):
+    list_display = ('code', 'zone')
+
+@admin.register(Shelf)
+class ShelfAdmin(admin.ModelAdmin):
+    list_display = ('code', 'aisle')
+
+# ... Baaki purana code same rahega ...
 
 class BinInventoryInline(admin.TabularInline):
     model = BinInventory
@@ -13,9 +43,11 @@ class BinInventoryInline(admin.TabularInline):
 
 @admin.register(Bin)
 class BinAdmin(admin.ModelAdmin):
-    list_display = ('bin_code', 'capacity')
+    list_display = ('bin_code', 'capacity', 'shelf', 'zone') # Shelf aur Zone display mein add kiya
     inlines = [BinInventoryInline]
+    search_fields = ('bin_code',)
 
+# ... PickingTask, DispatchRecord, IdempotencyKey etc... (Existing code)
 @admin.register(PickingTask)
 class PickingTaskAdmin(admin.ModelAdmin):
     list_display = ('order_id', 'warehouse', 'status', 'picker')
@@ -24,8 +56,7 @@ class PickingTaskAdmin(admin.ModelAdmin):
 class DispatchRecordAdmin(admin.ModelAdmin):
     list_display = ('order_id', 'status', 'warehouse', 'pickup_otp')
 
-
-@admin.register(IdempotencyKey) # <-- Naya Admin Register kiya
+@admin.register(IdempotencyKey)
 class IdempotencyKeyAdmin(admin.ModelAdmin):
     list_display = ('key', 'route', 'response_status', 'is_expired', 'created_at')
     search_fields = ('key', 'route')
@@ -68,5 +99,3 @@ class PickSkipAdmin(admin.ModelAdmin):
 class FulfillmentCancelAdmin(admin.ModelAdmin):
     list_display = ('id', 'pick_item', 'cancelled_by', 'reason', 'refund_initiated', 'created_at')
     list_filter = ('refund_initiated',)
-
-# ... (Existing Admin classes: BinAdmin, PickingTaskAdmin, DispatchRecordAdmin, IdempotencyKeyAdmin)

@@ -162,7 +162,6 @@ CELERY_BEAT_SCHEDULE = {
         "args": (),
     },
     "orders-auto-cancel": {
-        # FIX: Fully qualified path to ensure Celery finds the task
         "task": "apps.orders.tasks.auto_cancel_unpaid_orders",
         "schedule": crontab(minute="*/5"),
     },
