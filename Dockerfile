@@ -9,9 +9,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /code
 
 # System Deps (PostGIS & compilation tools)
+# [FIX] Added postgresql-client below so pg_isready command works
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
+    postgresql-client \
     binutils \
     libproj-dev \
     gdal-bin \

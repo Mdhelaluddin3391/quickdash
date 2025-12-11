@@ -247,38 +247,28 @@ dispatch_otp_verify_view = DispatchOTPVerifyAPIView.as_view()
 # =========================================================
 
 class LocationBaseView(views.APIView):
-    """Base class for extracting location data from GET or POST"""
     def _extract_location(self, request):
-        if request.method == 'GET':
-            lat = request.query_params.get('latitude')
-            lng = request.query_params.get('longitude')
-            wh_id = request.query_params.get('warehouse_id')
-        else:
-            lat = request.data.get('latitude')
-            lng = request.data.get('longitude')
-            wh_id = request.data.get('warehouse_id')
-            
+        data = request.query_params if request.method == 'GET' else request.data
+        lat = data.get('latitude') or data.get('lat')
+        lng = data.get('longitude') or data.get('lng')
+        wh_id = data.get('warehouse_id')
+        
         if not lat or not lng:
-            raise ValidationError("latitude and longitude are required")
-            
-        try:
-            return float(lat), float(lng), wh_id
-        except (ValueError, TypeError):
-            raise ValidationError("latitude and longitude must be valid numbers")
+            raise ValidationError("Latitude and Longitude required")
+        return float(lat), float(lng), wh_id
 
 class CheckServiceAvailabilityAPIView(LocationBaseView):
     permission_classes = [AllowAny]
-    
-    def dispatch_request(self, request):
+    def handle_req(self, request):
         try:
             lat, lng, wh_id = self._extract_location(request)
             result = check_service_availability(lat, lng, wh_id)
-            return Response(result, status=status.HTTP_200_OK)
-        except ValidationError as e:
-            return Response({'is_available': False, 'message': str(e.message)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(result)
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)
 
-    def get(self, request): return self.dispatch_request(request)
-    def post(self, request): return self.dispatch_request(request)
+    def get(self, r): return self.handle_req(r)
+    def post(self, r): return self.handle_req(r)
 
 class GetNearestServiceAreaAPIView(LocationBaseView):
     permission_classes = [AllowAny]

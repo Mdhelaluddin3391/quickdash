@@ -1,4 +1,3 @@
-# apps/accounts/models.py
 from django.db import models, transaction
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.contrib.gis.db import models as gis_models
@@ -16,65 +15,38 @@ from apps.utils.models import TimestampedModel
 # ==========================
 class User(AbstractBaseUser, PermissionsMixin):
     """
-    Core User:
-    - phone-based login
-    - NOTE: phone is NOT unique to allow multiple role-specific accounts
-      for the same phone number (eg: customer + rider).
-    - primary key is UUID
-    - role flags: is_customer, is_rider, is_employee
+    Option A: One phone -> multiple user rows (customer / rider / employee)
+    Admin/superuser login uses UUID (id). Therefore:
+      - phone is NOT unique
+      - USERNAME_FIELD = 'id'
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    # IMPORTANT: do NOT set unique=True here if you want multiple accounts per phone
-    phone = models.CharField(max_length=15, db_index=True)
+    phone = models.CharField(max_length=15, db_index=True)   # NOT unique (Option A)
     email = models.EmailField(null=True, blank=True)
     full_name = models.CharField(max_length=255, blank=True)
 
-    profile_picture = models.ImageField(
-        upload_to='profile_pics/', null=True, blank=True
-    )
-    fcm_token = models.CharField(
-        max_length=255,
-        null=True,
-        blank=True,
-        help_text="For push notifications",
-    )
-
-    # Optional high-level role tag (for admin/ACL convenience)
-    app_role = models.CharField(
-        max_length=32,
-        null=True,
-        blank=True,
-        help_text="High-level role tag for admin panels / ACL",
-    )
-
-    # ROLE FLAGS (fast lookup for business logic)
     is_customer = models.BooleanField(default=False, db_index=True)
     is_rider = models.BooleanField(default=False, db_index=True)
     is_employee = models.BooleanField(default=False, db_index=True)
+
+    app_role = models.CharField(max_length=32, null=True, blank=True)
+
+    profile_picture = models.ImageField(upload_to="profile_pics/", null=True, blank=True)
+    fcm_token = models.CharField(max_length=255, null=True, blank=True)
 
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
 
-    USERNAME_FIELD = "phone"
+    # IMPORTANT: admin logs in with 'id' (UUID) as requested
+    USERNAME_FIELD = "id"
     REQUIRED_FIELDS = []
 
     objects = UserManager()
 
     def __str__(self):
-        # return a readable identifier
-        return self.phone or str(self.id)
-
-    class Meta:
-        indexes = [
-            models.Index(fields=["phone"]),
-            models.Index(fields=["is_customer"]),
-            models.Index(fields=["is_rider"]),
-            models.Index(fields=["is_employee"]),
-        ]
-        verbose_name = "User"
-        verbose_name_plural = "Users"
+        return f"{self.phone} ({self.id})"
 
 
 # ==========================
@@ -118,7 +90,7 @@ class Address(gis_models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        phone = getattr(self.user, "phone", str(self.user))
+        phone = getattr(self.user, "phone", "Unknown")
         return f"{phone} - {self.full_address[:40]}..."
 
     class Meta:
@@ -130,12 +102,7 @@ class Address(gis_models.Model):
 # CUSTOMER PROFILE
 # ==========================
 class CustomerProfile(models.Model):
-    """
-    Customer-specific profile.
-    OneToOne with a User instance that has is_customer=True.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,

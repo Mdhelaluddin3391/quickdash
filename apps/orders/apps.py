@@ -5,5 +5,5 @@ class OrdersConfig(AppConfig):
     name = 'apps.orders'
 
     def ready(self):
-        # FIX: Explicitly import receivers to register signals on startup.
+        # [FIX] Import receivers
         import apps.orders.receivers
