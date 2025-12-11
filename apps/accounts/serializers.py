@@ -1,33 +1,15 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
-from django.utils import timezone
-from .models import PhoneOTP, UserSession
-from .utils import validate_staff_email_domain
+from django.contrib.gis.geos import Point
+from .models import PhoneOTP, UserSession, RiderProfile, EmployeeProfile, CustomerProfile, Address
+from .utils import normalize_phone
 
 User = get_user_model()
 
 # ======================
-# Helper
+# AUTH SERIALIZERS (NEW)
 # ======================
-
-def normalize_phone(phone: str) -> str:
-    from .utils import normalize_phone as _norm
-    return _norm(phone)
-
-
-# ======================
-# OTP SERIALIZERS
-# ======================
-
-from rest_framework import serializers
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from django.contrib.auth import get_user_model
-from django.utils import timezone
-from .models import PhoneOTP, UserSession
-from .utils import validate_staff_email_domain
-
-User = get_user_model()
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
@@ -55,6 +37,9 @@ class SendOTPSerializer(serializers.Serializer):
         ('RIDER', 'Rider'),
         ('EMPLOYEE', 'Employee')
     ])
+    
+    def validate_phone(self, value):
+        return normalize_phone(value)
 
 class VerifyOTPSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=15)
@@ -68,88 +53,16 @@ class VerifyOTPSerializer(serializers.Serializer):
     # Optional: Device info for Session tracking
     device_id = serializers.CharField(required=False, allow_blank=True)
     client_name = serializers.CharField(required=False, allow_blank=True)
-
-class GoogleLoginSerializer(serializers.Serializer):
-    id_token = serializers.CharField()
-
-
-class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """
-    Customizes the JWT token payload to include user Role and Name.
-    """
-    @classmethod
-    def get_token(cls, user):
-        token = super().get_token(user)
-
-        # Add custom claims
-        token['name'] = user.full_name
-        token['role'] = user.app_role or "CUSTOMER"
-        token['is_staff'] = user.is_staff
-        
-        # Add session ID if available in context (passed from view)
-        if hasattr(user, 'current_session_jti'):
-            token['session_jti'] = user.current_session_jti
-
-        return token
-
-class SendOTPSerializer(serializers.Serializer):
-    phone = serializers.CharField(max_length=15)
-    role = serializers.ChoiceField(choices=[
-        ('CUSTOMER', 'Customer'),
-        ('RIDER', 'Rider'),
-        ('EMPLOYEE', 'Employee')
-    ])
-
-class VerifyOTPSerializer(serializers.Serializer):
-    phone = serializers.CharField(max_length=15)
-    otp = serializers.CharField(max_length=6)
-    role = serializers.ChoiceField(choices=[
-        ('CUSTOMER', 'Customer'),
-        ('RIDER', 'Rider'),
-        ('EMPLOYEE', 'Employee')
-    ])
     
-    # Optional: Device info for Session tracking
-    device_id = serializers.CharField(required=False, allow_blank=True)
-    client_name = serializers.CharField(required=False, allow_blank=True)
+    def validate_phone(self, value):
+        return normalize_phone(value)
 
 class GoogleLoginSerializer(serializers.Serializer):
     id_token = serializers.CharField()
-
-
-
-
-class RequestOTPSerializer(serializers.Serializer):
-    phone = serializers.CharField(max_length=15)
-    login_type = serializers.ChoiceField(
-        choices=[
-            ("CUSTOMER", "Customer"),
-            ("RIDER", "Rider"),
-            ("EMPLOYEE", "Employee"),
-        ]
-    )
-
-    def validate_phone(self, value):
-        return normalize_phone(value)
-
-
-class VerifyOTPSerializer(serializers.Serializer):
-    phone = serializers.CharField(max_length=15)
-    otp = serializers.CharField(max_length=6)
-    login_type = serializers.ChoiceField(
-        choices=[
-            ("CUSTOMER", "Customer"),
-            ("RIDER", "Rider"),
-            ("EMPLOYEE", "Employee"),
-        ]
-    )
-
-    def validate_phone(self, value):
-        return normalize_phone(value)
 
 
 # ======================
-# BASIC USER / RIDER
+# USER / PROFILE SERIALIZERS
 # ======================
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -181,7 +94,7 @@ class RiderProfileSerializer(serializers.ModelSerializer):
 
 
 # ======================
-# CUSTOMER SERIALIZERS
+# ADDRESS SERIALIZERS
 # ======================
 
 class AddressSerializer(serializers.ModelSerializer):
@@ -240,8 +153,7 @@ class AddressSerializer(serializers.ModelSerializer):
             from apps.warehouse.services import check_service_availability
             result = check_service_availability(obj.location.y, obj.location.x)
             return result.get('is_available', False)
-        except Exception as e:
-            logger.exception("Service availability check failed: %s", e)
+        except Exception:
             return False
     
     def get_service_message(self, obj):
@@ -251,8 +163,7 @@ class AddressSerializer(serializers.ModelSerializer):
             from apps.warehouse.services import check_service_availability
             result = check_service_availability(obj.location.y, obj.location.x)
             return result.get('message', '')
-        except Exception as e:
-            logger.exception("Service availability message retrieval failed: %s", e)
+        except Exception:
             return ''
 
     def create(self, validated_data):
@@ -274,10 +185,9 @@ class AddressSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
-# [PERFORMANCE FIX] Moved optimized serializer UP so it can be used by CustomerMeSerializer
 class AddressListSerializer(AddressSerializer):
     class Meta(AddressSerializer.Meta):
-        # Exclude expensive computed fields that require external service calls
+        # Exclude expensive computed fields for list views
         fields = [
             f for f in AddressSerializer.Meta.fields 
             if f not in ('service_available', 'service_message')
@@ -294,7 +204,6 @@ class CustomerProfileSerializer(serializers.ModelSerializer):
 class CustomerMeSerializer(serializers.Serializer):
     user = UserProfileSerializer()
     customer = CustomerProfileSerializer()
-    # FIX: Use lightweight serializer to avoid N+1 spatial queries
     addresses = AddressListSerializer(many=True)
 
 

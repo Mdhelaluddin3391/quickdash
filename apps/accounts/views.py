@@ -1,59 +1,34 @@
 import logging
-from django.contrib.auth import get_user_model
-from django.utils import timezone
-from rest_framework import status, views, generics
+import uuid
+from rest_framework import status, views, permissions, generics
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.exceptions import Throttled, ValidationError
-from django.conf import settings
-
-from .models import PhoneOTP, UserSession, Address, CustomerProfile, RiderProfile, EmployeeProfile
-from .serializers import (
-    RequestOTPSerializer,
-    VerifyOTPSerializer,
-    UserProfileSerializer,
-    CustomerMeSerializer,
-    AddressSerializer,
-    AddressListSerializer,
-)
-from .utils import (
-    create_and_send_otp,
-    check_otp_rate_limit,
-    get_client_ip,
-    normalize_phone,
-    create_tokens_with_session
-)
-from .permissions import IsCustomer
-
-logger = logging.getLogger(__name__)
-User = get_user_model()
-
-import logging
-import uuid
-from rest_framework import status, views, permissions
-from rest_framework.response import Response
-from rest_framework_simplejwt.tokens import RefreshToken
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 
-from .models import PhoneOTP, UserSession, CustomerProfile, EmployeeProfile, RiderProfile
+from .models import PhoneOTP, UserSession, CustomerProfile, EmployeeProfile, RiderProfile, Address
 from .serializers import (
     SendOTPSerializer, 
     VerifyOTPSerializer, 
     CustomTokenObtainPairSerializer, 
-    GoogleLoginSerializer
+    GoogleLoginSerializer,
+    UserProfileSerializer,
+    CustomerMeSerializer,
+    AddressSerializer,
+    AddressListSerializer,
 )
-from .utils import validate_staff_email_domain
+from .utils import validate_staff_email_domain, check_otp_rate_limit
+from .permissions import IsCustomer
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
 # ==========================================
-# 1. SEND OTP
+# 1. SEND OTP (UNIFIED)
 # ==========================================
 class SendOTPView(views.APIView):
     permission_classes = [permissions.AllowAny]
@@ -64,8 +39,12 @@ class SendOTPView(views.APIView):
         
         phone = serializer.validated_data['phone']
         role = serializer.validated_data['role']
+        client_ip = self.get_client_ip(request)
 
-        # RULE: Riders & Employees must exist before logging in
+        # 1. Rate Limiting (Redis)
+        check_otp_rate_limit(phone, role, ip=client_ip)
+
+        # 2. Existence Checks (Strict)
         if role in ['RIDER', 'EMPLOYEE']:
             user_exists = User.objects.filter(phone=phone).exists()
             if not user_exists:
@@ -73,30 +52,36 @@ class SendOTPView(views.APIView):
                     {"detail": f"No {role.lower()} account found with this phone number."},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            # Further check: is the specific profile active?
+            
             user = User.objects.filter(phone=phone).first()
             if role == 'RIDER' and not hasattr(user, 'rider_profile'):
                  return Response({"detail": "Rider profile not found."}, status=status.HTTP_403_FORBIDDEN)
             if role == 'EMPLOYEE' and not hasattr(user, 'employee_profile'):
                  return Response({"detail": "Employee profile not found."}, status=status.HTTP_403_FORBIDDEN)
 
-        # Generate OTP (Mocking 123456 for dev/test)
-        # In production, use a secure random generator
+        # 3. Generate & Save OTP
+        # In production use secure random
         code = "123456" 
         
-        # Save OTP
         otp_obj, error = PhoneOTP.create_otp(phone, role, code)
         if error:
             return Response({"detail": error}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-        # TODO: Integrate SMS Gateway here (Twilio/AWS SNS)
-        logger.info(f"OTP for {phone} ({role}): {code}")
+        # TODO: Integrate SMS Gateway here
+        if settings.DEBUG:
+            logger.info(f"OTP for {phone} ({role}): {code}")
 
-        return Response({"detail": "OTP sent successfully.", "dev_code": code}) # dev_code only for debugging
+        return Response({"detail": "OTP sent successfully.", "dev_code": code}) 
+
+    def get_client_ip(self, request):
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            return x_forwarded_for.split(',')[0]
+        return request.META.get('REMOTE_ADDR')
 
 
 # ==========================================
-# 2. LOGIN WITH OTP
+# 2. LOGIN WITH OTP (UNIFIED)
 # ==========================================
 class LoginWithOTPView(views.APIView):
     permission_classes = [permissions.AllowAny]
@@ -122,28 +107,28 @@ class LoginWithOTPView(views.APIView):
         
         # 2. Get or Create User
         user = User.objects.filter(phone=phone).first()
+        created = False
 
         # Handle Customer Auto-Creation
         if role == 'CUSTOMER':
             if not user:
                 user = User.objects.create_user(phone=phone, is_customer=True)
                 CustomerProfile.objects.create(user=user)
-                user.app_role = 'CUSTOMER'
-                user.save()
+                created = True
             else:
                 # Ensure existing user has customer flag
                 if not user.is_customer:
                     user.is_customer = True
                     CustomerProfile.objects.get_or_create(user=user)
                     user.save()
-                user.app_role = 'CUSTOMER' # context for serializer
-                user.save()
+            
+            user.app_role = 'CUSTOMER' # context for serializer
+            user.save()
 
         # Handle Rider/Employee Strict Checks
         elif role == 'RIDER':
             if not user or not user.is_rider:
                 return Response({"detail": "Rider account does not exist."}, status=status.HTTP_403_FORBIDDEN)
-            # Check Approval
             if user.rider_profile.approval_status != RiderProfile.ApprovalStatus.APPROVED:
                 return Response({"detail": "Rider account is not approved."}, status=status.HTTP_403_FORBIDDEN)
             user.app_role = 'RIDER'
@@ -173,7 +158,7 @@ class LoginWithOTPView(views.APIView):
         )
 
         # 5. Generate Token
-        user.current_session_jti = jti # Hack to pass JTI to serializer
+        user.current_session_jti = jti 
         refresh = CustomTokenObtainPairSerializer.get_token(user)
 
         return Response({
@@ -184,7 +169,8 @@ class LoginWithOTPView(views.APIView):
                 "phone": user.phone,
                 "full_name": user.full_name,
                 "role": role
-            }
+            },
+            "is_new_user": created
         })
 
     def get_client_ip(self, request):
@@ -200,10 +186,6 @@ class LoginWithOTPView(views.APIView):
 class StaffGoogleLoginView(views.APIView):
     """
     Strictly for Admin Panel access.
-    Checks:
-    1. Email Domain (quickdash.com)
-    2. Employee Profile Existence
-    3. Employee Role (Admin/Manager/etc)
     """
     permission_classes = [permissions.AllowAny]
 
@@ -219,29 +201,23 @@ class StaffGoogleLoginView(views.APIView):
             )
             email = id_info['email']
             
-            # 1. Domain Check
             validate_staff_email_domain(email)
 
-            # 2. User Existence Check
             user = User.objects.filter(email=email).first()
             if not user:
                 return Response({"detail": "No staff account found with this email."}, status=status.HTTP_403_FORBIDDEN)
 
-            # 3. Employee Profile Check
             if not hasattr(user, 'employee_profile'):
                  return Response({"detail": "User is not an employee."}, status=status.HTTP_403_FORBIDDEN)
             
-            # 4. Role Check
             profile = user.employee_profile
             if not profile.can_access_admin_panel():
                 return Response({"detail": "You do not have permission to access the admin panel."}, status=status.HTTP_403_FORBIDDEN)
 
-            # Login Success
-            user.is_staff = True # Ensure Django Admin access logic is satisfied
+            user.is_staff = True 
             user.app_role = 'ADMIN_PANEL'
             user.save()
 
-            # Create Session
             jti = str(uuid.uuid4())
             UserSession.objects.create(
                 user=user,
@@ -265,172 +241,13 @@ class StaffGoogleLoginView(views.APIView):
             logger.error(f"Google Login Error: {str(e)}")
             return Response({"detail": "Authentication failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-            
-class RequestOTPView(views.APIView):
-    permission_classes = [AllowAny]
-    serializer_class = RequestOTPSerializer
 
-    def post(self, request):
-        serializer = self.serializer_class(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        phone = serializer.validated_data['phone']
-        login_type = serializer.validated_data['login_type']
-        client_ip = get_client_ip(request)
-
-        # Rate Limit Check
-        try:
-            check_otp_rate_limit(phone, login_type, ip=client_ip)
-        except ValidationError as e:
-            logger.warning(f"OTP Rate Limit hit: {phone} IP: {client_ip}")
-            raise Throttled(detail=str(e))
-        except Exception:
-            logger.exception("Redis connection error during OTP limit check")
-            return Response(
-                {"detail": "Temporary system error. Please try again later."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
-
-        # Create OTP
-        create_and_send_otp(phone, login_type)
-        if settings.DEBUG:
-            logger.info(f"Dev Hint: OTP sent to {phone} (Check Console/DB)")
-
-        return Response({"message": "OTP sent successfully. Please check your SMS."}, status=status.HTTP_200_OK)
-
-
-class VerifyOTPView(views.APIView):
-    permission_classes = [AllowAny]
-    serializer_class = VerifyOTPSerializer
-
-    def perform_verification(self, request, validated_data):
-        phone = normalize_phone(validated_data['phone'])
-        otp_input = validated_data['otp']
-        login_type = validated_data['login_type'].upper()
-
-        # 1. Check OTP Record
-        otp_record = PhoneOTP.objects.filter(
-            phone=phone,
-            login_type=login_type,
-            is_used=False,
-        ).last()
-
-        if not otp_record:
-            return Response({"detail": "OTP request not found or expired."}, status=status.HTTP_400_BAD_REQUEST)
-
-        is_valid, message = otp_record.is_valid(otp_input)
-        if not is_valid:
-            return Response({"detail": message}, status=status.HTTP_400_BAD_REQUEST)
-
-        # 2. Mark OTP Used
-        otp_record.is_used = True
-        otp_record.save(update_fields=["is_used"])
-
-        # 3. GET OR VALIDATE USER BASED ON ROLE
-        user = None
-        created = False
-
-        # CUSTOMER: Auto-create a dedicated customer user row
-        if login_type == 'CUSTOMER':
-            user = User.objects.filter(phone=phone, is_customer=True).first()
-            if not user:
-                user = User.objects.create(phone=phone, is_customer=True, is_active=True)
-                created = True
-            CustomerProfile.objects.get_or_create(user=user)
-
-        # RIDER: Must have pre-existing rider user (separate row)
-        elif login_type == 'RIDER':
-            user = User.objects.filter(phone=phone, is_rider=True).first()
-            if not user:
-                return Response({"detail": "Rider account not found. Please register or contact support."},
-                                status=status.HTTP_404_NOT_FOUND)
-            if not hasattr(user, 'rider_profile'):
-                return Response({"detail": "Rider profile incomplete. Contact Admin."}, status=status.HTTP_403_FORBIDDEN)
-            if user.rider_profile.status == RiderProfile.RiderStatus.SUSPENDED:
-                return Response({"detail": "Your rider account is suspended."}, status=status.HTTP_403_FORBIDDEN)
-
-        # EMPLOYEE: Must have pre-existing employee user
-        elif login_type == 'EMPLOYEE':
-            user = User.objects.filter(phone=phone, is_employee=True).first()
-            if not user:
-                return Response({"detail": "Employee account not found."}, status=status.HTTP_404_NOT_FOUND)
-            if not hasattr(user, 'employee_profile') or not user.employee_profile.is_active_employee:
-                return Response({"detail": "Employee account inactive."}, status=status.HTTP_403_FORBIDDEN)
-
-        else:
-            return Response({"detail": "Invalid login type."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # 4. Send signup signal when created
-        if created:
-            try:
-                from apps.accounts.signals import user_signed_up
-                user_signed_up.send(sender=User, request=request, user=user, login_type=login_type)
-            except Exception:
-                logger.exception("Failed to send user_signed_up signal")
-
-        # 5. Generate tokens and session
-        tokens = create_tokens_with_session(
-            user=user,
-            role=login_type,
-            client=request.META.get("HTTP_USER_AGENT", "Unknown"),
-            request=request,
-            single_session_for_client=False,
-        )
-
-        return Response({**tokens, "user": UserProfileSerializer(user).data, "is_new_user": created},
-                        status=status.HTTP_200_OK)
-
-    def get(self, request):
-        return Response({"detail": "Please use POST to verify OTP."}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
-
-    def post(self, request):
-        serializer = self.serializer_class(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        return self.perform_verification(request, serializer.validated_data)
-
-
-class CustomerRequestOTPView(views.APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
-        data["login_type"] = "CUSTOMER"
-
-        serializer = RequestOTPSerializer(data=data)
-        serializer.is_valid(raise_exception=True)
-
-        phone = serializer.validated_data["phone"]
-        login_type = "CUSTOMER"
-
-        try:
-            check_otp_rate_limit(phone, login_type, ip=get_client_ip(request))
-        except ValidationError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
-
-        create_and_send_otp(phone, login_type)
-
-        if settings.DEBUG:
-            logger.info(f"Dev Hint: OTP sent to {phone} for CUSTOMER")
-
-        return Response({"message": "OTP sent successfully."}, status=status.HTTP_200_OK)
-
-
-class CustomerVerifyOTPView(VerifyOTPView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
-        data["login_type"] = "CUSTOMER"
-
-        serializer = self.serializer_class(data=data)
-        serializer.is_valid(raise_exception=True)
-        return self.perform_verification(request, serializer.validated_data)
-
-
-# --- Profile / Address Views ---
+# ==========================================
+# 4. PROFILE & ADDRESS MANAGEMENT
+# ==========================================
 
 class MeView(views.APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         profile_serializer = UserProfileSerializer(request.user)
@@ -438,7 +255,7 @@ class MeView(views.APIView):
 
 
 class CustomerMeView(views.APIView):
-    permission_classes = [IsAuthenticated, IsCustomer]
+    permission_classes = [permissions.IsAuthenticated, IsCustomer]
 
     def get(self, request):
         user = request.user
@@ -449,7 +266,7 @@ class CustomerMeView(views.APIView):
 
 
 class CustomerAddressListCreateView(generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticated, IsCustomer]
+    permission_classes = [permissions.IsAuthenticated, IsCustomer]
 
     def get_serializer_class(self):
         if self.request.method == 'GET':
@@ -467,7 +284,7 @@ class CustomerAddressListCreateView(generics.ListCreateAPIView):
 
 
 class CustomerAddressDetailView(generics.RetrieveUpdateDestroyAPIView):
-    permission_classes = [IsAuthenticated, IsCustomer]
+    permission_classes = [permissions.IsAuthenticated, IsCustomer]
     serializer_class = AddressSerializer
 
     def get_queryset(self):
@@ -481,7 +298,7 @@ class CustomerAddressDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 class SetDefaultAddressView(views.APIView):
-    permission_classes = [IsAuthenticated, IsCustomer]
+    permission_classes = [permissions.IsAuthenticated, IsCustomer]
 
     def post(self, request, pk):
         try:
@@ -496,7 +313,7 @@ class SetDefaultAddressView(views.APIView):
 
 
 class LogoutView(views.APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         try:
@@ -507,6 +324,7 @@ class LogoutView(views.APIView):
             token = RefreshToken(refresh_token)
             token.blacklist()
 
+            # Revoke session
             try:
                 jti = token['jti']
                 UserSession.objects.filter(jti=jti).update(is_active=False, revoked_at=timezone.now())
@@ -519,16 +337,6 @@ class LogoutView(views.APIView):
             return Response({"error": "Invalid token or logout failed"}, status=status.HTTP_400_BAD_REQUEST)
 
 
-# ============================================
-# SERVICE AVAILABILITY CHECKER PAGE
-# ============================================
 from django.views.generic import TemplateView
-
-
 class LocationServiceCheckView(TemplateView):
     template_name = 'location_service_check.html'
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context['page_title'] = 'Service Availability Checker'
-        return context
