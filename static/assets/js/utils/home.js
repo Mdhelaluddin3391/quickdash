@@ -3,8 +3,8 @@
 // --- Global Variables for Infinite Scroll ---
 let parentCategories = [];
 let loadedCount = 0;
-const BATCH_SIZE = 2;      // Ek baar mein 2 Categories load hongi
-const PRODUCTS_PER_SHELF = 15; // Har shelf mein 15 products
+const BATCH_SIZE = 1;      // UPDATED: Load strictly ONE category at a time
+const PRODUCTS_PER_SHELF = 15;
 let isLoadingShelves = false;
 let shelfObserver;
 
@@ -179,15 +179,22 @@ async function initProductShelves() {
     const container = document.getElementById('dynamic-sections-container');
     if (!container) return;
     
+    // Reset State
+    parentCategories = [];
+    loadedCount = 0;
+    isLoadingShelves = false;
+    if (shelfObserver) shelfObserver.disconnect();
+    
     // Initial Loader setup
-    container.innerHTML = '<div id="shelves-loader" class="text-center py-4" style="clear:both; width:100%;"><div class="loader">Loading more...</div></div>';
+    container.innerHTML = '<div id="shelves-loader" class="text-center py-4" style="clear:both; width:100%;"><div class="loader">Loading shelves...</div></div>';
 
     try {
-        // Step 1: Saari Categories ki list le aao
+        // Step 1: Fetch all Categories upfront to know the order
+        //
         const catResponse = await apiCall('/catalog/categories/?page_size=100', 'GET', null, false);
         const allCats = catResponse.results || catResponse;
         
-        // Filter: Sirf Parent Categories chahiye
+        // Filter: Only Parent Categories
         parentCategories = allCats.filter(c => !c.parent);
 
         if (parentCategories.length === 0) {
@@ -195,96 +202,92 @@ async function initProductShelves() {
             return;
         }
         
-        console.log(`Infinite Scroll: Found ${parentCategories.length} categories.`);
+        console.log(`Infinite Scroll: Found ${parentCategories.length} categories. Starting lazy load...`);
 
-        // Step 2: Pehla batch load karo turant
-        await loadNextBatch();
-
-        // Step 3: Scroll Observer lagao (Infinite Scroll logic)
+        // Step 2: Setup Observer immediately.
         setupObserver();
 
     } catch (e) {
         console.error("Shelves Init Error:", e);
-        if(document.getElementById('shelves-loader')) {
-            document.getElementById('shelves-loader').innerHTML = '<p class="text-muted text-center">End of Catalog</p>';
-        }
+        const loader = document.getElementById('shelves-loader');
+        if(loader) loader.innerHTML = '<p class="text-muted text-center">End of Catalog</p>';
     }
 }
 
 async function loadNextBatch() {
-    // Agar loading chal rahi hai ya sab khatam ho gaya, toh ruk jao
-    if (isLoadingShelves || loadedCount >= parentCategories.length) return;
+    // Constraint: Stop if loading, or if all categories finished
+    if (isLoadingShelves || loadedCount >= parentCategories.length) {
+        if (loadedCount >= parentCategories.length) {
+            renderEndOfPage();
+        }
+        return;
+    }
     
     isLoadingShelves = true;
     
-    // Loader dikhao
     let loader = document.getElementById('shelves-loader');
-    if (loader) {
-        loader.style.display = 'block';
-        // Reset loader content to spinner (in case it was showing "Try Again")
-        loader.innerHTML = '<div class="loader">Loading more...</div>';
-    }
+    if (loader) loader.innerHTML = '<div class="loader">Loading next category...</div>';
 
-    // Agla Batch nikalo
-    const batch = parentCategories.slice(loadedCount, loadedCount + BATCH_SIZE);
+    const categoryToLoad = parentCategories[loadedCount];
     
-    // Parallel Request: Sabhi categories ka data ek saath mangwao
-    const promises = batch.map(cat => renderSingleShelf(cat));
-    const results = await Promise.all(promises);
+    // Fetch and Render
+    const success = await renderSingleShelf(categoryToLoad);
 
-    // Count successful loads (Kitne shelves actually bane?)
-    const shelvesCreated = results.filter(r => r === true).length;
-
-    loadedCount += batch.length;
+    loadedCount++;
     isLoadingShelves = false;
 
-    // --- LOGIC UPDATED FOR DISCOVERY CARD & AUTO-SKIP ---
-    if (loadedCount >= parentCategories.length) {
-        if (loader) {
-            // Show Discovery Card at the end
-            loader.innerHTML = `
-                <div class="end-page-cta">
-                    <div class="cta-icon-box">
-                        <i class="fas fa-shipping-fast"></i>
-                    </div>
-                    <h3 class="cta-title">Can't find what you're looking for?</h3>
-                    <p class="cta-desc">
-                        QuickDash gets your order in minutes.
-                        Still missing something? Just ask to your assistant.
-                    </p>
-                    <div class="cta-buttons">
-                        <button class="btn-cta-action btn-search-trigger" onclick="scrollToSearch()">
-                            <i class="fas fa-search"></i> Search Item
-                        </button>
-                        <button class="btn-cta-action btn-ai-trigger" onclick="triggerAssistant()">
-                            <i class="fas fa-robot"></i> Ask Assistant
-                        </button>
-                    </div>
-                </div>
-            `;
-            if (shelfObserver) shelfObserver.disconnect();
+    if (!success) {
+        // OPTIMIZATION: Small delay to prevent rapid recursion loops on network error
+        setTimeout(() => {
+            console.warn(`Skipping empty/failed category: ${categoryToLoad.name}`);
+            loadNextBatch();
+        }, 100);
+    } else {
+        // Check if we just loaded the last one
+        if (loadedCount >= parentCategories.length) {
+            renderEndOfPage();
         }
-    } 
-    // [FIX] Agar batch empty tha (shelvesCreated == 0), toh user ko pareshan mat karo,
-    // chupchap agla batch load kar lo.
-    else if (shelvesCreated === 0) {
-        console.log("Batch empty, skipping to next automatically...");
-        loadNextBatch(); // Recursive call to try next items immediately
+    }
+}
+
+function renderEndOfPage() {
+    const loader = document.getElementById('shelves-loader');
+    if (loader) {
+        //
+        loader.innerHTML = `
+            <div class="end-page-cta" style="animation: fadeIn 0.5s;">
+                <div class="cta-icon-box">
+                    <i class="fas fa-shipping-fast"></i>
+                </div>
+                <h3 class="cta-title">Can't find what you're looking for?</h3>
+                <p class="cta-desc">
+                    QuickDash gets your order in minutes.
+                    Still missing something? Just ask to your assistant.
+                </p>
+                <div class="cta-buttons">
+                    <button class="btn-cta-action btn-search-trigger" onclick="scrollToSearch()">
+                        <i class="fas fa-search"></i> Search Item
+                    </button>
+                    <button class="btn-cta-action btn-ai-trigger" onclick="triggerAssistant()">
+                        <i class="fas fa-robot"></i> Ask Assistant
+                    </button>
+                </div>
+            </div>
+        `;
+        if (shelfObserver) shelfObserver.disconnect();
     }
 }
 
 async function renderSingleShelf(cat) {
     try {
-        // API Call: Specific Category + Limit 15 Items
         const url = `/catalog/skus/?category__slug=${cat.slug}&page_size=${PRODUCTS_PER_SHELF}`;
         const prodResponse = await apiCall(url, 'GET', null, false);
         const products = prodResponse.results || prodResponse;
 
-        // Agar products nahi hain, toh shelf mat banao
-        if (products.length === 0) return false;
+        if (!products || products.length === 0) return false;
 
         const shelfHtml = `
-            <section class="category-section" style="animation: fadeIn 0.5s ease-in;">
+            <section class="category-section" style="animation: fadeIn 0.5s ease-in; min-height: 280px;">
                 <div class="section-header">
                     <h3>${cat.name}</h3>
                     <a href="/search_results.html?slug=${cat.slug}" class="view-all-btn">See All <i class="fas fa-chevron-right"></i></a>
@@ -305,7 +308,6 @@ async function renderSingleShelf(cat) {
                             </div>
                         </div>
                     `).join('')}
-                    
                     <div class="view-all-card">
                          <a href="/search_results.html?slug=${cat.slug}">
                             <i class="fas fa-arrow-right"></i>
@@ -316,7 +318,6 @@ async function renderSingleShelf(cat) {
             </section>
         `;
         
-        // HTML Inject karein (Loader ke just upar)
         const loader = document.getElementById('shelves-loader');
         if (loader) {
             loader.insertAdjacentHTML('beforebegin', shelfHtml);
@@ -333,9 +334,11 @@ function setupObserver() {
     const loader = document.getElementById('shelves-loader');
     if (!loader) return;
 
+    if (shelfObserver) shelfObserver.disconnect();
+
     const options = {
         root: null, 
-        rootMargin: '300px', // Screen bottom se 300px pehle load trigger kar do
+        rootMargin: '100px', 
         threshold: 0.1 
     };
 
@@ -347,7 +350,6 @@ function setupObserver() {
 
     shelfObserver.observe(loader);
 }
-
 // =========================================================
 // 6. CART LOGIC
 // =========================================================
