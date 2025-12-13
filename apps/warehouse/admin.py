@@ -1,16 +1,13 @@
 from django.contrib import admin
+from django.contrib.gis import admin as gis_admin  # Keep this import
 from .models import (
-    # Physical Structure
     Warehouse, ServiceArea, Zone, Aisle, Shelf, Bin, BinInventory,
-    # Inventory Movement
-    StockMovement,
-    # Tasks & Operations
-    PickingTask, PickItem, PackingTask, DispatchRecord, 
-    PickSkip, ShortPickIncident, FulfillmentCancel,
-    GRN, GRNItem, PutawayTask, PutawayItem,
-    CycleCountTask, CycleCountItem,
-    IdempotencyKey
+    StockMovement, PickingTask, PickItem, PackingTask, DispatchRecord, 
+    GRN, GRNItem, PutawayTask, PutawayItem, CycleCountTask, CycleCountItem,
+    IdempotencyKey, PickSkip, ShortPickIncident, FulfillmentCancel
 )
+
+
 
 # --- Inlines for Structure ---
 class ServiceAreaInline(admin.StackedInline):
@@ -63,17 +60,26 @@ class BinInventoryInline(admin.TabularInline):
 # ============================================
 
 @admin.register(Warehouse)
-class WarehouseAdmin(admin.ModelAdmin):
+class WarehouseAdmin(gis_admin.GISModelAdmin):
     list_display = ('name', 'code', 'is_active', 'created_at')
     search_fields = ('name', 'code')
     list_filter = ('is_active',)
-    inlines = [ServiceAreaInline, ZoneInline]
+    
+    # CHANGE 2: Remove or comment out these lines (they don't work with GISModelAdmin)
+    # default_lon = 77.5946 
+    # default_lat = 12.9716
+    # default_zoom = 12
 
 @admin.register(ServiceArea)
-class ServiceAreaAdmin(admin.ModelAdmin):
+class ServiceAreaAdmin(gis_admin.GISModelAdmin):
     list_display = ('name', 'warehouse', 'is_active', 'delivery_time_minutes')
     list_filter = ('warehouse', 'is_active')
     search_fields = ('name',)
+    
+    # Remove these lines as well
+    # default_lon = 77.5946
+    # default_lat = 12.9716
+    # default_zoom = 12
 
 @admin.register(Zone)
 class ZoneAdmin(admin.ModelAdmin):
