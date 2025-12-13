@@ -1,8 +1,8 @@
-# apps/delivery/admin.py
 from django.contrib import admin
-
-from .models import DeliveryTask, RiderEarning, RiderPayout, RiderCashDeposit
-
+from .models import (
+    DeliveryTask, RiderEarning, RiderPayout, 
+    RiderCashDeposit, RiderApplication  # <-- Imported RiderApplication
+)
 
 @admin.register(DeliveryTask)
 class DeliveryTaskAdmin(admin.ModelAdmin):
@@ -70,3 +70,21 @@ class RiderPayoutAdmin(admin.ModelAdmin):
 class RiderCashDepositAdmin(admin.ModelAdmin):
     list_display = ("rider", "amount", "status", "created_at")
     list_filter = ("status",)
+
+
+@admin.register(RiderApplication)
+class RiderApplicationAdmin(admin.ModelAdmin):
+    list_display = ('full_name', 'phone', 'status', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('full_name', 'phone')
+    list_editable = ('status',)
+    
+    actions = ['approve_application', 'reject_application']
+
+    @admin.action(description='Approve selected applications')
+    def approve_application(self, request, queryset):
+        queryset.update(status='APPROVED')
+
+    @admin.action(description='Reject selected applications')
+    def reject_application(self, request, queryset):
+        queryset.update(status='REJECTED')
