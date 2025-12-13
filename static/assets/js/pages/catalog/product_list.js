@@ -1,64 +1,78 @@
 // static/assets/js/pages/catalog/product_list.js
+
+// --- Global State for Infinite Scroll ---
 let nextPageUrl = null;
 let isLoadingProducts = false;
 let productObserver;
-
-
 
 document.addEventListener('DOMContentLoaded', async () => {
     const grid = document.getElementById('product-grid');
     const titleEl = document.getElementById('page-title');
     
+    // Parse URL parameters
     const params = new URLSearchParams(window.location.search);
     const categorySlug = params.get('slug'); 
     const searchQuery = params.get('q');
 
+    // Base API URL
     let apiUrl = '/catalog/skus/';
     let title = 'All Products';
 
-    // --- Logic Start ---
+    // --- 1. Determine Context (Category vs Search) ---
     
     if (categorySlug) {
-        // Case A: Category Filter
+        // Context: Category Page
         try {
             const catResponse = await apiCall(`/catalog/categories/${categorySlug}/`, 'GET', null, false);
             title = catResponse.name;
             
-            // Subcategory Chips Logic (Unchanged)
+            // Render Subcategory Chips (if any)
             if (catResponse.subcategories && catResponse.subcategories.length > 0) {
-                const filterContainer = document.getElementById('brand-filters');
-                if (filterContainer) {
-                    filterContainer.innerHTML = ''; 
-                    const allChip = document.createElement('div');
-                    allChip.className = 'chip active';
-                    allChip.innerText = `All ${catResponse.name}`;
-                    filterContainer.appendChild(allChip);
-                    catResponse.subcategories.forEach(sub => {
-                        const chip = document.createElement('div');
-                        chip.className = 'chip';
-                        chip.innerText = sub.name;
-                        chip.onclick = () => { window.location.href = `/search_results.html?slug=${sub.slug}`; };
-                        filterContainer.appendChild(chip);
-                    });
-                }
+                renderSubcategoryChips(catResponse.name, catResponse.subcategories);
             }
         } catch (e) {
             console.warn("Category info fetch failed");
             title = categorySlug.replace(/-/g, ' ').toUpperCase();
         }
         apiUrl += `?category__slug=${categorySlug}`;
+
     } else if (searchQuery) {
+        // Context: Search Results (or Brand via search)
         apiUrl += `?search=${encodeURIComponent(searchQuery)}`;
         title = `Search: "${searchQuery}"`;
     }
 
+    // Set Page Title
     if(titleEl) titleEl.innerText = title;
 
-    // Initial Load
-    await loadProducts(apiUrl, true); // true = Initial reset
+    // --- 2. Initial Load with Infinite Scroll Support ---
+    await loadProducts(apiUrl, true);
 });
 
+// Helper: Render Chips
+function renderSubcategoryChips(parentName, subcategories) {
+    const filterContainer = document.getElementById('brand-filters');
+    if (!filterContainer) return;
 
+    filterContainer.innerHTML = ''; 
+    
+    // "All" Chip
+    const allChip = document.createElement('div');
+    allChip.className = 'chip active';
+    allChip.innerText = `All ${parentName}`;
+    filterContainer.appendChild(allChip);
+
+    // Subcategory Chips
+    subcategories.forEach(sub => {
+        const chip = document.createElement('div');
+        chip.className = 'chip';
+        chip.innerText = sub.name;
+        chip.onclick = () => { window.location.href = `/search_results.html?slug=${sub.slug}`; };
+        filterContainer.appendChild(chip);
+    });
+}
+
+// --- 3. Core Lazy Load Function ---
 async function loadProducts(url, isInitial = false) {
     if (isLoadingProducts || !url) return;
     isLoadingProducts = true;
@@ -66,13 +80,13 @@ async function loadProducts(url, isInitial = false) {
     const grid = document.getElementById('product-grid');
     const emptyState = document.getElementById('empty-state');
     
-    // Add Loader at bottom if not initial
+    // Create/Locate Loader
     let loader = document.getElementById('product-loader');
     if (!loader && grid) {
         loader = document.createElement('div');
         loader.id = 'product-loader';
         loader.className = 'col-12 text-center py-4';
-        loader.innerHTML = '<div class="loader"></div>';
+        loader.innerHTML = '<div class="loader">Loading items...</div>';
         grid.after(loader);
     }
 
@@ -80,11 +94,12 @@ async function loadProducts(url, isInitial = false) {
         const response = await apiCall(url, 'GET', null, false); 
         const products = response.results || response; 
         
-        // Capture Next Page URL for Infinite Scroll
+        // Update Next Page URL for Observer
         nextPageUrl = response.next; 
 
-        if (loader) loader.remove(); // Remove loader after fetch
+        if (loader) loader.remove(); 
 
+        // Handle Empty States
         if (isInitial) {
             if (grid) grid.innerHTML = '';
             if (products.length === 0 && emptyState) {
@@ -100,18 +115,22 @@ async function loadProducts(url, isInitial = false) {
         // Setup Observer for Next Page
         if (nextPageUrl) {
             setupProductObserver();
-        } else if (productObserver) {
-            productObserver.disconnect();
+        } else {
+            // End of list
+            if (productObserver) productObserver.disconnect();
+            const endMsg = document.createElement('div');
+            endMsg.className = "text-center text-muted col-12 py-3";
+            endMsg.innerText = "You've reached the end.";
+            if(grid) grid.after(endMsg);
         }
 
     } catch (error) {
         console.error("Failed to load products", error);
-        if (loader) loader.innerHTML = `<p style="color:red;">Error loading items.</p>`;
+        if (loader) loader.innerHTML = `<p style="color:red;">Failed to load items. <button onclick="loadProducts('${url}')">Retry</button></p>`;
     } finally {
         isLoadingProducts = false;
     }
 }
-
 
 function renderProducts(products) {
     const grid = document.getElementById('product-grid');
@@ -120,7 +139,7 @@ function renderProducts(products) {
     products.forEach(p => {
         const card = document.createElement('div');
         card.className = 'prod-card';
-        card.style.animation = "fadeIn 0.5s ease-in"; // Smooth entry
+        card.style.animation = "fadeIn 0.5s ease-in"; 
         
         const price = parseFloat(p.sale_price).toFixed(0);
         const imgUrl = p.image_url || 'https://cdn-icons-png.flaticon.com/512/1147/1147805.png';
@@ -147,9 +166,8 @@ function renderProducts(products) {
     });
 }
 
-
+// --- 4. Intersection Observer (Infinite Scroll) ---
 function setupProductObserver() {
-    // Create a sentinel element at the bottom
     let sentinel = document.getElementById('scroll-sentinel');
     if (!sentinel) {
         sentinel = document.createElement('div');
@@ -162,10 +180,10 @@ function setupProductObserver() {
 
     if (productObserver) productObserver.disconnect();
 
-    const options = { root: null, rootMargin: '200px', threshold: 0.1 };
+    const options = { root: null, rootMargin: '300px', threshold: 0.1 };
 
     productObserver = new IntersectionObserver((entries) => {
-        if (entries[0].isIntersecting && nextPageUrl) {
+        if (entries[0].isIntersecting && nextPageUrl && !isLoadingProducts) {
             loadProducts(nextPageUrl, false);
         }
     }, options);
@@ -173,56 +191,36 @@ function setupProductObserver() {
     productObserver.observe(sentinel);
 }
 
-// Cart Logic (Auth Required here)
+// --- 5. Cart Logic (Auth Required) ---
 async function addToCart(skuId, btn) {
-    // FIX: Correct key 'access_token' used here
     if (!localStorage.getItem('access_token')) {
         window.location.href = '/auth.html';
         return;
     }
 
-    // UX: Button Loading State
-    let origText = "ADD";
-    if (btn) {
-        origText = btn.innerText;
-        btn.innerText = "..";
-        btn.disabled = true;
-    }
+    let origText = btn.innerText;
+    btn.innerText = "..";
+    btn.disabled = true;
 
     try {
         await apiCall('/orders/cart/add/', 'POST', { sku_id: skuId, quantity: 1 });
         
-        // Success Feedback
-        if (btn) {
-            btn.innerText = "✔";
-            btn.style.backgroundColor = "#32CD32"; // Green
-            btn.style.color = "#fff";
-        }
+        btn.innerText = "✔";
+        btn.style.backgroundColor = "#32CD32"; 
+        btn.style.color = "#fff";
         
-        // Toast Notification (agar toast.js hai toh)
-        if (window.showSuccess) showSuccess('Item added to cart!', 2000);
-        
-        // Update cart count badge
         if(window.updateGlobalCartCount) window.updateGlobalCartCount();
 
-        // Reset Button
         setTimeout(() => {
-            if (btn) {
-                btn.innerText = "ADD";
-                btn.disabled = false;
-                btn.style.backgroundColor = ""; // Reset to CSS default
-                btn.style.color = "";
-            }
+            btn.innerText = "ADD";
+            btn.disabled = false;
+            btn.style.backgroundColor = ""; 
+            btn.style.color = "";
         }, 1500);
 
     } catch (e) {
-        if (window.showError) showError(e.message || "Failed to add item", 3000);
         console.error(e.message || "Failed to add");
-        
-        // Reset Button on Error
-        if (btn) {
-            btn.innerText = origText;
-            btn.disabled = false;
-        }
+        btn.innerText = origText;
+        btn.disabled = false;
     }
 }

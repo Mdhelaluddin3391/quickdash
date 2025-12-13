@@ -20,7 +20,15 @@ async function apiCall(endpoint, method = 'GET', body = null, auth = true) {
     }
 
     try {
-        const response = await fetch(`${API_BASE}${endpoint}`, config);
+        // --- FIX START: Handle Absolute URLs ---
+        let url = endpoint;
+        // If endpoint is NOT a full URL (http/https), prepend API_BASE
+        if (!endpoint.startsWith('http://') && !endpoint.startsWith('https://')) {
+            url = `${API_BASE}${endpoint}`;
+        }
+        // --- FIX END ---
+
+        const response = await fetch(url, config);
         
         // Handle 401 Unauthorized (Session Expired)
         if (response.status === 401 && auth) {
@@ -30,6 +38,12 @@ async function apiCall(endpoint, method = 'GET', body = null, auth = true) {
             localStorage.removeItem('user');
             window.location.href = '/auth.html';
             throw new Error("Unauthorized - Session Expired");
+        }
+
+        // --- SAFETY: Check if response is JSON (prevents "Unexpected token <" on 404/500 HTML pages) ---
+        const contentType = response.headers.get("content-type");
+        if (contentType && !contentType.includes("application/json")) {
+            if (!response.ok) throw new Error(`API Error: ${response.status} ${response.statusText}`);
         }
 
         const data = await response.json();
