@@ -1,5 +1,6 @@
 import logging
 import uuid
+import secrets # <--- Random OTP ke liye zaroori
 from rest_framework import status, views, permissions, generics
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -11,6 +12,7 @@ from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 
 from .models import PhoneOTP, UserSession, CustomerProfile, EmployeeProfile, RiderProfile, Address
+from .tasks import send_sms_task 
 from .serializers import (
     SendOTPSerializer, 
     VerifyOTPSerializer, 
@@ -48,45 +50,45 @@ class SendOTPView(views.APIView):
 
         # 2. Existence Checks (Strictly by Role)
         if role == 'RIDER':
-            # FIX: Must find a user row that is explicitly a RIDER
             user_exists = User.objects.filter(phone=phone, is_rider=True).exists()
             if not user_exists:
                 return Response(
                     {"detail": "No rider account found with this phone number."},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            
-            # Double check profile integrity
             user = User.objects.filter(phone=phone, is_rider=True).first()
             if not hasattr(user, 'rider_profile'):
                  return Response({"detail": "Rider profile incomplete."}, status=status.HTTP_403_FORBIDDEN)
 
         elif role == 'EMPLOYEE':
-            # FIX: Must find a user row that is explicitly an EMPLOYEE
             user_exists = User.objects.filter(phone=phone, is_employee=True).exists()
             if not user_exists:
                 return Response(
                     {"detail": "No employee account found with this phone number."},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            
             user = User.objects.filter(phone=phone, is_employee=True).first()
             if not hasattr(user, 'employee_profile'):
                  return Response({"detail": "Employee profile incomplete."}, status=status.HTTP_403_FORBIDDEN)
 
-        # 3. Generate & Save OTP
-        # In production use secure random
-        code = "123456" 
+        # 3. Generate Random OTP
+        # Secure Random 6 digit code
+        code = "".join(str(secrets.randbelow(10)) for _ in range(6))
         
         otp_obj, error = PhoneOTP.create_otp(phone, role, code)
         if error:
             return Response({"detail": error}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-        # TODO: Integrate SMS Gateway here
+        # 4. Send SMS Logic (Based on DEBUG mode)
         if settings.DEBUG:
+            # Development Mode: Print to Console
             logger.info(f"OTP for {phone} ({role}): {code}")
-
-        return Response({"detail": "OTP sent successfully.", "dev_code": code}) 
+            # Dev mode mein response mein code bhejen take testing aasan ho
+            return Response({"detail": "OTP sent (Dev Mode).", "dev_code": code})
+        else:
+            # Production Mode: Send Real SMS via Celery/Twilio
+            send_sms_task.delay(phone=phone, otp_code=code, login_type=role)
+            return Response({"detail": "OTP sent successfully via SMS."})
 
     def get_client_ip(self, request):
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')

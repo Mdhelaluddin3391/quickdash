@@ -7,7 +7,39 @@ document.addEventListener('DOMContentLoaded', () => {
     
     let userPhone = '';
 
-    // Step 1: Request OTP
+    // === OTP Auto-Focus Logic ===
+    const otpInputs = document.querySelectorAll('.otp-field');
+
+    otpInputs.forEach((input, index) => {
+        // 1. नंबर डालते ही अगले बॉक्स पर फोकस करें
+        input.addEventListener('input', (e) => {
+            if (input.value.length === 1) {
+                if (index < otpInputs.length - 1) {
+                    otpInputs[index + 1].focus();
+                }
+            }
+        });
+
+        // 2. बैकस्पेस दबाने पर पिछले बॉक्स पर आएं
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Backspace' && input.value.length === 0) {
+                if (index > 0) {
+                    otpInputs[index - 1].focus();
+                }
+            }
+        });
+
+        // 3. सिर्फ नंबर ही अलाऊ करें
+        input.addEventListener('keypress', function (e) {
+            const charCode = (e.which) ? e.which : e.keyCode;
+            if (charCode > 31 && (charCode < 48 || charCode > 57)) {
+                e.preventDefault();
+            }
+        });
+    }); // <--- यह Closing Bracket मिसिंग था, जो अब लगा दिया गया है।
+
+
+    // === Step 1: Request OTP ===
     phoneForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         userPhone = phoneInput.value;
@@ -23,11 +55,9 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.innerText = "Sending...";
 
         try {
-            // FIX: Correct Endpoint & Add ROLE parameter
-            // Endpoint matches apps/accounts/urls.py: path('auth/otp/send/', ...)
             await apiCall('/auth/auth/otp/send/', 'POST', { 
                 phone: userPhone,
-                role: 'CUSTOMER' // Required by backend
+                role: 'CUSTOMER' 
             }, false); 
 
             // Switch UI to OTP Form
@@ -35,7 +65,8 @@ document.addEventListener('DOMContentLoaded', () => {
             otpForm.style.display = 'block';
             document.getElementById('display-phone').innerText = userPhone;
             
-            // alert("OTP Sent! (Check Server Console in Dev Mode)");
+            // Focus on first OTP input
+            otpInputs[0].focus();
 
         } catch (error) {
             alert(error.message);
@@ -44,7 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Step 2: Verify OTP
+    // === Step 2: Verify OTP ===
     otpForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         
@@ -62,16 +93,14 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.innerText = "Verifying...";
 
         try {
-            // FIX: Correct Endpoint & Add ROLE parameter
-            // Endpoint matches apps/accounts/urls.py: path('auth/otp/login/', ...)
             const response = await apiCall('/auth/auth/otp/login/', 'POST', {
                 phone: userPhone,
                 otp: otpCode,
-                role: 'CUSTOMER', // Required by backend
-                device_id: navigator.userAgent // Optional but good for tracking
+                role: 'CUSTOMER',
+                device_id: navigator.userAgent
             }, false);
 
-            // Store Tokens (DRF SimpleJWT returns 'access' and 'refresh')
+            // Store Tokens
             localStorage.setItem('access_token', response.access);
             localStorage.setItem('refresh_token', response.refresh);
             localStorage.setItem('user', JSON.stringify(response.user));
