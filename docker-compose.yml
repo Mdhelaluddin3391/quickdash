@@ -29,8 +29,7 @@ services:
     networks:
       - quickdash_net
     healthcheck:
-      # FIX: Use grep to ensure we get the specific PONG response, avoid hanging
-      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -71,7 +70,7 @@ services:
 
   beat:
     build: .
-    command: celery -A config beat --loglevel=info
+    command: celery -A config beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     volumes:
       - .:/code
     env_file:

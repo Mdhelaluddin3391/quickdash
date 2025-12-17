@@ -41,6 +41,9 @@ class CreatePaymentIntentAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         order = serializer.context["order"]
 
+        if order.customer != request.user:
+            return Response({"detail": "Permission denied."}, status=403)
+
         try:
             gateway_order_id = create_razorpay_order(order, order.final_amount)
         except Exception as e:

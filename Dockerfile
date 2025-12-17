@@ -42,6 +42,8 @@ RUN addgroup --system appgroup && adduser --system --group appuser && \
     mkdir -p /code/staticfiles /code/media && \
     chown -R appuser:appgroup /code
 
+USER appuser
+
 EXPOSE 8000
 
 # Healthcheck

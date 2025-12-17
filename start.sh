@@ -31,16 +31,16 @@ END
 
 # Only one container should run migrations.
 echo "Running Migrations..."
-gosu appuser python manage.py migrate --noinput
+python manage.py migrate --noinput
 
 echo "Collecting Static..."
-gosu appuser python manage.py collectstatic --noinput --clear
+python manage.py collectstatic --noinput --clear
 
 # Superuser check (Only in Dev/First Run)
 if [ "$CREATE_SUPERUSER" = "true" ]; then
-    gosu appuser python manage.py create_admin
+    python manage.py create_admin
 fi
 
 echo "Starting Daphne..."
 # Use 0.0.0.0 for Docker networking
-exec gosu appuser daphne -b 0.0.0.0 -p 8000 config.asgi:application
+exec daphne -b 0.0.0.0 -p 8000 config.asgi:application

@@ -1,6 +1,6 @@
 import logging
 import uuid
-import secrets # <--- Random OTP ke liye zaroori
+import secrets 
 from rest_framework import status, views, permissions, generics
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -10,6 +10,7 @@ from django.contrib.auth import get_user_model
 from django.conf import settings
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
+from django.views.generic import TemplateView
 
 from .models import PhoneOTP, UserSession, CustomerProfile, EmployeeProfile, RiderProfile, Address
 from .tasks import send_sms_task 
@@ -32,7 +33,6 @@ User = get_user_model()
 # ==========================================
 # 1. SEND OTP (UNIFIED)
 # ==========================================
-# apps/accounts/views.py
 
 class SendOTPView(views.APIView):
     permission_classes = [permissions.AllowAny]
@@ -72,35 +72,31 @@ class SendOTPView(views.APIView):
                  return Response({"detail": "Employee profile incomplete."}, status=status.HTTP_403_FORBIDDEN)
 
         # 3. Generate Random OTP
-        # Secure Random 6 digit code
         code = "".join(str(secrets.randbelow(10)) for _ in range(6))
         
         otp_obj, error = PhoneOTP.create_otp(phone, role, code)
         if error:
             return Response({"detail": error}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-        # 4. Send SMS Logic (Based on DEBUG mode)
+        # 4. Send SMS Logic
         if settings.DEBUG:
-            # Development Mode: Print to Console
             logger.info(f"OTP for {phone} ({role}): {code}")
-            # Dev mode mein response mein code bhejen take testing aasan ho
             return Response({"detail": "OTP sent (Dev Mode).", "dev_code": code})
         else:
-            # Production Mode: Send Real SMS via Celery/Twilio
             send_sms_task.delay(phone=phone, otp_code=code, login_type=role)
             return Response({"detail": "OTP sent successfully via SMS."})
 
     def get_client_ip(self, request):
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
-            return x_forwarded_for.split(',')[0]
+            # ✅ CORRECTED: Takes the LAST IP to prevent spoofing
+            return x_forwarded_for.split(',')[-1].strip()
         return request.META.get('REMOTE_ADDR')
 
 
 # ==========================================
 # 2. LOGIN WITH OTP (UNIFIED)
 # ==========================================
-# apps/accounts/views.py
 
 class LoginWithOTPView(views.APIView):
     permission_classes = [permissions.AllowAny]
@@ -124,54 +120,38 @@ class LoginWithOTPView(views.APIView):
         if not is_valid:
             return Response({"detail": message}, status=status.HTTP_400_BAD_REQUEST)
         
-        # 2. Get or Create User (Strict Role Separation)
+        # 2. Get or Create User
         user = None
         created = False
 
         if role == 'CUSTOMER':
-            # FIX: Look specifically for a CUSTOMER row. 
-            # Do NOT grab a rider's row even if the phone matches.
             user = User.objects.filter(phone=phone, is_customer=True).first()
-            
             if not user:
-                # Create a completely NEW row for this customer context
                 user = User.objects.create_user(phone=phone, is_customer=True)
                 CustomerProfile.objects.create(user=user)
                 created = True
-            
-            # Ensure app_role context is set
             user.app_role = 'CUSTOMER'
             user.save()
 
         elif role == 'RIDER':
-            # FIX: Fetch the specific RIDER row
             user = User.objects.filter(phone=phone, is_rider=True).first()
-            
             if not user:
                 return Response({"detail": "Rider account does not exist."}, status=status.HTTP_403_FORBIDDEN)
-            
             if not hasattr(user, 'rider_profile'):
                  return Response({"detail": "Rider profile missing."}, status=status.HTTP_403_FORBIDDEN)
-
             if user.rider_profile.approval_status != RiderProfile.ApprovalStatus.APPROVED:
                 return Response({"detail": "Rider account is not approved."}, status=status.HTTP_403_FORBIDDEN)
-            
             user.app_role = 'RIDER'
             user.save()
 
         elif role == 'EMPLOYEE':
-            # FIX: Fetch the specific EMPLOYEE row
             user = User.objects.filter(phone=phone, is_employee=True).first()
-            
             if not user:
                 return Response({"detail": "Employee account does not exist."}, status=status.HTTP_403_FORBIDDEN)
-                
             if not hasattr(user, 'employee_profile'):
                  return Response({"detail": "Employee profile missing."}, status=status.HTTP_403_FORBIDDEN)
-
             if not user.employee_profile.is_active_employee:
                 return Response({"detail": "Employee account is inactive."}, status=status.HTTP_403_FORBIDDEN)
-                
             user.app_role = 'EMPLOYEE'
             user.save()
 
@@ -209,7 +189,8 @@ class LoginWithOTPView(views.APIView):
     def get_client_ip(self, request):
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
-            return x_forwarded_for.split(',')[0]
+            # ✅ CORRECTED: Takes the LAST IP to prevent spoofing
+            return x_forwarded_for.split(',')[-1].strip()
         return request.META.get('REMOTE_ADDR')
 
 
@@ -217,9 +198,6 @@ class LoginWithOTPView(views.APIView):
 # 3. GOOGLE LOGIN (STAFF ONLY)
 # ==========================================
 class StaffGoogleLoginView(views.APIView):
-    """
-    Strictly for Admin Panel access.
-    """
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
@@ -228,7 +206,6 @@ class StaffGoogleLoginView(views.APIView):
         token = serializer.validated_data['id_token']
 
         try:
-            # Verify Google Token
             id_info = id_token.verify_oauth2_token(
                 token, google_requests.Request(), settings.GOOGLE_CLIENT_ID
             )
@@ -236,8 +213,6 @@ class StaffGoogleLoginView(views.APIView):
             
             validate_staff_email_domain(email)
 
-            # FIX: Strictly look for an EMPLOYEE user with this email
-            # Do NOT use .filter(email=email).first() as it might return a Customer row
             user = User.objects.filter(email=email, is_employee=True).first()
 
             if not user:
@@ -245,8 +220,6 @@ class StaffGoogleLoginView(views.APIView):
 
             if not hasattr(user, 'employee_profile'):
                  return Response({"detail": "User is not an employee."}, status=status.HTTP_403_FORBIDDEN)
-            
-            # ... (rest of the permissions check logic remains same) ...
             
             profile = user.employee_profile
             if not profile.can_access_admin_panel():
@@ -375,6 +348,5 @@ class LogoutView(views.APIView):
             return Response({"error": "Invalid token or logout failed"}, status=status.HTTP_400_BAD_REQUEST)
 
 
-from django.views.generic import TemplateView
 class LocationServiceCheckView(TemplateView):
     template_name = 'location_service_check.html'

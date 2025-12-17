@@ -211,23 +211,31 @@ def process_successful_payment(order):
         logger.exception("Payment process failed")
         return False, str(e)
 
+
 def cancel_order(order, cancelled_by=None, reason=""):
     from .models import OrderTimeline, OrderCancellation
-    if order.status in ['cancelled', 'delivered']:
-        return False, 'Cannot cancel order in its current state.'
+    # REMOVE check here. It is unsafe.
+    
     try:
         with transaction.atomic():
-            order.status = 'cancelled'
-            order.cancelled_at = timezone.now()
-            order.save(update_fields=['status', 'cancelled_at'])
+            # RELOAD with lock to prevent race conditions
+            locked_order = Order.objects.select_for_update().get(id=order.id)
             
-            OrderTimeline.objects.create(order=order, status='cancelled', notes=reason)
-            OrderCancellation.objects.create(order=order, reason=reason, cancelled_by=cancelled_by or 'OPS')
+            if locked_order.status in ['cancelled', 'delivered']:
+                return False, 'Cannot cancel order in its current state.'
+                
+            # Use the LOCKED instance for updates
+            locked_order.status = 'cancelled'
+            locked_order.cancelled_at = timezone.now()
+            locked_order.save(update_fields=['status', 'cancelled_at'])
             
-            if order.payment_status == 'paid':
+            OrderTimeline.objects.create(order=locked_order, status='cancelled', notes=reason)
+            OrderCancellation.objects.create(order=locked_order, reason=reason, cancelled_by=cancelled_by or 'OPS')
+            
+            if locked_order.payment_status == 'paid':
                 from apps.orders.signals import order_refund_requested
                 transaction.on_commit(lambda: order_refund_requested.send(
-                    sender=Order, order_id=order.id, amount=order.final_amount, reason=reason
+                    sender=Order, order_id=locked_order.id, amount=locked_order.final_amount, reason=reason
                 ))
         return True, None
     except Exception as e:
