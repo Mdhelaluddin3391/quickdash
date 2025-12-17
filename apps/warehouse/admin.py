@@ -1,13 +1,14 @@
 from django.contrib import admin
-from django.contrib.gis import admin as gis_admin  # Keep this import
+from django.contrib.gis import admin as gis_admin
+from django.contrib import messages  # <-- Needed for success messages
+from django.db import transaction     # <-- Needed for safe stock updates
+
 from .models import (
     Warehouse, ServiceArea, Zone, Aisle, Shelf, Bin, BinInventory,
     StockMovement, PickingTask, PickItem, PackingTask, DispatchRecord, 
     GRN, GRNItem, PutawayTask, PutawayItem, CycleCountTask, CycleCountItem,
     IdempotencyKey, PickSkip, ShortPickIncident, FulfillmentCancel
 )
-
-
 
 # --- Inlines for Structure ---
 class ServiceAreaInline(admin.StackedInline):
@@ -60,26 +61,16 @@ class BinInventoryInline(admin.TabularInline):
 # ============================================
 
 @admin.register(Warehouse)
-class WarehouseAdmin(gis_admin.GISModelAdmin):
+class WarehouseAdmin(gis_admin.GISModelAdmin):  # Fixed: Using GISModelAdmin
     list_display = ('name', 'code', 'is_active', 'created_at')
     search_fields = ('name', 'code')
     list_filter = ('is_active',)
-    
-    # CHANGE 2: Remove or comment out these lines (they don't work with GISModelAdmin)
-    # default_lon = 77.5946 
-    # default_lat = 12.9716
-    # default_zoom = 12
 
 @admin.register(ServiceArea)
-class ServiceAreaAdmin(gis_admin.GISModelAdmin):
+class ServiceAreaAdmin(gis_admin.GISModelAdmin):  # Fixed: Using GISModelAdmin
     list_display = ('name', 'warehouse', 'is_active', 'delivery_time_minutes')
     list_filter = ('warehouse', 'is_active')
     search_fields = ('name',)
-    
-    # Remove these lines as well
-    # default_lon = 77.5946
-    # default_lat = 12.9716
-    # default_zoom = 12
 
 @admin.register(Zone)
 class ZoneAdmin(admin.ModelAdmin):
@@ -153,6 +144,58 @@ class GRNAdmin(admin.ModelAdmin):
     list_display = ('grn_number', 'warehouse', 'status', 'received_at')
     list_filter = ('status', 'warehouse')
     inlines = [GRNItemInline]
+    actions = ['process_grn_stock']  # <-- Added Action Button
+
+    @admin.action(description='✅ Receive Stock (Update Inventory)')
+    def process_grn_stock(self, request, queryset):
+        """
+        Processes the selected GRNs and updates inventory stock.
+        """
+        count = 0
+        for grn in queryset:
+            if grn.status == 'received':
+                self.message_user(request, f"GRN {grn.grn_number} is already received!", level=messages.WARNING)
+                continue
+
+            # Find a target bin (First available bin in the warehouse)
+            target_bin = Bin.objects.filter(shelf__aisle__zone__warehouse=grn.warehouse).first()
+            
+            if not target_bin:
+                self.message_user(request, f"Error: No BIN found in {grn.warehouse.name}! Please create structure first.", level=messages.ERROR)
+                continue
+
+            with transaction.atomic():
+                for item in grn.items.all():
+                    qty_to_add = item.received_qty if item.received_qty > 0 else item.expected_qty
+                    
+                    # Get or Create Inventory Record
+                    inventory, created = BinInventory.objects.get_or_create(
+                        bin=target_bin,
+                        sku=item.sku,
+                        defaults={'qty': 0}
+                    )
+                    
+                    # Update Stock
+                    inventory.qty += qty_to_add
+                    inventory.save()
+
+                    # Create Movement Log
+                    StockMovement.objects.create(
+                        sku=item.sku,
+                        warehouse=grn.warehouse,
+                        bin=target_bin,
+                        qty_change=qty_to_add,
+                        movement_type='INWARD',
+                        reference_id=grn.grn_number,
+                        performed_by=request.user
+                    )
+
+                grn.status = 'received'
+                grn.save()
+                count += 1
+
+        if count > 0:
+            self.message_user(request, f"Successfully processed {count} GRNs. Stock updated!")
 
 @admin.register(PutawayTask)
 class PutawayTaskAdmin(admin.ModelAdmin):
