@@ -98,11 +98,6 @@ class Brand(models.Model):
 class SKU(models.Model):
     """
     Stock Keeping Unit - actual sellable item.
-
-    NOTE:
-    - Orders, Inventory, WMS sab yahi SKU model use karte hain.
-    - Existing fields (sku_code, name, sale_price, cost_price, image_url, is_active, metadata)
-      bacche rakhe gaye hain for compatibility. :contentReference[oaicite:1]{index=1}
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
@@ -224,10 +219,6 @@ class SKU(models.Model):
         return f"{self.sku_code} - {self.name}"
 
 
-
-
-# apps/catalog/models.py (Append this)
-
 class Banner(models.Model):
     """
     Dynamic Banners for Home Page (Hero Slider & Mid Banners)
@@ -241,7 +232,8 @@ class Banner(models.Model):
     image_url = models.URLField(help_text="External URL or Cloudinary link")
     target_url = models.CharField(max_length=255, help_text="/category.html?slug=veg or /product.html?code=...")
     position = models.CharField(max_length=10, choices=POSITION_CHOICES, default='HERO')
-    bg_gradient = models.CharField(max_length=50, default="linear-gradient(135deg, #32CD32 0%, #2ecc71 100%)", help_text="CSS Gradient string")
+    # FIX: Increased max_length from 50 to 255 to support complex gradients
+    bg_gradient = models.CharField(max_length=255, default="linear-gradient(135deg, #32CD32 0%, #2ecc71 100%)", help_text="CSS Gradient string")
     is_active = models.BooleanField(default=True)
     sort_order = models.PositiveIntegerField(default=0)
 
