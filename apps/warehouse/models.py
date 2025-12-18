@@ -1,8 +1,7 @@
 import uuid
 import logging
 from django.db import models, transaction
-# Explicitly import CheckConstraint and Q
-from django.db.models import CheckConstraint, Q, Sum
+from django.db.models import CheckConstraint, Q, Sum, F
 from django.conf import settings
 from django.utils import timezone
 from django.contrib.gis.db import models as gis_models
@@ -104,17 +103,17 @@ class BinInventory(models.Model):
 
     class Meta:
         unique_together = ("bin", "sku")
-        # FIX: CheckConstraint hata diya gaya hai kyunki yeh error de raha tha
-        # constraints = [
-        #     CheckConstraint(
-        #         check=Q(qty__gte=0), 
-        #         name="bin_inventory_qty_gte_0"
-        #     ),
-        #     CheckConstraint(
-        #         check=Q(reserved_qty__gte=0), 
-        #         name="bin_inventory_reserved_qty_gte_0"
-        #     ),
-        # ]
+        constraints = [
+            CheckConstraint(
+                check=Q(qty__gte=0), 
+                name="bin_inventory_qty_gte_0"
+            ),
+            # FIX: Ensure we don't reserve more than available
+            CheckConstraint(
+                check=Q(reserved_qty__lte=F('qty')), 
+                name="bin_inventory_reserved_lte_qty"
+            ),
+        ]
 
     @property
     def available_qty(self) -> int:

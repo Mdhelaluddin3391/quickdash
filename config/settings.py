@@ -1,7 +1,7 @@
-# config/settings.py
 import logging
 from pathlib import Path
 import os
+import json
 from decouple import config, Csv
 from datetime import timedelta
 from decimal import Decimal
@@ -24,11 +24,8 @@ if not DEBUG:
 
     ALLOWED_HOSTS = config("ALLOWED_HOSTS", cast=Csv())
     
-    # FIX 1: Disable Django's internal SSL redirect to prevent infinite loops behind Nginx/ELB
-    # We trust Nginx/LoadBalancer to handle the HTTP->HTTPS redirect.
-    SECURE_SSL_REDIRECT = False
-    
-    # Trust the X-Forwarded-Proto header for generating secure links
+    # FIX: Secure Header Config for Production
+    SECURE_SSL_REDIRECT = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     
     SESSION_COOKIE_SECURE = True
@@ -36,6 +33,11 @@ if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
+    
+    # HSTS
+    SECURE_HSTS_SECONDS = 31536000 # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 else:
     # Dev settings...
     JWT_SIGNING_KEY = JWT_SIGNING_KEY or SECRET_KEY
@@ -167,7 +169,6 @@ CELERY_BEAT_SCHEDULE = {
         "args": (),
     },
     "orders-auto-cancel": {
-        # FIX: Fully qualified path to ensure Celery finds the task
         "task": "apps.orders.tasks.auto_cancel_unpaid_orders",
         "schedule": crontab(minute="*/5"),
     },
@@ -231,7 +232,6 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_THROTTLE_RATES": {
         "burst": "200/min",
-        # FIX 5: Increased from 2000/hour to support scale
         "sustained": "10000/hour", 
         "anon": "100/min",
     },
@@ -274,7 +274,14 @@ TWILIO_AUTH_TOKEN = config("TWILIO_AUTH_TOKEN", default=None)
 TWILIO_FROM_NUMBER = config("TWILIO_FROM_NUMBER", default=None)
 
 GOOGLE_CLIENT_ID = config("GOOGLE_CLIENT_ID", default="")
-FIREBASE_CREDENTIALS_PATH = config("FIREBASE_CREDENTIALS_PATH", default=None)
+
+# SECURE: Credential passed as ENV var JSON string, not file path
+FIREBASE_CREDENTIALS_JSON = config("FIREBASE_CREDENTIALS_JSON", default=None)
+if FIREBASE_CREDENTIALS_JSON:
+    try:
+        FIREBASE_CREDENTIALS = json.loads(FIREBASE_CREDENTIALS_JSON)
+    except json.JSONDecodeError:
+        print("Invalid JSON in FIREBASE_CREDENTIALS_JSON")
 
 GOOGLE_MAPS_API_KEY = config("GOOGLE_MAPS_API_KEY", default="fake-key")
 
@@ -298,10 +305,6 @@ EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default=EMAIL_HOST_USER)
 
-# ==========================================
-# FIREBASE CREDENTIALS
-# ==========================================
-FIREBASE_CREDENTIALS_PATH = config("FIREBASE_CREDENTIALS_PATH", default=None)
 
 # ==========================================
 # LOGGING

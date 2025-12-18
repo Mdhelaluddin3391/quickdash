@@ -51,9 +51,6 @@ class CheckoutOrchestrator:
     # ---------------------------------------------
     # EXECUTE CHECKOUT
     # ---------------------------------------------
-    # ---------------------------------------------
-    # EXECUTE CHECKOUT
-    # ---------------------------------------------
     def execute(self):
         # 1. Validate warehouse
         warehouse = self._get_warehouse()
@@ -69,25 +66,14 @@ class CheckoutOrchestrator:
         if not cart.items.exists():
             return None, None, "Cart is empty."
 
-        # 3. FIX: Check for duplicate order in last 30 seconds (Idempotency)
-        # Prevents double-click / network retry duplication
-        from datetime import timedelta
-        recent_order = Order.objects.filter(
-            customer=self.user, 
-            created_at__gte=timezone.now() - timedelta(seconds=30),
-            status='pending'
-        ).first()
-        if recent_order:
-            return None, None, "Order already in progress. Please wait."
-
-        # 4. Create order in safe transaction
+        # 3. Create order in safe transaction
         try:
             with transaction.atomic():
 
                 # A. Lock inventory
                 # We strictly use the Cart for checkout to ensure DB locking works correctly.
                 cart_items = list(cart.items.select_for_update().select_related('sku'))
-                cart_items.sort(key=lambda x: x.sku.id)
+                cart_items.sort(key=lambda x: x.sku.id) # Prevent Deadlocks
 
                 for item in cart_items:
                     try:
@@ -177,7 +163,6 @@ class CheckoutOrchestrator:
             logger.exception("Fatal checkout failure")
             return None, None, "Internal checkout error."
 
-# apps/orders/services.py
 
 def cancel_order(order, cancelled_by=None, reason=""):
     from .models import OrderTimeline, OrderCancellation
@@ -204,21 +189,13 @@ def cancel_order(order, cancelled_by=None, reason=""):
             for pt in picking_tasks:
                 for pick_item in pt.items.all():
                     # If item was reserved/picked, we must release reservation on the Bin
-                    # Note: Ideally we move to a 'Returns' bin if already packed, 
-                    # but for immediate fix, we release the 'reserved_qty' on the original bin
-                    # assuming it hasn't left the warehouse physically yet.
                     
                     bin_inv = BinInventory.objects.select_for_update().get(
                         bin=pick_item.bin, 
                         sku=pick_item.sku
                     )
                     
-                    # Logic: 
-                    # If picked_qty > 0, it means it was moved from Bin -> Packer. 
-                    # We assume Packer puts it back (Operational procedure).
-                    # We just need to ensure the Bin record allows it.
-                    
-                    # Release reservation equal to what was asked to pick
+                    # Logic: Release reservation equal to what was asked to pick
                     bin_inv.reserved_qty = max(0, bin_inv.reserved_qty - pick_item.qty_to_pick)
                     bin_inv.save()
 
@@ -233,8 +210,6 @@ def cancel_order(order, cancelled_by=None, reason=""):
                     sku=item.sku
                 ).update(
                     available_qty=F('available_qty') + item.quantity,
-                    # We only reduce reserved if we haven't already reconciled it elsewhere.
-                    # Given the flow, we assume the reservation is held until cancellation.
                     reserved_qty=F('reserved_qty') - item.quantity
                 )
 
@@ -300,5 +275,3 @@ def process_successful_payment(order):
     except Exception as e:
         logger.exception("Payment process failed")
         return False, str(e)
-
-
