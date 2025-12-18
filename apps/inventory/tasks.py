@@ -65,3 +65,20 @@ def update_inventory_stock_task(self, sku_id, warehouse_id, delta_available, del
     except Exception as exc:
         logger.error(f"Inventory Update Failed: {exc}")
         raise exc
+
+
+@shared_task
+def nightly_inventory_reconciliation():
+    """Fallback to fix signal failures by re-aggregating physical stock into logical stock."""
+    from apps.warehouse.models import BinInventory
+    from apps.inventory.models import InventoryStock
+    from django.db.models import Sum
+
+    physical_totals = BinInventory.objects.values('sku_id', 'bin__zone__warehouse_id').annotate(
+        total_qty=Sum('qty')
+    )
+    for entry in physical_totals:
+        InventoryStock.objects.filter(
+            sku_id=entry['sku_id'], 
+            warehouse_id=entry['bin__zone__warehouse_id']
+        ).update(available_qty=entry['total_qty'])

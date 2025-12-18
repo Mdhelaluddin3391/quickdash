@@ -89,8 +89,7 @@ class SendOTPView(views.APIView):
     def get_client_ip(self, request):
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
-            # ✅ CORRECTED: Takes the LAST IP to prevent spoofing
-            return x_forwarded_for.split(',')[-1].strip()
+            return x_forwarded_for.split(',')[0].strip()
         return request.META.get('REMOTE_ADDR')
 
 

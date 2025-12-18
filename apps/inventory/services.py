@@ -83,3 +83,12 @@ def find_best_warehouse_for_items(order_items):
         return Warehouse.objects.get(id=best_wh_id)
     
     return None
+
+
+def batch_check_and_lock_inventory(warehouse_id, items_list):
+    """Surgical Fix: Lock all required SKUs in one batch query."""
+    sku_ids = [item.sku_id for item in items_list]
+    # Lock all relevant rows at once
+    stocks = InventoryStock.objects.select_for_update().filter(
+        warehouse_id=warehouse_id, sku_id__in=sku_ids
+    ).order_by('sku_id')

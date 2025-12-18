@@ -63,7 +63,7 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
                 sku_id=sku_id,
                 qty__gt=F("reserved_qty"),
             )
-            .order_by("qty") # Strategy: Empty small bins first
+            .order_by("bin_id")
         )
 
         for bin_inv in bin_qs:

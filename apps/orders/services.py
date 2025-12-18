@@ -182,7 +182,7 @@ def process_successful_payment(order):
         with transaction.atomic():
             # Refresh from DB to get lock/latest state
             order = Order.objects.select_for_update().get(id=order.id)
-            if order.status != 'pending': 
+            if order.status != 'pending' or order.payment_status == 'paid':
                 return True, "Already processed"
             
             order.status = "confirmed"
