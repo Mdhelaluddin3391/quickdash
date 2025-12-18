@@ -67,18 +67,50 @@ def update_inventory_stock_task(self, sku_id, warehouse_id, delta_available, del
         raise exc
 
 
+# apps/inventory/tasks.py
+
 @shared_task
 def nightly_inventory_reconciliation():
-    """Fallback to fix signal failures by re-aggregating physical stock into logical stock."""
+    """
+    Re-aggregates physical stock into logical stock.
+    FIX: Respects reserved_qty to prevent overwriting active allocations.
+    """
     from apps.warehouse.models import BinInventory
     from apps.inventory.models import InventoryStock
-    from django.db.models import Sum
+    from django.db.models import Sum, F
+    from django.db import transaction
 
+    # 1. Calculate Physical Totals per SKU/Warehouse
     physical_totals = BinInventory.objects.values('sku_id', 'bin__zone__warehouse_id').annotate(
-        total_qty=Sum('qty')
+        total_physical=Sum('qty')
     )
+
     for entry in physical_totals:
-        InventoryStock.objects.filter(
-            sku_id=entry['sku_id'], 
-            warehouse_id=entry['bin__zone__warehouse_id']
-        ).update(available_qty=entry['total_qty'])
+        sku_id = entry['sku_id']
+        warehouse_id = entry['bin__zone__warehouse_id']
+        total_physical = entry['total_physical']
+
+        with transaction.atomic():
+            # Lock the stock record
+            stock, _ = InventoryStock.objects.select_for_update().get_or_create(
+                sku_id=sku_id, 
+                warehouse_id=warehouse_id,
+                defaults={'available_qty': 0, 'reserved_qty': 0}
+            )
+            
+            # FIX: Available = Physical - Reserved
+            # We assume reserved_qty is correct (source of truth for allocations)
+            # We assume physical (BinInventory) is correct (source of truth for existence)
+            
+            new_available = total_physical - stock.reserved_qty
+            
+            # Safety clamp
+            if new_available < 0:
+                logger.critical(
+                    f"Inventory Corruption Detected: SKU {sku_id} WH {warehouse_id} "
+                    f"Physical {total_physical} < Reserved {stock.reserved_qty}"
+                )
+                new_available = 0
+
+            stock.available_qty = new_available
+            stock.save(update_fields=['available_qty'])

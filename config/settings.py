@@ -24,11 +24,13 @@ if not DEBUG:
 
     ALLOWED_HOSTS = config("ALLOWED_HOSTS", cast=Csv())
     
-    # FIX: Trust Nginx to handle SSL
-    # Without this, SECURE_SSL_REDIRECT=True causes an infinite redirect loop
+    # FIX 1: Disable Django's internal SSL redirect to prevent infinite loops behind Nginx/ELB
+    # We trust Nginx/LoadBalancer to handle the HTTP->HTTPS redirect.
+    SECURE_SSL_REDIRECT = False
+    
+    # Trust the X-Forwarded-Proto header for generating secure links
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     
-    SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_BROWSER_XSS_FILTER = True
@@ -229,7 +231,8 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_THROTTLE_RATES": {
         "burst": "200/min",
-        "sustained": "2000/hour",
+        # FIX 5: Increased from 2000/hour to support scale
+        "sustained": "10000/hour", 
         "anon": "100/min",
     },
     "EXCEPTION_HANDLER": "rest_framework.views.exception_handler",

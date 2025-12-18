@@ -177,31 +177,66 @@ class CheckoutOrchestrator:
             logger.exception("Fatal checkout failure")
             return None, None, "Internal checkout error."
 
+# apps/orders/services.py
+
 def cancel_order(order, cancelled_by=None, reason=""):
     from .models import OrderTimeline, OrderCancellation
     from apps.inventory.models import InventoryStock
+    from apps.warehouse.models import PickingTask, BinInventory
     from django.db.models import F
     
     try:
         with transaction.atomic():
-            # RELOAD with lock to prevent race conditions
+            # RELOAD with lock
             locked_order = Order.objects.select_for_update().get(id=order.id)
             
             if locked_order.status in ['cancelled', 'delivered']:
                 return False, 'Cannot cancel order in its current state.'
                 
-            # Use the LOCKED instance for updates
             locked_order.status = 'cancelled'
             locked_order.cancelled_at = timezone.now()
             locked_order.save(update_fields=['status', 'cancelled_at'])
             
-            # FIX: Explicit Inventory Release
-            # Iterate items and return stock to InventoryStock table
+            # FIX: Restore Physical Stock (BinInventory)
+            # Find associated Picking Tasks
+            picking_tasks = PickingTask.objects.filter(order_id=str(locked_order.id))
+            
+            for pt in picking_tasks:
+                for pick_item in pt.items.all():
+                    # If item was reserved/picked, we must release reservation on the Bin
+                    # Note: Ideally we move to a 'Returns' bin if already packed, 
+                    # but for immediate fix, we release the 'reserved_qty' on the original bin
+                    # assuming it hasn't left the warehouse physically yet.
+                    
+                    bin_inv = BinInventory.objects.select_for_update().get(
+                        bin=pick_item.bin, 
+                        sku=pick_item.sku
+                    )
+                    
+                    # Logic: 
+                    # If picked_qty > 0, it means it was moved from Bin -> Packer. 
+                    # We assume Packer puts it back (Operational procedure).
+                    # We just need to ensure the Bin record allows it.
+                    
+                    # Release reservation equal to what was asked to pick
+                    bin_inv.reserved_qty = max(0, bin_inv.reserved_qty - pick_item.qty_to_pick)
+                    bin_inv.save()
+
+                # Cancel the task
+                pt.status = 'CANCELLED'
+                pt.save()
+
+            # Restore Logical Stock (InventoryStock)
             for item in locked_order.items.all():
                 InventoryStock.objects.filter(
                     warehouse=locked_order.warehouse,
                     sku=item.sku
-                ).update(available_qty=F('available_qty') + item.quantity)
+                ).update(
+                    available_qty=F('available_qty') + item.quantity,
+                    # We only reduce reserved if we haven't already reconciled it elsewhere.
+                    # Given the flow, we assume the reservation is held until cancellation.
+                    reserved_qty=F('reserved_qty') - item.quantity
+                )
 
             OrderTimeline.objects.create(order=locked_order, status='cancelled', notes=reason)
             OrderCancellation.objects.create(order=locked_order, reason=reason, cancelled_by=cancelled_by or 'OPS')

@@ -161,17 +161,24 @@ class Order(models.Model):
     def __str__(self):
         return f"Order {self.id}"
 
-    def recalculate_totals(self, save: bool = False):
+    def recalculate_totals(self, save: bool = False, skip_aggregation: bool = False):
+        """
+        FIX: Added skip_aggregation to support F() updates.
+        """
         from .item import OrderItem
 
-        subtotal = (
-            OrderItem.objects.filter(order=self).aggregate(
-                total=models.Sum("total_price")
-            )["total"]
-            or Decimal("0.00")
-        )
+        if not skip_aggregation:
+            subtotal = (
+                OrderItem.objects.filter(order=self).aggregate(
+                    total=models.Sum("total_price")
+                )["total"]
+                or Decimal("0.00")
+            )
+            self.total_amount = subtotal
+        
+        # Else: self.total_amount is already updated via F() in OrderItem.save
 
-        self.total_amount = subtotal
+        subtotal = self.total_amount
 
         discount = Decimal("0.00")
         if self.coupon and self.coupon.is_valid(subtotal):

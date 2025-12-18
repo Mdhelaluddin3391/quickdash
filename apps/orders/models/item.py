@@ -53,14 +53,38 @@ class OrderItem(models.Model):
         if self.unit_price is None and self.sku_id:
             self.unit_price = getattr(self.sku, "sale_price", Decimal("0.00"))
 
-        # total = unit * qty (short pick ka effect order ke totals mein handle hoga)
-        self.total_price = (self.unit_price or Decimal("0.00")) * self.quantity
-
+        # Calculate new total
+        new_total = (self.unit_price or Decimal("0.00")) * self.quantity
+        
+        # Check delta if updating
+        old_total = Decimal("0.00")
+        if self.pk:
+            old_val = OrderItem.objects.filter(pk=self.pk).values('total_price').first()
+            if old_val:
+                old_total = old_val['total_price']
+        
+        delta = new_total - old_total
+        
+        self.total_price = new_total
         super().save(*args, **kwargs)
 
-        # Order totals recalc
-        try:
-            self.order.recalculate_totals(save=True)
-        except Exception as e:
-            # Best-effort; errors ko swallow karna zyada safe hai yahan
-            logger.exception("Failed to recalculate order totals for order %s", self.order_id)
+        # FIX: Efficient F() update instead of N+1 Sum Aggregation
+        if delta != 0:
+            from .order import Order
+            from django.db.models import F
+            
+            # Update Subtotal
+            Order.objects.filter(pk=self.order_id).update(
+                total_amount=F('total_amount') + delta,
+                updated_at=timezone.now()
+            )
+            
+            # Trigger final calc (Tax/Discount) strictly on the Order object 
+            # without re-summing items
+            # We defer this to the view/service layer or call a lightweight method
+            try:
+                # Reload order to get new total_amount from DB before calculating tax/discount
+                self.order.refresh_from_db(fields=['total_amount'])
+                self.order.recalculate_totals(save=True, skip_aggregation=True)
+            except Exception:
+                logger.exception("Failed to recalculate order totals")

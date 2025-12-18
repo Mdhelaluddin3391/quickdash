@@ -86,12 +86,11 @@ class SendOTPView(views.APIView):
             send_sms_task.delay(phone=phone, otp_code=code, login_type=role)
             return Response({"detail": "OTP sent successfully via SMS."})
 
-    def get_client_ip(self, request):
+   def get_client_ip(self, request):
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
-            # FIX: Take the LAST IP (trusted proxy) to prevent spoofing
-            # Previous [0] was vulnerable to client-side header injection
-            return x_forwarded_for.split(',')[-1].strip()
+            # FIX: Take the FIRST IP (Client IP), not the last (Proxy IP)
+            return x_forwarded_for.split(',')[0].strip()
         return request.META.get('REMOTE_ADDR')
 
 
@@ -190,9 +189,8 @@ class LoginWithOTPView(views.APIView):
     def get_client_ip(self, request):
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
-            # FIX: Take the LAST IP (trusted proxy) to prevent spoofing
-            # Previous [0] was vulnerable to client-side header injection
-            return x_forwarded_for.split(',')[-1].strip()
+            # FIX: Take the FIRST IP (Client IP), not the last (Proxy IP)
+            return x_forwarded_for.split(',')[0].strip()
         return request.META.get('REMOTE_ADDR')
 
 

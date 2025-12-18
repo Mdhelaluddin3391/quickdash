@@ -5,7 +5,7 @@ from django.db import transaction, models
 from django.db.models import Sum, F, Case, When, Value
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-
+from apps.inventory.models import InventoryStock
 from .models import (
     Warehouse, Bin, BinInventory, StockMovement, PickingTask, PickItem,
     PackingTask, DispatchRecord, PickSkip, ShortPickIncident, FulfillmentCancel,
@@ -28,9 +28,8 @@ logger = logging.getLogger(__name__)
 @transaction.atomic
 def reserve_stock_for_order(order_id, warehouse_id, items_needed):
     """
-    Deterministic Stock Reservation to prevent deadlocks.
-    1. Locks SKUs in ascending order.
-    2. Locks BinInventory rows in ascending order.
+    Deterministic Stock Reservation.
+    FIX: Updates both BinInventory AND InventoryStock in the same transaction.
     """
     warehouse = Warehouse.objects.get(id=warehouse_id)
     
@@ -40,14 +39,13 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
         status=PickingTask.TaskStatus.PENDING,
     )
 
-    # Deterministic Sort by SKU ID
     items_needed = sorted(items_needed, key=lambda x: str(x['sku_id']))
 
     for item in items_needed:
         sku_id = item["sku_id"]
         qty_remaining = int(item["qty"])
 
-        # Deterministic Sort by Bin ID to prevent intra-SKU deadlocks
+        # 1. Lock BinInventory (Physical)
         bin_qs = (
             BinInventory.objects
             .select_for_update() 
@@ -56,8 +54,10 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
                 sku_id=sku_id,
                 qty__gt=F("reserved_qty"),
             )
-            .order_by("id") # <--- CRITICAL: Consistent locking order
+            .order_by("id")
         )
+
+        reserved_in_this_loop = 0
 
         for bin_inv in bin_qs:
             if qty_remaining <= 0:
@@ -77,20 +77,23 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
                 bin=bin_inv.bin,
                 qty_to_pick=to_reserve,
             )
-
-            inventory_change_required.send(
-                sender=Warehouse,
-                sku_id=str(sku_id),
-                warehouse_id=str(warehouse.id),
-                delta_available=-to_reserve,
-                delta_reserved=to_reserve,
-                reference=str(order_id),
-                change_type="order_reservation",
-            )
+            
             qty_remaining -= to_reserve
+            reserved_in_this_loop += to_reserve
 
         if qty_remaining > 0:
             raise OutOfStockError(f"Insufficient stock for SKU {sku_id}")
+
+        # 2. FIX: Update InventoryStock (Logical) DIRECTLY within transaction
+        # Do not rely on signals for this critical path.
+        if reserved_in_this_loop > 0:
+            stock = InventoryStock.objects.select_for_update().get(
+                warehouse=warehouse,
+                sku_id=sku_id
+            )
+            stock.available_qty -= reserved_in_this_loop
+            stock.reserved_qty += reserved_in_this_loop
+            stock.save(update_fields=['available_qty', 'reserved_qty'])
 
     PackingTask.objects.get_or_create(picking_task=task)
     return task
