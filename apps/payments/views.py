@@ -31,6 +31,14 @@ class CreatePaymentIntentAPIView(APIView):
     permission_classes = [IsAuthenticated, IsCustomer]
 
     def post(self, request, *args, **kwargs):
+        payload = json.loads(body_str)
+        event_id = payload.get("id")
+        if WebhookEvent.objects.filter(event_id=event_id).exists():
+            return JsonResponse({"status": "already_processed"})
+        
+        with transaction.atomic():
+            WebhookEvent.objects.create(event_id=event_id)
+            
         if not razorpay_client:
             return Response({"detail": "Payment gateway unavailable."}, status=503)
 

@@ -87,10 +87,12 @@ class SendOTPView(views.APIView):
             return Response({"detail": "OTP sent successfully via SMS."})
 
     def get_client_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        # Take the FIRST IP (the actual client), not the last.
+        # Ensure Nginx is configured to strip/override this header from the outside.
+        return x_forwarded_for.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR')
 
 
 # ==========================================

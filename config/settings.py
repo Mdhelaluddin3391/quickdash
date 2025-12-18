@@ -14,7 +14,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ==========================================
 # SECURITY & CONFIGURATION
 # ==========================================
-SECRET_KEY = config("SECRET_KEY", default="unsafe-secret-key-change-in-prod")
+JWT_SIGNING_KEY = config("JWT_SIGNING_KEY", default=None)
+if not DEBUG and not JWT_SIGNING_KEY:
+    # Fallback to SECRET_KEY only if SECRET_KEY is secure
+    JWT_SIGNING_KEY = SECRET_KEY
+
+if not DEBUG and (not JWT_SIGNING_KEY or JWT_SIGNING_KEY == "unsafe-secret-key-change-in-prod"):
+    raise ImproperlyConfigured("Production requires a secure JWT_SIGNING_KEY.")
 DEBUG = config("DEBUG", default=False, cast=bool)
 
 if not DEBUG:

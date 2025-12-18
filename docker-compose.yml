@@ -14,7 +14,7 @@ services:
       - quickdash_net
     healthcheck:
       # FIX: Ensure user variable is expanded or defaults cleanly
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-quickdash_db}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} && psql -U $${POSTGRES_USER} -d $${POSTGRES_DB} -c 'SELECT 1;'"]
       interval: 5s
       timeout: 5s
       retries: 5

@@ -4,7 +4,12 @@ from decimal import Decimal
 from django.db import models
 from django.conf import settings
 
+class WebhookEvent(models.Model):
+    event_id = models.CharField(max_length=100, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
+
+    
 class Payment(models.Model):
     """
     Final recorded payment against an Order.

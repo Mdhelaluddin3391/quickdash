@@ -4,25 +4,20 @@ from django.db.models import F
 from .models import InventoryStock
 from apps.warehouse.models import Warehouse
 
+@transaction.atomic
 def check_and_lock_inventory(warehouse_id, sku_id, qty_needed):
-    """
-    Updates available stock only if sufficient quantity exists.
-    Must be called inside a transaction.
-    """
-    rows_updated = InventoryStock.objects.filter(
+    # Surgical fix: Use select_for_update to ensure the lock persists 
+    # until the parent Checkout transaction commits/rolls back.
+    stock = InventoryStock.objects.select_for_update().filter(
         warehouse_id=warehouse_id,
-        sku_id=sku_id,
-        available_qty__gte=qty_needed
-    ).update(
-        available_qty=F('available_qty') - qty_needed
-    )
-
-    if rows_updated == 0:
-        # Check specific reason for better error msg
-        if not InventoryStock.objects.filter(warehouse_id=warehouse_id, sku_id=sku_id).exists():
-            raise ValueError(f"SKU {sku_id} not stocked in warehouse {warehouse_id}.")
-        raise ValueError(f"Insufficient stock for SKU {sku_id} in warehouse {warehouse_id}.")
-
+        sku_id=sku_id
+    ).first()
+    
+    if not stock or stock.available_qty < qty_needed:
+         raise ValueError(f"Insufficient stock for SKU {sku_id}")
+    
+    stock.available_qty = F('available_qty') - qty_needed
+    stock.save(update_fields=['available_qty'])
     return True
 
 def find_best_warehouse_for_items(order_items):
