@@ -28,11 +28,11 @@ logger = logging.getLogger(__name__)
 @transaction.atomic
 def reserve_stock_for_order(order_id, warehouse_id, items_needed):
     """
-    Allocates stock from bins.
-    Refactored: Removed 'skip_locked=True' to prevent false out-of-stock scenarios.
-    Now transactions will WAIT for row locks to release instead of skipping bins.
+    Deterministic Stock Reservation to prevent deadlocks.
+    1. Locks SKUs in ascending order.
+    2. Locks BinInventory rows in ascending order.
     """
-    warehouse = Warehouse.objects.select_for_update().get(id=warehouse_id)
+    warehouse = Warehouse.objects.get(id=warehouse_id)
     
     task = PickingTask.objects.create(
         order_id=str(order_id),
@@ -40,30 +40,23 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
         status=PickingTask.TaskStatus.PENDING,
     )
 
-    # Sort to prevent deadlocks (canonical ordering)
+    # Deterministic Sort by SKU ID
     items_needed = sorted(items_needed, key=lambda x: str(x['sku_id']))
 
     for item in items_needed:
         sku_id = item["sku_id"]
-        qty_needed = int(item["qty"])
-        qty_remaining = qty_needed
+        qty_remaining = int(item["qty"])
 
-        # ---------------------------------------------------------
-        # [SECURITY FIX] Lock Strategy Update
-        # Removed skip_locked=True. This ensures that if Bin A is 
-        # locked by another user, we WAIT for it to free up instead 
-        # of skipping it and incorrectly reporting Out of Stock.
-        # ---------------------------------------------------------
+        # Deterministic Sort by Bin ID to prevent intra-SKU deadlocks
         bin_qs = (
             BinInventory.objects
-            .select_for_update() # <--- FIXED HERE
-            .select_related("bin__zone__warehouse")
+            .select_for_update() 
             .filter(
                 bin__zone__warehouse=warehouse,
                 sku_id=sku_id,
                 qty__gt=F("reserved_qty"),
             )
-            .order_by("id")
+            .order_by("id") # <--- CRITICAL: Consistent locking order
         )
 
         for bin_inv in bin_qs:
@@ -75,7 +68,6 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
                 continue
 
             to_reserve = min(available, qty_remaining)
-            
             bin_inv.reserved_qty += to_reserve
             bin_inv.save(update_fields=['reserved_qty'])
 
@@ -86,7 +78,6 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
                 qty_to_pick=to_reserve,
             )
 
-            # Signal Logical Inventory Update
             inventory_change_required.send(
                 sender=Warehouse,
                 sku_id=str(sku_id),
@@ -96,18 +87,12 @@ def reserve_stock_for_order(order_id, warehouse_id, items_needed):
                 reference=str(order_id),
                 change_type="order_reservation",
             )
-
             qty_remaining -= to_reserve
 
         if qty_remaining > 0:
-            logger.error(f"Stock Mismatch! SKU {sku_id} in WH {warehouse_id}. Needed {qty_needed}, Short {qty_remaining}")
-            raise OutOfStockError(f"Insufficient stock for SKU {sku_id}. Short by {qty_remaining}")
+            raise OutOfStockError(f"Insufficient stock for SKU {sku_id}")
 
-    PackingTask.objects.create(
-        picking_task=task,
-        status=PackingTask.PackStatus.PENDING,
-    )
-    
+    PackingTask.objects.get_or_create(picking_task=task)
     return task
 
 @transaction.atomic

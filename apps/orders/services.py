@@ -66,23 +66,30 @@ class CheckoutOrchestrator:
         if not cart.items.exists():
             return None, None, "Cart is empty."
 
-        # 3. Create order in safe transaction
+        # 3. CONCURRENCY FIX: Check for duplicate order in last 30 seconds (Idempotency)
+        recent_order = Order.objects.filter(
+            customer=self.user, 
+            created_at__gte=timezone.now() - timedelta(seconds=30),
+            status='pending'
+        ).first()
+        if recent_order:
+            return None, None, "Order already in progress. Please wait."
+
+        # 4. Create order in safe transaction
         try:
             with transaction.atomic():
-
-                # A. Lock inventory
-                # We strictly use the Cart for checkout to ensure DB locking works correctly.
-                # Any frontend 'items' payload is ignored in favor of the persisted cart.
-                cart_items = list(cart.items.select_for_update().select_related('sku'))
-                cart_items.sort(key=lambda x: x.sku.id)
+                # select_for_update() on cart to lock it for this request
+                cart_locked = Cart.objects.select_for_update().get(id=cart.id)
+                cart_items = list(cart_locked.items.select_related('sku'))
+                cart_items.sort(key=lambda x: x.sku.id) # Prevent Deadlocks
 
                 for item in cart_items:
                     try:
                         check_and_lock_inventory(warehouse.id, item.sku.id, item.quantity)
                     except ValueError as e:
-                        return None, None, f"Out of Stock: {item.sku.name} ({str(e)})"
+                        return None, None, f"Out of Stock: {item.sku.name}"
 
-                # B. Create Order
+                # Create Order
                 order = Order.objects.create(
                     customer=self.user,
                     warehouse=warehouse,
@@ -95,71 +102,30 @@ class CheckoutOrchestrator:
                     payment_status='pending',
                 )
 
-                # C. Create Order Items
-                items_to_create = []
-                for item in cart_items:
-                    unit_price = item.sku.sale_price or Decimal("0.00")
-                    items_to_create.append(OrderItem(
+                # Create Order Items and clear cart
+                items_to_create = [
+                    OrderItem(
                         order=order,
                         sku=item.sku,
                         quantity=item.quantity,
-                        unit_price=unit_price,
-                        total_price=unit_price * item.quantity,
+                        unit_price=item.sku.sale_price or Decimal("0.00"),
+                        total_price=(item.sku.sale_price or Decimal("0.00")) * item.quantity,
                         sku_name_snapshot=item.sku.name
-                    ))
-
+                    ) for item in cart_items
+                ]
                 OrderItem.objects.bulk_create(items_to_create)
-
-                # D. Compute totals
                 order.recalculate_totals(save=True)
+                
+                # IMPORTANT: Clear cart immediately after order creation within the transaction
+                cart_locked.items.all().delete()
 
-                # E. Payment
-                payment_data = None
-
-                if self.payment_method == "COD":
-                    Payment.objects.create(
-                        order=order,
-                        user=self.user,
-                        payment_method=Payment.PaymentMethod.COD,
-                        amount=order.final_amount,
-                        status=Payment.PaymentStatus.PENDING
-                    )
-                    payment_data = {"mode": "COD", "status": "PENDING"}
-
-                elif self.payment_method == "RAZORPAY":
-                    try:
-                        if order.final_amount > 0:
-                            rzp_id = create_razorpay_order(order, order.final_amount)
-                            Payment.objects.create(
-                                order=order,
-                                user=self.user,
-                                amount=order.final_amount,
-                                payment_method=Payment.PaymentMethod.RAZORPAY,
-                                gateway_order_id=rzp_id,
-                            )
-                            order.payment_gateway_order_id = rzp_id
-                            order.save(update_fields=["payment_gateway_order_id"])
-                            payment_data = {
-                                "mode": "RAZORPAY",
-                                "razorpay_order_id": rzp_id,
-                                "amount": str(order.final_amount),
-                                "currency": "INR"
-                            }
-                        else:
-                            payment_data = {"mode": "FREE", "status": "SUCCESS"}
-                            order.payment_status = "paid"
-                            order.save()
-                    except Exception as e:
-                        logger.error(f"Razorpay error: {e}")
-                        raise ValueError("Payment gateway error. Try COD.")
-
+                # 5. Payment Processing
+                payment_data = self._process_payment_logic(order)
                 return order, payment_data, None
 
-        except ValueError as ve:
-            return None, None, str(ve)
         except Exception as e:
-            logger.exception("Fatal checkout failure")
-            return None, None, "Internal checkout error."
+            logger.exception("Checkout Orchestrator Failed")
+            return None, None, str(e)
 
 
 def get_nearest_warehouse(lat, lng):

@@ -14,16 +14,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ==========================================
 # SECURITY & CONFIGURATION
 # ==========================================
-JWT_SIGNING_KEY = config("JWT_SIGNING_KEY", default=None)
-if not DEBUG and not JWT_SIGNING_KEY:
-    # Fallback to SECRET_KEY only if SECRET_KEY is secure
-    JWT_SIGNING_KEY = SECRET_KEY
 
-if not DEBUG and (not JWT_SIGNING_KEY or JWT_SIGNING_KEY == "unsafe-secret-key-change-in-prod"):
-    raise ImproperlyConfigured("Production requires a secure JWT_SIGNING_KEY.")
+SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default=False, cast=bool)
 
+# Hard Requirement for Production Secrets
+JWT_SIGNING_KEY = config("JWT_SIGNING_KEY", default=None)
+
 if not DEBUG:
+    if not JWT_SIGNING_KEY or JWT_SIGNING_KEY == "unsafe-secret-key-change-in-prod":
+        raise ImproperlyConfigured("Production requires a unique, secure JWT_SIGNING_KEY.")
+    
     ALLOWED_HOSTS = config("ALLOWED_HOSTS", cast=Csv())
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
@@ -31,19 +32,12 @@ if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
+    # Trust the Nginx header for HTTPS detection
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 else:
+    JWT_SIGNING_KEY = JWT_SIGNING_KEY or SECRET_KEY
     ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="127.0.0.1,localhost", cast=Csv())
     SECURE_SSL_REDIRECT = False
-    SESSION_COOKIE_SECURE = False
-    CSRF_COOKIE_SECURE = False
-
-# CORS & CSRF
-CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="http://localhost:3000", cast=Csv())
-CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="http://localhost:3000", cast=Csv())
-CORS_ALLOW_CREDENTIALS = True
-
-# JWT Signing
-JWT_SIGNING_KEY = config("JWT_SIGNING_KEY", default=SECRET_KEY)
 
 # ==========================================
 # APPLICATION DEFINITION

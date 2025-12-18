@@ -38,7 +38,7 @@ class CreatePaymentIntentAPIView(APIView):
         
         with transaction.atomic():
             WebhookEvent.objects.create(event_id=event_id)
-            
+
         if not razorpay_client:
             return Response({"detail": "Payment gateway unavailable."}, status=503)
 
@@ -130,6 +130,7 @@ class RazorpayWebhookView(View):
     """
     Handles 'payment.captured' events from Razorpay.
     """
+    @method_decorator(csrf_exempt, name="dispatch")
     def post(self, request, *args, **kwargs):
         webhook_secret = getattr(settings, "RAZORPAY_WEBHOOK_SECRET", "")
         signature = request.headers.get("X-Razorpay-Signature")
@@ -144,44 +145,54 @@ class RazorpayWebhookView(View):
             client.utility.verify_webhook_signature(body_str, signature, webhook_secret)
             
             payload = json.loads(body_str)
-            event = payload.get("event")
+            event_type = payload.get("event")
+            event_id = payload.get("id")  # Unique Razorpay Event ID
 
-            if event == "payment.captured":
+            # 1. Idempotency Check
+            from apps.warehouse.models import IdempotencyKey
+            from django.utils import timezone
+            from datetime import timedelta
+
+            if IdempotencyKey.objects.filter(key=event_id).exists():
+                return JsonResponse({"status": "already_processed"})
+
+            if event_type == "payment.captured":
                 entity = payload["payload"]["payment"]["entity"]
                 gateway_order_id = entity["order_id"]
                 gateway_payment_id = entity["id"]
 
-                # 1. Find Intent (Critical Check)
                 intent = PaymentIntent.objects.filter(gateway_order_id=gateway_order_id).first()
-                
                 if not intent:
-                    logger.critical(f"Webhook: Payment {gateway_payment_id} captured but NO INTENT found for Order {gateway_order_id}")
-                    # We return 400 so Razorpay knows something is wrong, or 200 to suppress if we can't handle it manually
+                    logger.critical(f"Webhook: No intent for {gateway_order_id}")
                     return JsonResponse({"error": "Intent not found"}, status=400)
 
                 order = intent.order
 
-                # 2. Idempotent Payment Record
-                Payment.objects.get_or_create(
-                    transaction_id=gateway_payment_id,
-                    defaults={
-                        "order": order,
-                        "user": order.customer,
-                        "payment_method": Payment.PaymentMethod.RAZORPAY,
-                        "amount": intent.amount,
-                        "currency": entity.get("currency", "INR"),
-                        "status": Payment.PaymentStatus.SUCCESSFUL,
-                        "gateway_order_id": gateway_order_id,
-                        "gateway_response": entity,
-                    }
-                )
-                
-                # Update Intent
-                if intent.status != PaymentIntent.IntentStatus.PAID:
-                    intent.status = PaymentIntent.IntentStatus.PAID
-                    intent.save()
+                with transaction.atomic():
+                    # Mark event as processed
+                    IdempotencyKey.objects.create(
+                        key=event_id,
+                        route="razorpay_webhook",
+                        expires_at=timezone.now() + timedelta(days=7)
+                    )
 
-                logger.info(f"Webhook: Payment {gateway_payment_id} synced for Order {order.id}")
+                    Payment.objects.get_or_create(
+                        transaction_id=gateway_payment_id,
+                        defaults={
+                            "order": order,
+                            "user": order.customer,
+                            "payment_method": Payment.PaymentMethod.RAZORPAY,
+                            "amount": intent.amount,
+                            "currency": entity.get("currency", "INR"),
+                            "status": Payment.PaymentStatus.SUCCESSFUL,
+                            "gateway_order_id": gateway_order_id,
+                            "gateway_response": entity,
+                        }
+                    )
+                    
+                    if intent.status != PaymentIntent.IntentStatus.PAID:
+                        intent.status = PaymentIntent.IntentStatus.PAID
+                        intent.save()
 
             return JsonResponse({"status": "ok"})
 

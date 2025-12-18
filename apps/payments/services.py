@@ -46,22 +46,23 @@ def create_razorpay_order(order, amount: Decimal, currency: str = "INR") -> str:
     return rp_order["id"]
 
 
-def verify_payment_signature(order_id: str, gateway_order_id: str, gateway_payment_id: str, gateway_signature: str) -> bool:
+def verify_payment_signature(gateway_order_id: str, gateway_payment_id: str, gateway_signature: str) -> bool:
     """
-    Verify signature coming from Razorpay checkout.
+    Strict signature verification using Razorpay SDK.
     """
     if not razorpay_client:
         raise RuntimeError("Razorpay client is not configured.")
 
-    params_dict = {
-        "razorpay_order_id": gateway_order_id,
-        "razorpay_payment_id": gateway_payment_id,
-        "razorpay_signature": gateway_signature,
-    }
     try:
-        razorpay_client.utility.verify_payment_signature(params_dict)
+        # Standard Razorpay HMAC verification
+        razorpay_client.utility.verify_payment_signature({
+            'razorpay_order_id': gateway_order_id,
+            'razorpay_payment_id': gateway_payment_id,
+            'razorpay_signature': gateway_signature
+        })
         return True
     except razorpay.errors.SignatureVerificationError:
+        logger.warning(f"Signature Verification Failed for Order: {gateway_order_id}")
         return False
 
 
