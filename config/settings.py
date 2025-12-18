@@ -14,30 +14,33 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ==========================================
 # SECURITY & CONFIGURATION
 # ==========================================
-
 SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default=False, cast=bool)
-
-# Hard Requirement for Production Secrets
 JWT_SIGNING_KEY = config("JWT_SIGNING_KEY", default=None)
 
 if not DEBUG:
     if not JWT_SIGNING_KEY or JWT_SIGNING_KEY == "unsafe-secret-key-change-in-prod":
-        raise ImproperlyConfigured("Production requires a unique, secure JWT_SIGNING_KEY.")
-    
+        raise ImproperlyConfigured("Production requires a secure JWT_SIGNING_KEY.")
+
     ALLOWED_HOSTS = config("ALLOWED_HOSTS", cast=Csv())
+    
+    # FIX: Trust Nginx to handle SSL
+    # Without this, SECURE_SSL_REDIRECT=True causes an infinite redirect loop
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
-    # Trust the Nginx header for HTTPS detection
-    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 else:
+    # Dev settings...
     JWT_SIGNING_KEY = JWT_SIGNING_KEY or SECRET_KEY
     ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="127.0.0.1,localhost", cast=Csv())
     SECURE_SSL_REDIRECT = False
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
 
 # ==========================================
 # APPLICATION DEFINITION

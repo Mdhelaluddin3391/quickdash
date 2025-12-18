@@ -1,4 +1,3 @@
-# Dockerfile
 FROM python:3.12-slim
 
 # Envs
@@ -8,8 +7,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /code
 
-# System Deps (PostGIS & compilation tools)
-# [FIX] Added postgresql-client below so pg_isready command works
+# System Deps
+# Removed 'gosu' as we switch user via Docker instruction now
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
@@ -20,28 +19,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdal-dev \
     curl \
     netcat-openbsd \
-    gosu \
     && rm -rf /var/lib/apt/lists/*
 
-# Dependencies
+# Dependencies (Cached Layer)
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir whitenoise gunicorn
 
-# Project Copy
-COPY . .
+# User Setup (Create user BEFORE copying code to handle permissions correctly)
+RUN addgroup --system appgroup && adduser --system --group appuser
 
 # Scripts
 COPY wait-for-db.sh /wait-for-db.sh
 COPY start.sh /start.sh
-RUN chmod +x /wait-for-db.sh /start.sh
+# Fix permissions so appuser can execute them
+RUN chmod +x /wait-for-db.sh /start.sh && \
+    chown appuser:appgroup /wait-for-db.sh /start.sh
 
-# User Setup
-RUN addgroup --system appgroup && adduser --system --group appuser && \
-    mkdir -p /code/staticfiles /code/media && \
+# Project Copy
+COPY . .
+# Grant ownership to appuser
+RUN mkdir -p /code/staticfiles /code/media && \
     chown -R appuser:appgroup /code
 
+# 🔒 SECURITY: Switch to non-root user
 USER appuser
 
 EXPOSE 8000

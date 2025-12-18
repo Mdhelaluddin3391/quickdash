@@ -146,14 +146,15 @@ class RazorpayWebhookView(View):
             
             payload = json.loads(body_str)
             event_type = payload.get("event")
-            event_id = payload.get("id")  # Unique Razorpay Event ID
+            event_id = payload.get("id")
 
-            # 1. Idempotency Check
+            # FIX: Event-Level Idempotency using IdempotencyKey
             from apps.warehouse.models import IdempotencyKey
-            from django.utils import timezone
             from datetime import timedelta
-
+            
+            # Check if this specific webhook event ID was already processed
             if IdempotencyKey.objects.filter(key=event_id).exists():
+                logger.info(f"Webhook event {event_id} already processed. Skipping.")
                 return JsonResponse({"status": "already_processed"})
 
             if event_type == "payment.captured":
@@ -163,17 +164,18 @@ class RazorpayWebhookView(View):
 
                 intent = PaymentIntent.objects.filter(gateway_order_id=gateway_order_id).first()
                 if not intent:
-                    logger.critical(f"Webhook: No intent for {gateway_order_id}")
+                    logger.critical(f"Webhook: Payment {gateway_payment_id} captured but NO INTENT found for Order {gateway_order_id}")
                     return JsonResponse({"error": "Intent not found"}, status=400)
 
                 order = intent.order
 
                 with transaction.atomic():
-                    # Mark event as processed
+                    # Mark event as processed immediately to prevent race conditions
                     IdempotencyKey.objects.create(
                         key=event_id,
                         route="razorpay_webhook",
-                        expires_at=timezone.now() + timedelta(days=7)
+                        expires_at=timezone.now() + timedelta(days=7),
+                        response_status=200
                     )
 
                     Payment.objects.get_or_create(
@@ -193,6 +195,8 @@ class RazorpayWebhookView(View):
                     if intent.status != PaymentIntent.IntentStatus.PAID:
                         intent.status = PaymentIntent.IntentStatus.PAID
                         intent.save()
+
+                logger.info(f"Webhook: Payment {gateway_payment_id} synced for Order {order.id}")
 
             return JsonResponse({"status": "ok"})
 

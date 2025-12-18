@@ -87,14 +87,10 @@ class SendOTPView(views.APIView):
             return Response({"detail": "OTP sent successfully via SMS."})
 
     def get_client_ip(self, request):
-        """
-        Retrieves the real client IP.
-        In a production environment behind Nginx, we take the LAST IP 
-        to prevent header spoofing from the client side.
-        """
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
-            # Take the LAST IP in the list (most reliable from the proxy)
+            # FIX: Take the LAST IP (trusted proxy) to prevent spoofing
+            # Previous [0] was vulnerable to client-side header injection
             return x_forwarded_for.split(',')[-1].strip()
         return request.META.get('REMOTE_ADDR')
 
@@ -192,14 +188,10 @@ class LoginWithOTPView(views.APIView):
         })
 
     def get_client_ip(self, request):
-        """
-        Retrieves the real client IP.
-        In a production environment behind Nginx, we take the LAST IP 
-        to prevent header spoofing from the client side.
-        """
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
-            # Take the LAST IP in the list (most reliable from the proxy)
+            # FIX: Take the LAST IP (trusted proxy) to prevent spoofing
+            # Previous [0] was vulnerable to client-side header injection
             return x_forwarded_for.split(',')[-1].strip()
         return request.META.get('REMOTE_ADDR')
 

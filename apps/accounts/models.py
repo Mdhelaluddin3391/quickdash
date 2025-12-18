@@ -240,21 +240,25 @@ class PhoneOTP(models.Model):
         now = timezone.now()
         if self.is_used: return False, "OTP already used"
         if self.expires_at < now: return False, "OTP expired"
-        if self.attempts >= 5: return False, "Too many attempts"
+        
+        # FIX: Explicitly burn OTP if max attempts reached previously
+        if self.attempts >= 5: 
+            self.is_used = True
+            self.save(update_fields=["is_used"])
+            return False, "Too many attempts"
         
         if self.otp_code != otp_code:
             self.attempts += 1
+            # FIX: Check limit again after increment to burn immediately on 5th fail
+            if self.attempts >= 5:
+                self.is_used = True
+                self.save(update_fields=["attempts", "is_used"])
+                return False, "Too many attempts"
+            
             self.save(update_fields=["attempts"])
             return False, "Invalid OTP"
             
         return True, ""
-
-    class Meta:
-        indexes = [
-            models.Index(fields=["phone", "login_type", "is_used"]),
-        ]
-        verbose_name = "Phone OTP"
-        verbose_name_plural = "Phone OTPs"
 
 
 class UserSession(models.Model):
