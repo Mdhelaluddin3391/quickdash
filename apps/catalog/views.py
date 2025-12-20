@@ -9,9 +9,14 @@ from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser
 from django.utils import timezone
 from django.contrib.postgres.search import TrigramSimilarity
-from django.db import transaction  # <--- Added Import
+from django.db import transaction
 import csv
 from io import TextIOWrapper
+
+# --- NEW IMPORTS FOR PERFORMANCE ---
+from django.http import JsonResponse
+from django.views.decorators.http import require_GET
+# -----------------------------------
 
 from .models import Category, Brand, SKU, Banner, FlashSale
 from .serializers import (
@@ -199,3 +204,121 @@ class BulkImportSKUView(APIView):
 
         except Exception as e:
             return Response({"error": f"Import failed: {str(e)}"}, status=500)
+
+
+
+
+
+# ==========================================
+#  NEW HIGH-PERFORMANCE VIEWS (No DRF)
+# ==========================================
+
+@require_GET
+def get_products_cursor_api(request):
+    """
+    Optimized Cursor-based pagination for Infinite Scroll (Product List).
+    """
+    try:
+        LIMIT = 12
+        cursor_timestamp = request.GET.get('cursor')
+        category_slug = request.GET.get('category__slug') # Fix: match frontend param
+
+        queryset = SKU.objects.filter(is_active=True).select_related('category', 'brand')
+
+        if category_slug:
+            queryset = queryset.filter(category__slug=category_slug)
+
+        if cursor_timestamp:
+            queryset = queryset.filter(created_at__lt=cursor_timestamp)
+
+        products = list(queryset.order_by('-created_at')[:LIMIT])
+
+        data = []
+        last_cursor = None
+        for sku in products:
+            data.append({
+                'id': str(sku.id),
+                'name': sku.name,
+                'sku_code': sku.sku_code,
+                'price': float(sku.sale_price),
+                'image': sku.image_url if sku.image_url else '',
+                'category': sku.category.name if sku.category else 'Uncategorized',
+                'brand': sku.brand.name if sku.brand else '',
+                'unit': sku.unit,
+                'is_featured': sku.is_featured
+            })
+            last_cursor = sku.created_at.isoformat()
+
+        return JsonResponse({
+            'products': data,
+            'next_cursor': last_cursor if len(products) == LIMIT else None,
+            'has_more': len(products) == LIMIT
+        })
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+
+# apps/catalog/views.py
+
+# apps/catalog/views.py
+
+@require_GET
+def get_home_feed_api(request):
+    """
+    Optimized Home Feed: Loads Categories + Top Products in batches.
+    UPDATED: Fetches products from Sub-categories too (Fix for empty shelves).
+    """
+    try:
+        page = int(request.GET.get('page', 1))
+        batch_size = 3
+        offset = (page - 1) * batch_size
+        
+        # 1. Fetch Parent Categories
+        categories = Category.objects.filter(
+            parent__isnull=True, 
+            is_active=True
+        ).order_by('sort_order', 'name')[offset : offset + batch_size]
+        
+        feed_data = []
+        
+        for cat in categories:
+            # 2. Fetch Products from Parent AND Sub-categories
+            # Fix: Use Q object to check both (category=cat OR category__parent=cat)
+            products = SKU.objects.filter(
+                Q(category=cat) | Q(category__parent=cat),
+                is_active=True
+            ).select_related('category').order_by('-is_featured', '-created_at')[:10]
+            
+            # Agar abhi bhi products nahi hain, toh skip karein
+            if not products: 
+                continue
+
+            product_list = [{
+                'id': str(p.id),
+                'name': p.name,
+                'sku_code': p.sku_code,
+                'price': float(p.sale_price),
+                'unit': p.unit,
+                'image': p.image_url if p.image_url else '', 
+                'is_featured': p.is_featured
+            } for p in products]
+
+            feed_data.append({
+                'category_name': cat.name,
+                'category_slug': cat.slug,
+                'products': product_list
+            })
+
+        # 3. Pagination Logic
+        total_cats = Category.objects.filter(parent__isnull=True, is_active=True).count()
+        has_more = (offset + batch_size) < total_cats
+
+        return JsonResponse({
+            'sections': feed_data,
+            'has_more': has_more,
+            'next_page': page + 1 if has_more else None
+        })
+
+    except Exception as e:
+        print(f"Home Feed Error: {e}")
+        return JsonResponse({'error': str(e)}, status=500)

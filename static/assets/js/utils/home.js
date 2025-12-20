@@ -1,24 +1,97 @@
 // static/assets/js/utils/home.js
 
-// --- Global Variables for Infinite Scroll ---
-let parentCategories = [];
-let loadedCount = 0;
-const BATCH_SIZE = 1;      // UPDATED: Load strictly ONE category at a time
-const PRODUCTS_PER_SHELF = 15;
-let isLoadingShelves = false;
-let shelfObserver;
+// --- Global Variables ---
+let homeFeedPage = 1;
+let isFeedLoading = false;
+let hasMoreFeed = true;
+let feedObserver;
+let cartMap = {}; // Stores sku_id -> quantity mapping
 
 document.addEventListener('DOMContentLoaded', async () => {
     console.log("Loading Home Page...");
 
+    // 1. Inject Custom CSS for Buttons
+    injectHomeStyles();
+
+    // 2. Fetch Cart Data First (To show correct quantities)
+    await fetchCartState();
+
+    // 3. Load Static Sections
     await loadBanners();
     await loadHomeCategories();
     await loadFlashSales();
     await loadBrands();
 
-    // 2. Infinite Shelves Start Karein
+    // 4. Start Infinite Feed
     initProductShelves();
 });
+
+// =========================================================
+// 0. HELPER: CSS & CART STATE
+// =========================================================
+function injectHomeStyles() {
+    const style = document.createElement('style');
+    style.innerHTML = `
+        .btn-add-initial {
+            background: #fff;
+            border: 1px solid #32CD32;
+            color: #32CD32;
+            padding: 5px 20px;
+            border-radius: 4px;
+            font-weight: 700;
+            font-size: 0.85rem;
+            cursor: pointer;
+            width: 80px;
+            text-align: center;
+            transition: all 0.2s;
+        }
+        .btn-add-initial:hover {
+            background: #32CD32;
+            color: #fff;
+        }
+        .qty-control {
+            display: flex;
+            align-items: center;
+            background: #32CD32;
+            border-radius: 4px;
+            width: 80px;
+            justify-content: space-between;
+            padding: 2px 0;
+        }
+        .qty-btn {
+            background: none;
+            border: none;
+            color: #fff;
+            font-weight: bold;
+            font-size: 1.1rem;
+            width: 25px;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+        .qty-val {
+            color: #fff;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+async function fetchCartState() {
+    if (!localStorage.getItem('access_token')) return;
+    try {
+        // Fetch current cart to map quantities
+        const response = await apiCall('/orders/cart/', 'GET', null, false);
+        const cartItems = response.items || [];
+        cartMap = {};
+        cartItems.forEach(item => {
+            cartMap[item.sku.id] = item.quantity;
+        });
+    } catch (e) {
+        console.warn("Could not fetch cart state", e);
+    }
+}
 
 // =========================================================
 // 1. HERO BANNERS
@@ -100,6 +173,9 @@ async function loadHomeCategories() {
 // =========================================================
 // 3. FLASH SALES
 // =========================================================
+// =========================================================
+// 3. FLASH SALES (FIXED ADD BUTTON)
+// =========================================================
 async function loadFlashSales() {
     const container = document.getElementById('flash-sale-section');
     const grid = document.getElementById('flash-sale-grid');
@@ -117,22 +193,41 @@ async function loadFlashSales() {
         container.style.display = 'block';
         if (sales[0] && sales[0].end_time) startTimer(new Date(sales[0].end_time));
 
-        grid.innerHTML = sales.map(sale => `
-        <div class="flash-card">
-            <div class="badge-off">${sale.discount_percent}% OFF</div>
-            <img src="${sale.sku_image || 'https://cdn-icons-png.flaticon.com/512/2553/2553691.png'}">
-            <div class="f-info">
-                <div style="height: 40px; overflow: hidden;">${sale.sku_name}</div>
-                <div class="price">
-                    <span>₹${parseFloat(sale.discounted_price).toFixed(0)}</span>
-                    <span style="text-decoration:line-through; font-weight:400;">₹${parseFloat(sale.original_price).toFixed(0)}</span>
+        grid.innerHTML = sales.map(sale => {
+            // FIX 1: Check if item is already in cart
+            const qty = cartMap[sale.sku_id] || 0;
+            
+            // FIX 2: Decide functionality (Counter vs Add Button)
+            let btnHtml;
+            if (qty > 0) {
+                // Agar cart mein hai, toh Counter dikhao
+                btnHtml = getQtyControlHtml(sale.sku_id, qty);
+            } else {
+                // Agar nahi hai, toh Flash Sale wala Orange Button dikhao
+                btnHtml = `<button onclick="addToCart('${sale.sku_id}', 1, this)" style="width:100%; background:#e67e22; color:white; border:none; padding:6px; border-radius:4px; font-weight:600; cursor:pointer;">ADD</button>`;
+            }
+
+            return `
+            <div class="flash-card">
+                <div class="badge-off">${sale.discount_percent}% OFF</div>
+                <img src="${sale.sku_image || 'https://cdn-icons-png.flaticon.com/512/2553/2553691.png'}">
+                <div class="f-info">
+                    <div style="height: 40px; overflow: hidden;">${sale.sku_name}</div>
+                    <div class="price">
+                        <span>₹${parseFloat(sale.discounted_price).toFixed(0)}</span>
+                        <span style="text-decoration:line-through; font-weight:400;">₹${parseFloat(sale.original_price).toFixed(0)}</span>
+                    </div>
+                    
+                    <div id="action-wrapper-${sale.sku_id}" class="mt-2" style="min-height:36px; display:flex; align-items:center; justify-content:center;">
+                        ${btnHtml}
+                    </div>
                 </div>
-                <button class="w-100 mt-2" style="background:#e67e22; color:white; border:none; padding:5px; border-radius:4px;" onclick="addToCart('${sale.sku_id}', this)">ADD</button>
             </div>
-        </div>
-    `).join('');
+            `;
+        }).join('');
 
     } catch (e) {
+        console.error("Flash Sale Error", e);
         container.style.display = 'none';
     }
 }
@@ -172,222 +267,225 @@ async function loadBrands() {
 }
 
 // =========================================================
-// 5. INFINITE SHELVES (SMART LOADING)
+// 5. OPTIMIZED INFINITE FEED (BATCH LOADING)
 // =========================================================
 
 async function initProductShelves() {
     const container = document.getElementById('dynamic-sections-container');
     if (!container) return;
-    
-    // Reset State
-    parentCategories = [];
-    loadedCount = 0;
-    isLoadingShelves = false;
-    if (shelfObserver) shelfObserver.disconnect();
-    
-    // Initial Loader setup
-    container.innerHTML = '<div id="shelves-loader" class="text-center py-4" style="clear:both; width:100%;"><div class="loader">Loading shelves...</div></div>';
 
+    container.innerHTML = ''; 
+    homeFeedPage = 1;
+    hasMoreFeed = true;
+    
+    const loader = document.createElement('div');
+    loader.id = 'feed-loader';
+    loader.className = 'text-center py-5';
+    loader.innerHTML = '<div class="loader">Loading shelves...</div>';
+    container.appendChild(loader);
+
+    setupFeedObserver();
+}
+
+async function loadNextFeedBatch() {
+    if (isFeedLoading || !hasMoreFeed) return;
+    
+    isFeedLoading = true;
+    const loader = document.getElementById('feed-loader');
+    
     try {
-        // Step 1: Fetch all Categories upfront to know the order
-        //
-        const catResponse = await apiCall('/catalog/categories/?page_size=100', 'GET', null, false);
-        const allCats = catResponse.results || catResponse;
+        const response = await apiCall(`/catalog/api/home/feed/?page=${homeFeedPage}`, 'GET', null, false);
         
-        // Filter: Only Parent Categories
-        parentCategories = allCats.filter(c => !c.parent);
+        const sections = response.sections || [];
+        hasMoreFeed = response.has_more;
+        homeFeedPage = response.next_page;
 
-        if (parentCategories.length === 0) {
-            document.getElementById('shelves-loader').remove();
-            return;
+        sections.forEach(section => {
+            renderSection(section);
+        });
+
+        if (!hasMoreFeed) {
+            if(feedObserver) feedObserver.disconnect();
+            if(loader) {
+                loader.innerHTML = '';
+                renderEndOfPageCTA(loader);
+            }
         }
-        
-        console.log(`Infinite Scroll: Found ${parentCategories.length} categories. Starting lazy load...`);
 
-        // Step 2: Setup Observer immediately.
-        setupObserver();
-
-    } catch (e) {
-        console.error("Shelves Init Error:", e);
-        const loader = document.getElementById('shelves-loader');
-        if(loader) loader.innerHTML = '<p class="text-muted text-center">End of Catalog</p>';
+    } catch (error) {
+        console.error("Feed Load Error:", error);
+    } finally {
+        isFeedLoading = false;
     }
 }
 
-async function loadNextBatch() {
-    // Constraint: Stop if loading, or if all categories finished
-    if (isLoadingShelves || loadedCount >= parentCategories.length) {
-        if (loadedCount >= parentCategories.length) {
-            renderEndOfPage();
-        }
-        return;
-    }
-    
-    isLoadingShelves = true;
-    
-    let loader = document.getElementById('shelves-loader');
-    if (loader) loader.innerHTML = '<div class="loader">Loading next category...</div>';
+function renderSection(section) {
+    const container = document.getElementById('feed-loader'); 
+    if (!container) return;
 
-    const categoryToLoad = parentCategories[loadedCount];
-    
-    // Fetch and Render
-    const success = await renderSingleShelf(categoryToLoad);
-
-    loadedCount++;
-    isLoadingShelves = false;
-
-    if (!success) {
-        // OPTIMIZATION: Small delay to prevent rapid recursion loops on network error
-        setTimeout(() => {
-            console.warn(`Skipping empty/failed category: ${categoryToLoad.name}`);
-            loadNextBatch();
-        }, 100);
-    } else {
-        // Check if we just loaded the last one
-        if (loadedCount >= parentCategories.length) {
-            renderEndOfPage();
-        }
-    }
-}
-
-function renderEndOfPage() {
-    const loader = document.getElementById('shelves-loader');
-    if (loader) {
-        //
-        loader.innerHTML = `
-            <div class="end-page-cta" style="animation: fadeIn 0.5s;">
-                <div class="cta-icon-box">
-                    <i class="fas fa-shipping-fast"></i>
-                </div>
-                <h3 class="cta-title">Can't find what you're looking for?</h3>
-                <p class="cta-desc">
-                    QuickDash gets your order in minutes.
-                    Still missing something? Just ask to your assistant.
-                </p>
-                <div class="cta-buttons">
-                    <button class="btn-cta-action btn-search-trigger" onclick="scrollToSearch()">
-                        <i class="fas fa-search"></i> Search Item
-                    </button>
-                    <button class="btn-cta-action btn-ai-trigger" onclick="triggerAssistant()">
-                        <i class="fas fa-robot"></i> Ask Assistant
-                    </button>
-                </div>
+    const html = `
+        <section class="category-section" style="animation: fadeIn 0.5s ease-out; margin-bottom: 30px;">
+            <div class="section-header d-flex justify-content-between align-items-center px-3 mb-2">
+                <h3 style="font-size: 1.2rem; font-weight: 700;">${section.category_name}</h3>
+                <a href="/search_results.html?slug=${section.category_slug}" class="text-success text-decoration-none small">
+                    See All <i class="fas fa-chevron-right"></i>
+                </a>
             </div>
-        `;
-        if (shelfObserver) shelfObserver.disconnect();
-    }
-}
+            
+            <div class="product-scroll-wrapper d-flex" style="overflow-x: auto; gap: 15px; padding: 10px 15px; scroll-behavior: smooth;">
+                ${section.products.map(p => {
+                    // Check if item is in cart
+                    const qty = cartMap[p.id] || 0;
+                    const buttonHtml = qty > 0 
+                        ? getQtyControlHtml(p.id, qty) 
+                        : `<button id="btn-${p.id}" onclick="addToCart('${p.id}', 1, this)" class="btn-add-initial">ADD</button>`;
 
-async function renderSingleShelf(cat) {
-    try {
-        const url = `/catalog/skus/?category__slug=${cat.slug}&page_size=${PRODUCTS_PER_SHELF}`;
-        const prodResponse = await apiCall(url, 'GET', null, false);
-        const products = prodResponse.results || prodResponse;
-
-        if (!products || products.length === 0) return false;
-
-        const shelfHtml = `
-            <section class="category-section" style="animation: fadeIn 0.5s ease-in; min-height: 280px;">
-                <div class="section-header">
-                    <h3>${cat.name}</h3>
-                    <a href="/search_results.html?slug=${cat.slug}" class="view-all-btn">See All <i class="fas fa-chevron-right"></i></a>
-                </div>
-                <div class="product-scroll-wrapper">
-                    ${products.map(p => `
-                        <div class="prod-card">
-                            <a href="/product.html?code=${p.sku_code}">
-                                <div class="prod-img-box">
-                                    <img src="${p.image_url || 'https://cdn-icons-png.flaticon.com/512/1147/1147805.png'}" loading="lazy" alt="${p.name}">
-                                </div>
-                                <div class="prod-title">${p.name}</div>
-                                <div class="prod-unit">${p.unit}</div>
-                            </a>
-                            <div class="prod-footer">
-                                <div class="prod-price">₹${parseFloat(p.sale_price).toFixed(0)}</div>
-                                <button onclick="addToCart('${p.id}', this)">ADD</button>
+                    return `
+                    <div class="prod-card" style="min-width: 160px; max-width: 160px; background: #fff; border-radius: 12px; padding: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                        <a href="/product.html?code=${p.sku_code}" class="text-decoration-none text-dark">
+                            <div class="prod-img-box position-relative mb-2" style="height: 140px; display: flex; align-items: center; justify-content: center;">
+                                ${p.is_featured ? '<span class="badge bg-danger position-absolute top-0 start-0" style="font-size:0.6rem;">HOT</span>' : ''}
+                                <img src="${p.image || 'https://via.placeholder.com/150'}" loading="lazy" style="max-height: 100%; max-width: 100%; object-fit: contain;">
+                            </div>
+                            <div class="prod-title text-truncate small fw-bold mb-1">${p.name}</div>
+                            <div class="prod-unit text-muted small mb-2" style="font-size: 0.75rem;">${p.unit}</div>
+                        </a>
+                        <div class="prod-footer d-flex justify-content-between align-items-center">
+                            <div class="prod-price fw-bold">₹${p.price.toFixed(0)}</div>
+                            <div id="action-wrapper-${p.id}">
+                                ${buttonHtml}
                             </div>
                         </div>
-                    `).join('')}
-                    <div class="view-all-card">
-                         <a href="/search_results.html?slug=${cat.slug}">
-                            <i class="fas fa-arrow-right"></i>
-                            <span>View All</span>
-                         </a>
                     </div>
+                `}).join('')}
+                
+                <div class="view-all-card d-flex align-items-center justify-content-center" style="min-width: 120px;">
+                     <a href="/search_results.html?slug=${section.category_slug}" class="text-center text-success text-decoration-none">
+                        <div style="font-size: 1.5rem;"><i class="fas fa-arrow-right"></i></div>
+                        <small>View All</small>
+                     </a>
                 </div>
-            </section>
-        `;
-        
-        const loader = document.getElementById('shelves-loader');
-        if (loader) {
-            loader.insertAdjacentHTML('beforebegin', shelfHtml);
-        }
-        return true; 
+            </div>
+        </section>
+    `;
 
-    } catch (e) {
-        console.warn(`Shelf failed for ${cat.name}`, e);
-        return false;
-    }
+    container.insertAdjacentHTML('beforebegin', html);
 }
 
-function setupObserver() {
-    const loader = document.getElementById('shelves-loader');
+// --- HTML Generator for Qty Control ---
+function getQtyControlHtml(skuId, qty) {
+    return `
+        <div class="qty-control">
+            <button class="qty-btn" onclick="updateCartQty('${skuId}', -1)">-</button>
+            <span class="qty-val" id="qty-${skuId}">${qty}</span>
+            <button class="qty-btn" onclick="updateCartQty('${skuId}', 1)">+</button>
+        </div>
+    `;
+}
+
+function renderEndOfPageCTA(container) {
+    if(!container) return;
+    container.innerHTML = `
+        <div class="end-page-cta" style="animation: fadeIn 0.5s;">
+            <div class="cta-icon-box"><i class="fas fa-shipping-fast"></i></div>
+            <h3 class="cta-title">Can't find what you're looking for?</h3>
+            <div class="cta-buttons">
+                <button class="btn-cta-action btn-search-trigger" onclick="scrollToSearch()">Search Item</button>
+            </div>
+        </div>
+    `;
+}
+
+function setupFeedObserver() {
+    const loader = document.getElementById('feed-loader');
     if (!loader) return;
-
-    if (shelfObserver) shelfObserver.disconnect();
-
-    const options = {
-        root: null, 
-        rootMargin: '100px', 
-        threshold: 0.1 
-    };
-
-    shelfObserver = new IntersectionObserver((entries) => {
+    const options = { rootMargin: '200px', threshold: 0.1 };
+    feedObserver = new IntersectionObserver((entries) => {
         if (entries[0].isIntersecting) {
-            loadNextBatch();
+            loadNextFeedBatch();
         }
     }, options);
-
-    shelfObserver.observe(loader);
+    feedObserver.observe(loader);
 }
+
 // =========================================================
-// 6. CART LOGIC
+// 6. CART LOGIC (ADD / UPDATE)
 // =========================================================
-async function addToCart(skuId, btn) {
-    // FIX: Sahi key 'access_token' use karein
+
+// Called when clicking "ADD" initially
+async function addToCart(skuId, qty, btn) {
     if (!localStorage.getItem('access_token')) {
         window.location.href = '/auth.html';
         return;
     }
 
-    const origText = btn.innerText;
-    const origBg = btn.style.background;
-
-    // UX: Loading State
-    btn.innerText = "..";
-    btn.disabled = true;
+    // Immediate UI Feedback (Optimistic)
+    const wrapper = document.getElementById(`action-wrapper-${skuId}`);
+    if (wrapper) {
+        wrapper.innerHTML = `<div class="spinner-border spinner-border-sm text-success" role="status"></div>`;
+    }
 
     try {
-        await apiCall('/orders/cart/add/', 'POST', { sku_id: skuId, quantity: 1 });
+        await apiCall('/orders/cart/add/', 'POST', { sku_id: skuId, quantity: qty });
+        
+        // Update Local State
+        const newQty = (cartMap[skuId] || 0) + qty;
+        cartMap[skuId] = newQty;
 
-        // Success State
-        btn.innerText = "✔";
-        btn.style.background = "#32CD32";
-        btn.style.color = "#fff";
-
+        // Render Quantity Control
+        if (wrapper) {
+            wrapper.innerHTML = getQtyControlHtml(skuId, newQty);
+        }
+        
+        // Refresh Global Cart Count (in Navbar)
         if (window.updateGlobalCartCount) window.updateGlobalCartCount();
 
-        setTimeout(() => {
-            btn.innerText = "ADD";
-            btn.style.background = origBg || "#e6f7ef";
-            btn.style.color = "#32CD32";
-            btn.disabled = false;
-        }, 1500);
+    } catch (e) {
+        alert("Failed to add: " + e.message);
+        // Revert UI
+        if (wrapper) {
+            wrapper.innerHTML = `<button id="btn-${skuId}" onclick="addToCart('${skuId}', 1, this)" class="btn-add-initial">ADD</button>`;
+        }
+    }
+}
+
+// Called when clicking + or - in the counter
+// Called when clicking + or - in the counter
+async function updateCartQty(skuId, change) {
+    const currentQty = cartMap[skuId] || 0;
+    const newQty = currentQty + change;
+    
+    const qtySpan = document.getElementById(`qty-${skuId}`);
+    const wrapper = document.getElementById(`action-wrapper-${skuId}`);
+
+    // 1. Optimistic UI Update (Turant UI change karein)
+    if (newQty <= 0) {
+        // Agar quantity 0 ho gayi, toh wapas "ADD" button dikhayein
+        if (wrapper) wrapper.innerHTML = `<button id="btn-${skuId}" onclick="addToCart('${skuId}', 1, this)" class="btn-add-initial">ADD</button>`;
+        delete cartMap[skuId];
+    } else {
+        // Agar quantity positive hai, toh number update karein
+        if (qtySpan) qtySpan.innerText = newQty;
+        cartMap[skuId] = newQty;
+    }
+
+    // 2. API Call (Backend Update)
+    try {
+        if (newQty <= 0) {
+            // Remove item API
+            await apiCall(`/orders/cart/items/${skuId}/`, 'DELETE');
+        } else {
+            // Update API
+            // FIX: Hamein 'change' (1) nahi, balki 'newQty' (Total) bhejna hai
+            await apiCall('/orders/cart/add/', 'POST', { sku_id: skuId, quantity: newQty });
+        }
+        
+        // Header cart count update karein
+        if (window.updateGlobalCartCount) window.updateGlobalCartCount();
 
     } catch (e) {
-        alert(e.message || "Failed");
-        btn.innerText = "ADD";
-        btn.disabled = false;
+        console.error("Cart Update Failed", e);
+        // Error handling: Agar fail ho jaye toh UI revert kar sakte hain (Optional)
     }
 }
 
@@ -399,17 +497,11 @@ function scrollToSearch() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     setTimeout(() => {
         const searchInput = document.querySelector('input[name="q"]');
-        if (searchInput) {
-            searchInput.focus();
-            searchInput.style.borderColor = '#32CD32'; 
-            setTimeout(() => searchInput.style.borderColor = '', 1500);
-        }
+        if (searchInput) searchInput.focus();
     }, 800); 
 }
 
 function triggerAssistant() {
     const astBtn = document.getElementById('ast-btn');
-    if (astBtn) {
-        astBtn.click(); 
-    }
+    if (astBtn) astBtn.click(); 
 }

@@ -154,129 +154,92 @@ img { max-width: 100%; display: block; }
 .nav-item.active { background-color: var(--primary); color: white; font-weight: 600; }
 
 /* --- FOOTER STYLES (Cleaned up) --- */
+/* --- FOOTER STYLES (Fresh Organic Theme) --- */
 footer {
-    background-color: #ffffff;
-    color: #2d3436; /* Dark text for white bg */
+    background-color: #f0fff4; /* Very Light Green Background */
+    color: #2d3436;
     padding-top: 0;
     margin-top: auto;
     position: relative;
     font-size: 0.9rem;
-    overflow: hidden;
-    
-    /* "Tech/Grocery" Vibe Pattern - Subtle Grid */
-    background-image: 
-        linear-gradient(#f0f2f5 1px, transparent 1px),
-        linear-gradient(90deg, #f0f2f5 1px, transparent 1px);
-    background-size: 20px 20px; /* Grid size */
-    background-position: center center;
+    border-top: 1px solid #32CD32; /* Solid Green Border */
 }
 
-/* Neon Green Top Border (Speed Line) */
+/* Top Border Styling */
 .footer-top-border {
-    height: 4px;
-    background: linear-gradient(90deg, var(--primary), #FFD700); /* Green to Gold */
-    width: 100%;
-    position: relative;
-    z-index: 2;
+    display: none; /* Is theme mein gradient border ki zaroorat nahi */
 }
 
 .footer-content {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     gap: 40px;
-    padding: 50px 0;
-    position: relative;
-    z-index: 1;
+    padding: 60px 0;
 }
 
 /* Brand Styling */
 .footer-logo {
-    font-size: 1.8rem;
+    font-size: 2rem;
     font-weight: 800;
-    color: var(--primary);
-    margin-bottom: 15px;
+    color: #074d04; /* Dark Green Text */
+    margin-bottom: 10px;
     display: flex; align-items: center; gap: 10px;
-    text-decoration: none;
 }
-.footer-logo:hover { opacity: 0.8; }
+.footer-logo i { color: #32CD32; }
 
-.brand-col p { color: #636e72; line-height: 1.6; margin-bottom: 20px; }
+.brand-col p { color: #555; font-weight: 500; }
 
 /* Headings */
 .footer-column h3 {
-    font-size: 1.1rem;
+    font-size: 1.2rem;
     font-weight: 700;
-    color: #2d3436;
+    color: #074d04; /* Dark Green */
     margin-bottom: 20px;
-    position: relative;
-    display: inline-block;
-    letter-spacing: 0.5px;
-}
-.footer-column h3::after {
-    content: '';
-    position: absolute;
-    left: 0; bottom: -8px;
-    width: 40px; height: 3px;
-    background-color: var(--primary);
-    border-radius: 2px;
 }
 
-/* Interactive Links */
-.footer-links li { margin-bottom: 12px; }
+/* Links */
 .footer-links a {
-    color: #636e72; /* Muted text */
+    color: #444;
     transition: all 0.3s ease;
-    display: flex; align-items: center; gap: 8px;
     font-weight: 500;
+    padding: 5px 0;
+    display: block;
 }
-.footer-links a i { font-size: 0.7rem; color: var(--primary); opacity: 0.6; transition: 0.3s; }
-
-/* Hover Animation */
-.footer-links a:hover { color: var(--primary); transform: translateX(5px); }
-.footer-links a:hover i { opacity: 1; }
-
-/* Contact Info */
-.contact-col p {
-    display: flex; align-items: center; gap: 12px;
-    margin-bottom: 14px; color: #636e72;
+.footer-links a:hover { 
+    color: #32CD32; 
+    transform: translateX(5px); 
+    font-weight: 600;
 }
-.contact-col i { color: var(--primary); font-size: 1rem; width: 20px; text-align: center; }
+.footer-links a i { display: none; } /* Remove chevron icons for cleaner look */
 
-/* Social Icons Buttons (Light Theme) */
-.social-icons { display: flex; gap: 12px; margin-top: 15px; }
+/* Contact & Social */
+.contact-col p { color: #444; margin-bottom: 10px; }
+.contact-col i { color: #32CD32; margin-right: 8px; }
+
 .social-btn {
     width: 40px; height: 40px;
-    background: #f1f2f6; /* Light grey background */
-    border-radius: 50%;
+    background: #fff;
+    border: 1px solid #32CD32; /* Green Border */
+    color: #32CD32;
+    border-radius: 12px; /* Rounded Squares */
     display: flex; align-items: center; justify-content: center;
-    color: #2d3436; 
-    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    font-size: 1.1rem;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    transition: 0.3s;
 }
 .social-btn:hover {
-    background: var(--primary);
+    background: #32CD32;
     color: #fff;
-    transform: translateY(-3px) scale(1.1);
     box-shadow: 0 5px 15px rgba(50, 205, 50, 0.3);
 }
 
-/* App Badges */
-.app-badges { display: flex; gap: 15px; }
-.app-badges a { font-size: 1.6rem; color: #b2bec3; transition: 0.3s; }
-.app-badges a:hover { color: var(--primary); transform: scale(1.1); }
-
-/* Copyright Bar (Light) */
+/* Copyright Bar */
 .copyright-bar {
-    background-color: #f9f9f9;
-    padding: 20px;
+    background-color: #32CD32; /* Full Green Bottom */
+    padding: 15px;
     text-align: center;
-    border-top: 1px solid #eee;
-    color: #636e72;
-    font-size: 0.85rem;
-    position: relative;
-    z-index: 1;
+    color: #fff; /* White Text */
+    font-weight: 600;
 }
+.copyright-bar i { color: #fff !important; } /* White Heart */
 
 /* --- Mobile Queries --- */
 @media (max-width: 600px) {

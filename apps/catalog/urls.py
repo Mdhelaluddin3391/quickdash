@@ -7,7 +7,10 @@ from .views import (
     BulkImportSKUView,
     BannerViewSet,
     FlashSaleViewSet,
-    SearchSuggestView  # Added for the Search Bar feature
+    SearchSuggestView,
+    # New Function Imports (Explicitly imported to fix NameError)
+    get_products_cursor_api,
+    get_home_feed_api
 )
 from .views_assistant import ShoppingAssistantView
 
@@ -29,5 +32,9 @@ urlpatterns = [
     # Custom Endpoints
     path("import/bulk-csv/", BulkImportSKUView.as_view(), name="bulk-import-csv"),
     path("assistant/chat/", ShoppingAssistantView.as_view(), name="shopping-assistant"),
-    path("suggest/", SearchSuggestView.as_view(), name="search-suggest"), # Search Auto-complete
+    path("suggest/", SearchSuggestView.as_view(), name="search-suggest"),
+    
+    # --- PERFORMANCE APIs (Optimized) ---
+    path('api/products/feed/', get_products_cursor_api, name='api_products_feed'),
+    path('api/home/feed/', get_home_feed_api, name='api_home_feed'),
 ]
