@@ -7,7 +7,7 @@ from django.conf import settings
 from django.contrib.gis.geos import Point
 from django.contrib.gis.db.models.functions import Distance
 from django.contrib.gis.measure import D
-
+from apps.warehouse.utils.warehouse_selector import select_best_warehouse  # <--- IMPORT THIS
 from apps.orders.models import Order, OrderItem, Cart
 from apps.payments.models import Payment
 from apps.warehouse.models import Warehouse
@@ -29,22 +29,45 @@ class CheckoutOrchestrator:
         self.payment_method = data.get("payment_method", "RAZORPAY")
 
     # ---------------------------------------------
-    # GET WAREHOUSE
+    # GET WAREHOUSE (SMART ROUTING)
     # ---------------------------------------------
     def _get_warehouse(self):
-        # Try geo-based lookup
-        if self.lat and self.lng:
-            wh, dist = get_nearest_warehouse(self.lat, self.lng)
-            if wh:
-                logger.info(f"[Warehouse] Geo-located {wh.code} @ {dist}km")
-                return wh
+        # 1. Cart Items Fetch Karein (Selector Logic ke liye)
+        try:
+            cart = Cart.objects.prefetch_related('items').get(customer=self.user)
+            if not cart.items.exists():
+                return None
+            
+            # Selector ko simple list chahiye: [{'sku_id': uuid, 'qty': 1}, ...]
+            order_items_data = [
+                {"sku_id": item.sku_id, "qty": item.quantity} 
+                for item in cart.items.all()
+            ]
+        except Cart.DoesNotExist:
+            return None
 
-        # Fallback ID
+        # 2. Smart Selector Call Karein
+        if self.lat and self.lng:
+            try:
+                # Ye function 10km limit aur stock check dono karega
+                wh = select_best_warehouse(
+                    order_items=order_items_data,
+                    customer_location=(self.lat, self.lng)
+                )
+                if wh:
+                    logger.info(f"[Smart Routing] Selected {wh.code} for User {self.user.id}")
+                    return wh
+            except Exception as e:
+                logger.warning(f"[Smart Routing] Error: {e}")
+                # Fallthrough to other checks if needed, or return None
+                return None
+
+        # 3. Fallback (Agar Manual ID bheja gaya ho - Testing ke liye)
         if self.warehouse_id:
             try:
                 return Warehouse.objects.get(id=self.warehouse_id, is_active=True)
             except Warehouse.DoesNotExist:
-                logger.warning(f"Invalid warehouse requested: {self.warehouse_id}")
+                pass
 
         return None
 
@@ -52,62 +75,58 @@ class CheckoutOrchestrator:
     # EXECUTE CHECKOUT
     # ---------------------------------------------
     def execute(self):
-        # 1. Idempotency Check (Prevent Zombie Orders)
+        # 1. Idempotency Check
         idempotency_key = self.data.get("idempotency_key")
         if idempotency_key:
             existing_order = Order.objects.filter(metadata__idempotency_key=idempotency_key).first()
             if existing_order:
-                # Return existing order state without re-executing logic
                 payment_data = None
                 if existing_order.payment_status != 'paid':
-                    # Re-construct payment data if needed, or return generic pending status
                     payment_data = {"status": existing_order.payment_status}
                 return existing_order, payment_data, None
 
-        # 2. Validate warehouse (Geo-Logic Trust)
+        # 2. Validate Warehouse (10km + Stock Check)
         warehouse = self._get_warehouse()
+        
+        # USER FRIENDLY MESSAGE
         if not warehouse:
-            return None, None, "No serviceable warehouse found for this location."
+            return None, None, "Maaf kijiye, ye items abhi aapke location (10km range) mein available nahi hain."
 
+        # Pricing check...
         expected_total = self.data.get("expected_total")
         if expected_total is None:
-             # Strict enforcement: Frontend MUST send what user saw
-             return None, None, "Pricing version mismatch. Please refresh."
+             return None, None, "Pricing update required. Please refresh cart."
 
         try:
             with transaction.atomic():
-                # 3. Aggressive Cart Locking (Prevent Cart Mutation)
-                # Lock the PARENT cart to prevent new items being added mid-transaction
+                # ... (Baaki logic same rahega jo maine pehle diya tha - Cart Locking, Inventory, Order Creation) ...
+                
+                # ... (Cart Locking)
                 try:
                     cart = Cart.objects.select_for_update().select_related('customer').get(customer=self.user)
                 except Cart.DoesNotExist:
                     return None, None, "Cart not found."
 
-                if not cart.items.exists():
-                    return None, None, "Cart is empty."
-
-                # Lock items and Sort by SKU ID to prevent Deadlocks during inventory locking
+                # Lock items
                 cart_items = list(cart.items.select_for_update().select_related('sku'))
                 cart_items.sort(key=lambda x: x.sku.id)
 
-                # 4. Inventory Reservation
-                # Delegate to the batch locker for atomic inventory updates
+                # Inventory Reservation (Batch)
                 from apps.inventory.services import batch_check_and_lock_inventory
                 try:
                     batch_check_and_lock_inventory(warehouse.id, cart_items)
                 except ValueError as e:
-                    return None, None, f"Inventory Error: {str(e)}"
+                    # Agar warehouse select hone ke baad bhi millisecond mein stock khatam ho gaya
+                    return None, None, f"Out of Stock: {str(e)}"
 
-                # 5. Price Re-Calculation & Integrity Check
+                # Price Calculation
                 total_check = Decimal("0.00")
                 items_to_create = []
                 
                 for item in cart_items:
-                    # Always use current DB price, never trust the cart's stale price
                     current_unit_price = item.sku.sale_price or Decimal("0.00")
                     line_total = current_unit_price * item.quantity
                     total_check += line_total
-                    
                     items_to_create.append(OrderItem(
                         sku=item.sku,
                         quantity=item.quantity,
@@ -116,13 +135,10 @@ class CheckoutOrchestrator:
                         sku_name_snapshot=item.sku.name
                     ))
 
-                # 6. Price Slippage Guard
-                # Allow a tiny epsilon for float math, though Decimal should be exact.
-                # If DB price changed since user loaded page, ABORT.
                 if abs(total_check - Decimal(str(expected_total))) > Decimal("0.05"):
-                    return None, None, "Prices have changed since you viewed the cart. Please review and try again."
+                    return None, None, "Prices have updated. Please review cart."
 
-                # 7. Create Order
+                # Order Create
                 order = Order.objects.create(
                     customer=self.user,
                     warehouse=warehouse,
@@ -133,21 +149,17 @@ class CheckoutOrchestrator:
                     delivery_lng=self.lng,
                     status='pending',
                     payment_status='pending',
-                    final_amount=total_check, # Explicitly save the verified amount
+                    final_amount=total_check,
                     metadata={"idempotency_key": idempotency_key} if idempotency_key else {}
                 )
 
-                # Bulk create items with order reference
                 for i in items_to_create:
                     i.order = order
                 OrderItem.objects.bulk_create(items_to_create)
-
-                # 8. Clear Cart
                 cart.items.all().delete()
 
-                # 9. Payment Orchestration
+                # Payment Setup
                 payment_data = None
-
                 if self.payment_method == "COD":
                     Payment.objects.create(
                         order=order,
@@ -177,10 +189,8 @@ class CheckoutOrchestrator:
                                 "amount": str(order.final_amount),
                                 "currency": "INR"
                             }
-                        except Exception as e:
-                            logger.error(f"Razorpay error: {e}")
-                            # Rollback the entire transaction if payment setup fails
-                            raise ValueError("Payment gateway error. Please try again.")
+                        except Exception:
+                            raise ValueError("Payment gateway error.")
                     else:
                         payment_data = {"mode": "FREE", "status": "SUCCESS"}
                         order.payment_status = "paid"
@@ -191,8 +201,8 @@ class CheckoutOrchestrator:
         except ValueError as ve:
             return None, None, str(ve)
         except Exception as e:
-            logger.exception("Fatal checkout failure")
-            return None, None, "Internal system error during checkout."
+            logger.exception("Checkout Fatal Error")
+            return None, None, "Something went wrong. Please try again."
 
 
 def cancel_order(order, cancelled_by=None, reason=""):

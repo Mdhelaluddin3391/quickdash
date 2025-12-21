@@ -11,37 +11,38 @@ def select_best_warehouse(order_items, customer_location=None):
     """
     Selects the optimal warehouse based on:
     1. Capability (Must have stock)
-    2. Proximity (Geo-spatial trust)
-    3. Score (Coverage - Distance Penalty)
+    2. Proximity (Within 10km ONLY)
+    3. Score (Stock availability - Distance Penalty)
     
     order_items: list of dicts {'sku_id': uuid, 'qty': int}
-    customer_location: tuple (lat, lng) or Point object
+    customer_location: tuple (lat, lng)
     """
     
-    # 1. Spatial Filtering (Geo-Logic Trust)
+    # 1. Spatial Filtering (STRICT 10KM LIMIT)
     warehouses = Warehouse.objects.filter(is_active=True)
     
     if customer_location:
+        # Tuple (lat, lng) ko Point object mein convert karein
+        # Note: Point(lng, lat) hota hai standard GIS mein
         if isinstance(customer_location, (tuple, list)):
             pnt = Point(float(customer_location[1]), float(customer_location[0]), srid=4326)
         else:
             pnt = customer_location
             
-        # Filter: Only warehouses within 20km
+        # FILTER: Sirf 10km radius wale warehouses
         warehouses = warehouses.filter(
-            location__dwithin=(pnt, D(km=20))
+            location__dwithin=(pnt, D(km=10))
         ).annotate(
             dist=Distance('location', pnt)
         ).order_by('dist')
     
-    # Early exit if no service
+    # Agar 10km mein koi warehouse nahi hai, toh turant return karein
     if not warehouses.exists():
         return None
 
     # 2. Stock Availability Check (Batch Query)
     sku_ids = [it['sku_id'] for it in order_items]
     
-    # Get all relevant stock lines for these warehouses
     stocks = InventoryStock.objects.filter(
         warehouse__in=warehouses,
         sku_id__in=sku_ids
@@ -71,21 +72,18 @@ def select_best_warehouse(order_items, customer_location=None):
             
             avail = stock_map.get(req_sku, 0)
             
-            # Critical: If any item is missing entirely, this warehouse is invalid
-            # (Unless we support split shipments, but assuming Atomic Orders for now)
+            # Critical: Agar ek bhi item missing hai, toh heavy penalty
             if avail < req_qty:
                 fully_stocked = False
-                # Penalize heavily, but don't discard if it's the only option (partial fill logic)
-                current_score -= 5000 
+                current_score -= 5000  # Penalty for missing items
             else:
-                current_score += 100 # Bonus for having stock
+                current_score += 100   # Bonus for having item
         
         if fully_stocked:
-            current_score += 1000
+            current_score += 1000 # Jackpot bonus for full order
 
-        # Apply Distance Penalty: -10 points per km
+        # Apply Distance Penalty: -10 points per km (Jitna paas, utna behtar)
         if hasattr(wh, 'dist') and wh.dist is not None:
-            # .km attribute access on Distance object
             current_score -= (wh.dist.km * 10)
 
         if current_score > best_score:
@@ -93,7 +91,8 @@ def select_best_warehouse(order_items, customer_location=None):
             best_wh = wh
 
     # 4. Final Validation
-    # If the best score is significantly negative, it means we can't fulfill the order
+    # Agar best score bhi bahut negative hai (matlab items out of stock hain),
+    # toh None return karein taaki user ko error dikhe.
     if best_score < -4000:
         return None
 
