@@ -1,16 +1,15 @@
-# apps/warehouse/views.py
 import logging
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError
+from django.conf import settings
 
 from rest_framework import viewsets, views, generics, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from apps.warehouse.utils.warehouse_selector import WarehouseSelector
+
+from apps.warehouse.utils.warehouse_selector import WarehouseSelector, get_nearest_service_area
 from .models import (
     Warehouse, BinInventory, PickingTask, PickItem,
     PackingTask, GRN, CycleCountTask, ServiceArea
@@ -31,12 +30,14 @@ from .services import (
     resolve_skip_as_shortpick, admin_fulfillment_cancel,
     create_grn_and_putaway, place_putaway_item,
     create_cycle_count, record_cycle_count_item, verify_dispatch_otp,
-    check_service_availability, get_nearest_service_area,
+    check_service_availability,
 )
 
 logger = logging.getLogger(__name__)
 
-# ... (Previous ViewSets: WarehouseViewSet, BinInventoryList, etc. - kept as is) ...
+# ==========================
+# CORE VIEWSETS
+# ==========================
 
 class WarehouseViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Warehouse.objects.filter(is_active=True)
@@ -73,6 +74,16 @@ class PickingTaskViewSet(viewsets.ReadOnlyModelViewSet):
             .order_by("-created_at")
         )
 
+class CycleCountTaskViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = CycleCountTaskSerializer
+    permission_classes = [IsAuthenticated, WarehouseManagerOnly]
+    def get_queryset(self):
+        return CycleCountTaskSerializer.Meta.model.objects.all().order_by("-created_at")
+
+# ==========================
+# OPERATIONAL APIS
+# ==========================
+
 class ScanPickAPIView(views.APIView):
     permission_classes = [IsAuthenticated, PickerOnly]
     def post(self, request):
@@ -99,14 +110,10 @@ class MarkPickItemSkippedAPIView(views.APIView):
         pick_item_id = request.data.get("pick_item_id")
         reason = request.data.get("reason") or ""
 
-        if not (task_id and pick_item_id and reason):
-            return Response({"detail": "task_id, pick_item_id and reason required."}, status=400)
-
         try:
             with transaction.atomic():
                 skip = mark_pickitem_skipped(task_id, pick_item_id, request.user, reason, reopen_for_picker=False)
         except Exception as e:
-            logger.exception("mark_pickitem_skipped failed: %s", e)
             return Response({"detail": str(e)}, status=400)
 
         return Response({"detail": "Item skipped.", "skip_id": str(skip.id)}, status=200)
@@ -115,16 +122,11 @@ class CompletePackingAPIView(views.APIView):
     permission_classes = [IsAuthenticated, PackerOnly]
     def post(self, request):
         packing_task_id = request.data.get("packing_task_id")
-        if not packing_task_id:
-            return Response({"detail": "packing_task_id required."}, status=400)
-
         try:
             with transaction.atomic():
                 dispatch = complete_packing(packing_task_id, request.user)
         except Exception as e:
-            logger.exception("complete_packing failed: %s", e)
             return Response({"detail": str(e)}, status=400)
-
         return Response(DispatchRecordSerializer(dispatch).data, status=200)
 
 class DispatchOTPVerifyAPIView(views.APIView):
@@ -133,14 +135,11 @@ class DispatchOTPVerifyAPIView(views.APIView):
         serializer = DispatchOTPVerifySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-
         try:
             with transaction.atomic():
                 dispatch = verify_dispatch_otp(data["dispatch_id"], data["otp"], user=request.user)
         except Exception as e:
-            logger.exception("verify_dispatch_otp failed: %s", e)
             return Response({"detail": str(e)}, status=400)
-
         return Response({"detail": "OTP verified.", "dispatch": DispatchRecordSerializer(dispatch).data}, status=200)
 
 class AdminResolveShortPickAPIView(views.APIView):
@@ -154,7 +153,6 @@ class AdminResolveShortPickAPIView(views.APIView):
             with transaction.atomic():
                 spi = resolve_skip_as_shortpick(skip, request.user, serializer.validated_data["note"])
         except Exception as e:
-            logger.exception("resolve_skip failed: %s", e)
             return Response({"detail": str(e)}, status=400)
         return Response({"detail": "Resolved.", "short_picked_qty": spi.short_picked_qty}, status=200)
 
@@ -185,9 +183,7 @@ class CreateGRNAPIView(views.APIView):
                     created_by=request.user
                 )
         except Exception as e:
-            logger.exception("GRN failed: %s", e)
             return Response({"detail": str(e)}, status=400)
-        
         return Response({
             "grn": GRNSerializer(grn).data,
             "putaway_task": PutawayTaskSerializer(task).data
@@ -205,12 +201,6 @@ class PlacePutawayItemView(views.APIView):
         except Exception as e:
             return Response({"detail": str(e)}, status=400)
         return Response({"detail": "Putaway updated.", "item_id": str(item.id)}, status=200)
-
-class CycleCountTaskViewSet(viewsets.ReadOnlyModelViewSet):
-    serializer_class = CycleCountTaskSerializer
-    permission_classes = [IsAuthenticated, WarehouseManagerOnly]
-    def get_queryset(self):
-        return CycleCountTaskSerializer.Meta.model.objects.all().order_by("-created_at")
 
 class CreateCycleCountView(views.APIView):
     permission_classes = [IsAuthenticated, WarehouseManagerOnly]
@@ -237,36 +227,10 @@ class RecordCycleCountView(views.APIView):
             return Response({"detail": str(e)}, status=400)
         return Response({"detail": "Recorded.", "cc_item_id": str(item.id)}, status=200)
 
-# URL references
-scan_pick_view = ScanPickAPIView.as_view()
-mark_pickitem_skipped_view = MarkPickItemSkippedAPIView.as_view()
-complete_packing_view = CompletePackingAPIView.as_view()
-place_putaway_item_view = PlacePutawayItemView.as_view()
-record_cycle_count_view = RecordCycleCountView.as_view()
-dispatch_otp_verify_view = DispatchOTPVerifyAPIView.as_view()
-
 # =========================================================
-# SERVICE AVAILABILITY (Refactored)
+# SERVICE AVAILABILITY & LOCATION
 # =========================================================
 
-class LocationBaseView(views.APIView):
-    def _extract_location(self, request):
-        data = request.query_params if request.method == 'GET' else request.data
-        lat = data.get('latitude') or data.get('lat')
-        lng = data.get('longitude') or data.get('lng')
-        wh_id = data.get('warehouse_id')
-        
-        if not lat or not lng:
-            raise ValidationError("Latitude and Longitude required")
-        return float(lat), float(lng), wh_id
-
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from django.conf import settings
-
-from apps.warehouse.utils.warehouse_selector import WarehouseSelector
-# Define constant for session key to avoid typos
 SERVICE_WAREHOUSE_KEY = 'quickdash_service_warehouse_id'
 
 class CheckServiceabilityAPIView(APIView):
@@ -275,7 +239,7 @@ class CheckServiceabilityAPIView(APIView):
     Determines if we operate there.
     Saves Warehouse ID to Session.
     """
-    permission_classes = [] # Public allowed
+    permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
         lat = request.data.get('lat')
@@ -292,7 +256,6 @@ class CheckServiceabilityAPIView(APIView):
 
         # 2. Outcome: Success
         if warehouse:
-            # CRITICAL: Save to Session
             request.session[SERVICE_WAREHOUSE_KEY] = warehouse.id
             request.session.modified = True 
             
@@ -305,7 +268,6 @@ class CheckServiceabilityAPIView(APIView):
 
         # 3. Outcome: Failure
         else:
-            # CRITICAL: Clear Session so they can't checkout
             if SERVICE_WAREHOUSE_KEY in request.session:
                 del request.session[SERVICE_WAREHOUSE_KEY]
             
@@ -314,23 +276,27 @@ class CheckServiceabilityAPIView(APIView):
                 "message": "Sorry, we do not deliver to this area yet."
             })
 
-class GetNearestServiceAreaAPIView(LocationBaseView):
+class GetNearestServiceAreaAPIView(APIView):
     permission_classes = [AllowAny]
     
-    def dispatch_request(self, request):
-        try:
-            lat, lng, _ = self._extract_location(request)
-            result = get_nearest_service_area(lat, lng)
-            return Response(result, status=status.HTTP_200_OK)
-        except ValidationError as e:
-            return Response({'error': str(e.message)}, status=status.HTTP_400_BAD_REQUEST)
-
-    def get(self, request): return self.dispatch_request(request)
-    def post(self, request): return self.dispatch_request(request)
+    def post(self, request):
+        lat = request.data.get('lat')
+        lng = request.data.get('lng')
+        if not lat or not lng:
+             return Response({'error': "Latitude and Longitude required"}, status=status.HTTP_400_BAD_REQUEST)
+             
+        result = get_nearest_service_area(lat, lng)
+        return Response(result, status=status.HTTP_200_OK)
 
 class ServiceAreaListAPIView(generics.ListAPIView):
     queryset = ServiceArea.objects.filter(is_active=True)
     serializer_class = ServiceAreaSerializer
     permission_classes = [AllowAny]
 
-
+# View Instances for URLs
+scan_pick_view = ScanPickAPIView.as_view()
+mark_pickitem_skipped_view = MarkPickItemSkippedAPIView.as_view()
+complete_packing_view = CompletePackingAPIView.as_view()
+place_putaway_item_view = PlacePutawayItemView.as_view()
+record_cycle_count_view = RecordCycleCountView.as_view()
+dispatch_otp_verify_view = DispatchOTPVerifyAPIView.as_view()

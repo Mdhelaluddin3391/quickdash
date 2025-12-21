@@ -5,6 +5,7 @@ from django.db.models import CheckConstraint, Q, F, Value, Case, When
 from django.conf import settings
 from django.utils import timezone
 from django.contrib.gis.db import models as gis_models
+from django.contrib.gis.geos import Point
 from apps.catalog.models import SKU
 
 logger = logging.getLogger(__name__)
@@ -15,15 +16,23 @@ logger = logging.getLogger(__name__)
 
 class Warehouse(models.Model):
     name = models.CharField(max_length=100)
-    
-    # FIX: Added 'code' field because it is used in Admin and Zone model
     code = models.CharField(max_length=50, unique=True, help_text="Unique Warehouse Code (e.g. BLR-01)")
     
-    # Geolocation
+    # Geolocation (Synced Fields)
     latitude = models.DecimalField(max_digits=9, decimal_places=6)
     longitude = models.DecimalField(max_digits=9, decimal_places=6)
-    service_radius_km = models.FloatField(default=3.0) # Strict 3km limit
+    
+    # CRITICAL FIX: Added Location PointField for PostGIS operations
+    location = gis_models.PointField(srid=4326, null=True, blank=True)
+    
+    service_radius_km = models.FloatField(default=3.0)
     is_active = models.BooleanField(default=True)
+
+    def save(self, *args, **kwargs):
+        # Auto-sync location Point from lat/lng
+        if self.latitude and self.longitude:
+            self.location = Point(float(self.longitude), float(self.latitude), srid=4326)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.name} ({self.code})"
@@ -35,14 +44,14 @@ class ServiceArea(models.Model):
         on_delete=models.CASCADE,
         related_name="service_areas",
     )
-    name = models.CharField(max_length=255, help_text="e.g., 'North Zone', 'Downtown Area'")
+    name = models.CharField(max_length=255)
     description = models.TextField(null=True, blank=True)
     
-    geometry = gis_models.PolygonField(srid=4326, null=True, blank=True, help_text="Service area boundary")
-    center_point = gis_models.PointField(srid=4326, null=True, blank=True, help_text="Center of service area")
-    radius_km = models.FloatField(default=5.0, help_text="Radius in kilometers if using point-based coverage")
+    geometry = gis_models.PolygonField(srid=4326, null=True, blank=True)
+    center_point = gis_models.PointField(srid=4326, null=True, blank=True)
+    radius_km = models.FloatField(default=5.0)
     
-    delivery_time_minutes = models.IntegerField(default=30, help_text="Estimated delivery time in minutes")
+    delivery_time_minutes = models.IntegerField(default=30)
     is_active = models.BooleanField(default=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
@@ -57,11 +66,7 @@ class ServiceArea(models.Model):
 
 
 class Zone(models.Model):
-    warehouse = models.ForeignKey(
-        Warehouse,
-        on_delete=models.CASCADE,
-        related_name="zones",
-    )
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE, related_name="zones")
     name = models.CharField(max_length=50)
     code = models.CharField(max_length=10)
 
@@ -69,7 +74,6 @@ class Zone(models.Model):
         unique_together = ("warehouse", "code")
 
     def __str__(self):
-        # Now this will work because Warehouse has 'code'
         return f"{self.warehouse.code}-{self.code}"
 
 class Aisle(models.Model):
@@ -108,14 +112,8 @@ class BinInventory(models.Model):
     class Meta:
         unique_together = ("bin", "sku")
         constraints = [
-            CheckConstraint(
-                check=Q(qty__gte=0), 
-                name="bin_inventory_qty_gte_0"
-            ),
-            CheckConstraint(
-                check=Q(reserved_qty__lte=F('qty')), 
-                name="bin_inventory_reserved_lte_qty"
-            ),
+            CheckConstraint(check=Q(qty__gte=0), name="bin_inventory_qty_gte_0"),
+            CheckConstraint(check=Q(reserved_qty__lte=F('qty')), name="bin_inventory_reserved_lte_qty"),
         ]
 
     @property
@@ -123,7 +121,7 @@ class BinInventory(models.Model):
         return self.qty - self.reserved_qty
 
     def __str__(self):
-        return f"{self.bin.bin_code} / {self.sku.sku_code} -> {self.qty} ({self.reserved_qty} reserved)"
+        return f"{self.bin.bin_code} / {self.sku.sku_code} -> {self.qty}"
 
 
 class StockMovement(models.Model):
@@ -143,12 +141,7 @@ class StockMovement(models.Model):
     movement_type = models.CharField(max_length=32, choices=MovementType.choices)
     reference_id = models.CharField(max_length=100, blank=True)
     timestamp = models.DateTimeField(auto_now_add=True)
-    performed_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
+    performed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 
     class Meta:
         indexes = [
@@ -156,9 +149,8 @@ class StockMovement(models.Model):
             models.Index(fields=["movement_type", "timestamp"]),
         ]
 
-
 # =========================================================
-# 2. TASKS (PICK → PACK → DISPATCH)
+# 2. TASKS & RECORDS
 # =========================================================
 
 class PickingTask(models.Model):
@@ -166,45 +158,22 @@ class PickingTask(models.Model):
         PENDING = "PENDING", "Pending"
         IN_PROGRESS = "IN_PROGRESS", "In Progress"
         COMPLETED = "COMPLETED", "Completed"
+        CANCELLED = "CANCELLED", "Cancelled"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
     order_id = models.CharField(max_length=50, db_index=True)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
-    picker = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="picking_tasks",
-    )
-    status = models.CharField(
-        max_length=20,
-        choices=TaskStatus.choices,
-        default=TaskStatus.PENDING,
-        db_index=True,
-    )
+    picker = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="picking_tasks")
+    status = models.CharField(max_length=20, choices=TaskStatus.choices, default=TaskStatus.PENDING, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
-    def __str__(self):
-        return f"PickTask {self.id} / Order {self.order_id}"
-
-
 class PickItem(models.Model):
-    task = models.ForeignKey(
-        PickingTask,
-        on_delete=models.CASCADE,
-        related_name="items",
-    )
+    task = models.ForeignKey(PickingTask, on_delete=models.CASCADE, related_name="items")
     sku = models.ForeignKey(SKU, on_delete=models.CASCADE)
     bin = models.ForeignKey(Bin, on_delete=models.CASCADE)
     qty_to_pick = models.PositiveIntegerField()
     picked_qty = models.PositiveIntegerField(default=0)
-
-    def __str__(self):
-        return f"{self.task.order_id} - {self.sku.sku_code} ({self.picked_qty}/{self.qty_to_pick})"
-
 
 class PackingTask(models.Model):
     class PackStatus(models.TextChoices):
@@ -213,30 +182,10 @@ class PackingTask(models.Model):
         PACKED = "PACKED", "Packed"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    picking_task = models.OneToOneField(
-        PickingTask,
-        on_delete=models.CASCADE,
-        related_name="packing_task",
-    )
-    packer = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="packing_tasks",
-    )
-    status = models.CharField(
-        max_length=30,
-        choices=PackStatus.choices,
-        default=PackStatus.PENDING,
-        db_index=True,
-    )
+    picking_task = models.OneToOneField(PickingTask, on_delete=models.CASCADE, related_name="packing_task")
+    packer = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="packing_tasks")
+    status = models.CharField(max_length=30, choices=PackStatus.choices, default=PackStatus.PENDING, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"PackTask {self.id} / Order {self.picking_task.order_id}"
-
 
 class DispatchRecord(models.Model):
     class DispatchStatus(models.TextChoices):
@@ -245,187 +194,74 @@ class DispatchRecord(models.Model):
         HANDED_OVER = "handed_over", "Handed Over to Rider"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    packing_task = models.OneToOneField(
-        PackingTask,
-        on_delete=models.CASCADE,
-        related_name="dispatch_record",
-    )
+    packing_task = models.OneToOneField(PackingTask, on_delete=models.CASCADE, related_name="dispatch_record")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
     order_id = models.CharField(max_length=128, db_index=True)
     pickup_otp = models.CharField(max_length=10, blank=True, null=True)
-    status = models.CharField(
-        max_length=30,
-        choices=DispatchStatus.choices,
-        default=DispatchStatus.READY,
-        db_index=True,
-    )
-    rider_id = models.CharField(
-        max_length=64,
-        null=True,
-        blank=True,
-        db_index=True,
-        help_text="ID of rider assigned by delivery service",
-    )
+    status = models.CharField(max_length=30, choices=DispatchStatus.choices, default=DispatchStatus.READY, db_index=True)
+    rider_id = models.CharField(max_length=64, null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"Dispatch {self.id} / Order {self.order_id} ({self.status})"
-
-
-# =========================================================
-# 3. EXCEPTIONS (SKIPS / SHORT-PICK / FC)
-# =========================================================
 
 class PickSkip(models.Model):
-    task = models.ForeignKey(
-        PickingTask,
-        on_delete=models.CASCADE,
-        related_name="skips",
-    )
-    pick_item = models.ForeignKey(
-        PickItem,
-        on_delete=models.CASCADE,
-        related_name="skips",
-    )
-    skipped_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        on_delete=models.SET_NULL,
-    )
+    task = models.ForeignKey(PickingTask, on_delete=models.CASCADE, related_name="skips")
+    pick_item = models.ForeignKey(PickItem, on_delete=models.CASCADE, related_name="skips")
+    skipped_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
     reason = models.CharField(max_length=255)
     is_resolved = models.BooleanField(default=False)
-    reopen_after_scan = models.BooleanField(
-        default=False,
-        help_text="If true, picker can try to re-scan after resolution.",
-    )
+    reopen_after_scan = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"Skip {self.id} - {self.reason[:20]}"
-
 
 class ShortPickIncident(models.Model):
     skip = models.OneToOneField(PickSkip, on_delete=models.CASCADE)
-    resolved_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        on_delete=models.SET_NULL,
-    )
+    resolved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
     short_picked_qty = models.IntegerField()
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-
 class FulfillmentCancel(models.Model):
-    pick_item = models.ForeignKey(
-        PickItem,
-        on_delete=models.CASCADE,
-        related_name="fc_records",
-    )
-    cancelled_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-    )
+    pick_item = models.ForeignKey(PickItem, on_delete=models.CASCADE, related_name="fc_records")
+    cancelled_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     reason = models.CharField(max_length=255)
     refund_initiated = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
-
-
-# =========================================================
-# 4. INBOUND (GRN & PUTAWAY)
-# =========================================================
 
 class GRN(models.Model):
     class GrnStatus(models.TextChoices):
         PENDING = "pending", "Pending"
         RECEIVED = "received", "Received"
         PUTAWAY_COMPLETE = "putaway_complete", "Putaway Complete"
-
+    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    warehouse = models.ForeignKey(
-        Warehouse,
-        on_delete=models.CASCADE,
-        related_name="grns",
-    )
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE, related_name="grns")
     grn_number = models.CharField(max_length=100, unique=True, db_index=True)
-    status = models.CharField(
-        max_length=30,
-        choices=GrnStatus.choices,
-        default=GrnStatus.PENDING,
-        db_index=True,
-    )
+    status = models.CharField(max_length=30, choices=GrnStatus.choices, default=GrnStatus.PENDING, db_index=True)
     received_at = models.DateTimeField(auto_now_add=True)
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        on_delete=models.SET_NULL,
-    )
-
-    def __str__(self):
-        return f"GRN {self.grn_number} ({self.warehouse.code})"
-
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
 
 class GRNItem(models.Model):
-    grn = models.ForeignKey(
-        GRN,
-        on_delete=models.CASCADE,
-        related_name="items",
-    )
+    grn = models.ForeignKey(GRN, on_delete=models.CASCADE, related_name="items")
     sku = models.ForeignKey(SKU, on_delete=models.CASCADE)
     expected_qty = models.IntegerField()
     received_qty = models.IntegerField(default=0)
-
 
 class PutawayTask(models.Model):
     class PutawayStatus(models.TextChoices):
         PENDING = "pending", "Pending"
         IN_PROGRESS = "in_progress", "In Progress"
         COMPLETED = "completed", "Completed"
-
+    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    grn = models.OneToOneField(
-        GRN,
-        on_delete=models.CASCADE,
-        related_name="putaway_task",
-    )
+    grn = models.OneToOneField(GRN, on_delete=models.CASCADE, related_name="putaway_task")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
-    putaway_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="putaway_tasks",
-    )
-    status = models.CharField(
-        max_length=30,
-        choices=PutawayStatus.choices,
-        default=PutawayStatus.PENDING,
-        db_index=True,
-    )
+    putaway_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="putaway_tasks")
+    status = models.CharField(max_length=30, choices=PutawayStatus.choices, default=PutawayStatus.PENDING, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-
 class PutawayItem(models.Model):
-    task = models.ForeignKey(
-        PutawayTask,
-        on_delete=models.CASCADE,
-        related_name="items",
-    )
+    task = models.ForeignKey(PutawayTask, on_delete=models.CASCADE, related_name="items")
     grn_item = models.ForeignKey(GRNItem, on_delete=models.CASCADE)
     placed_qty = models.IntegerField(default=0)
-    placed_bin = models.ForeignKey(
-        Bin,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
-
-
-# =========================================================
-# 5. CYCLE COUNT
-# =========================================================
+    placed_bin = models.ForeignKey(Bin, on_delete=models.SET_NULL, null=True, blank=True)
 
 class CycleCountTask(models.Model):
     class CcStatus(models.TextChoices):
@@ -434,62 +270,23 @@ class CycleCountTask(models.Model):
         COMPLETED = "completed", "Completed"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    warehouse = models.ForeignKey(
-        Warehouse,
-        on_delete=models.CASCADE,
-        related_name="cc_tasks",
-    )
-    task_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="cc_tasks",
-    )
-    status = models.CharField(
-        max_length=30,
-        choices=CcStatus.choices,
-        default=CcStatus.PENDING,
-        db_index=True,
-    )
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE, related_name="cc_tasks")
+    task_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="cc_tasks")
+    status = models.CharField(max_length=30, choices=CcStatus.choices, default=CcStatus.PENDING, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-
 class CycleCountItem(models.Model):
-    task = models.ForeignKey(
-        CycleCountTask,
-        on_delete=models.CASCADE,
-        related_name="items",
-    )
+    task = models.ForeignKey(CycleCountTask, on_delete=models.CASCADE, related_name="items")
     bin = models.ForeignKey(Bin, on_delete=models.CASCADE)
     sku = models.ForeignKey(SKU, on_delete=models.CASCADE)
     expected_qty = models.IntegerField()
     counted_qty = models.IntegerField(null=True, blank=True)
     adjusted = models.BooleanField(default=False)
 
-
-# =========================================================
-# 6. IDEMPOTENCY
-# =========================================================
-
 class IdempotencyKey(models.Model):
-    """
-    Locks a specific event ID (e.g., Razorpay Event, User Request) 
-    to prevent race conditions and replay attacks.
-    """
     key = models.CharField(max_length=255, unique=True, db_index=True)
-    route = models.CharField(max_length=100, help_text="Where this key came from (e.g. 'razorpay_webhook')")
-    
+    route = models.CharField(max_length=100)
     response_status = models.IntegerField(default=200)
     response_body = models.JSONField(null=True, blank=True)
-    
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField(null=True, blank=True)
-    
-    def is_expired(self):
-        return self.expires_at and timezone.now() > self.expires_at
-
-    class Meta:
-        indexes = [
-            models.Index(fields=['key', 'route']),
-        ]

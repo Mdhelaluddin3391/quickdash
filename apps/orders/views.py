@@ -1,46 +1,35 @@
-# apps/orders/views.py
 import logging
 import razorpay
-from datetime import timedelta
 from django.conf import settings
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from rest_framework import status, viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status, permissions
-from django.shortcuts import get_object_or_404
 
 from apps.accounts.models import UserAddress
-from apps.orders.models import Order, Cart
-from apps.orders.services import calculate_cart_total # Assuming this helper exists
-
-# Must match the key used in Warehouse View
-from apps.accounts.permissions import IsCustomer
-from apps.payments.models import Payment
-from .models import Order, Cart, CartItem
-from .serializers import (
+from apps.orders.models import Order, Cart, CartItem
+from apps.orders.serializers import (
     CreateOrderSerializer, OrderSerializer, OrderListSerializer,
-    CartSerializer, AddToCartSerializer, PaymentVerificationSerializer, CancelOrderSerializer
+    CartSerializer, AddToCartSerializer, PaymentVerificationSerializer
 )
-from .services import (
+from apps.orders.services import (
     CheckoutOrchestrator,
     process_successful_payment,
     cancel_order
 )
+from apps.accounts.permissions import IsCustomer
+from apps.payments.models import Payment
 
 logger = logging.getLogger(__name__)
-SERVICE_WAREHOUSE_KEY = 'quickdash_service_warehouse_id'
 
+# This key must match what is used in apps/warehouse/views.py
+SERVICE_WAREHOUSE_KEY = 'quickdash_service_warehouse_id'
 
 class CartView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
-        # FIX: Prefetch items and SKU to avoid N+1 queries during serialization
         cart, _ = Cart.objects.prefetch_related('items__sku').get_or_create(customer=request.user)
         return Response(CartSerializer(cart).data)
 
@@ -63,33 +52,45 @@ class AddToCartView(APIView):
             )
             item.save()
 
-        # FIX: Refresh with prefetch to ensure clean serialization
         cart = Cart.objects.prefetch_related('items__sku').get(id=cart.id)
         return Response(CartSerializer(cart).data)
 
 class CheckoutView(APIView):
+    """
+    Main checkout entry point.
+    Handles Validation -> Warehouse Selection -> Stock Lock -> Order Creation -> Payment Init
+    """
     permission_classes = [permissions.IsAuthenticated, IsCustomer]
 
     def post(self, request):
+        # 1. Enforce Serviceability Check from Session
+        warehouse_id = request.session.get(SERVICE_WAREHOUSE_KEY)
+        
+        # 2. Serialize Data
         serializer = CreateOrderSerializer(
             data=request.data,
-            context={"request": request}
+            context={"request": request, "session_warehouse_id": warehouse_id}
         )
         serializer.is_valid(raise_exception=True)
 
-        orchestrator = CheckoutOrchestrator(request.user, serializer.validated_data)
+        # 3. Inject Validated Data into Orchestrator
+        # We ensure the orchestrator gets the warehouse ID from session if not in body
+        validated_data = serializer.validated_data
+        if not validated_data.get("warehouse_id") and warehouse_id:
+            validated_data["warehouse_id"] = warehouse_id
+
+        orchestrator = CheckoutOrchestrator(request.user, validated_data)
         order, payment_data, error = orchestrator.execute()
 
         if error:
             return Response({"error": error}, status=400)
 
-        if payment_data["mode"] == "COD":
+        # 4. Success Response
+        if payment_data and payment_data.get("mode") == "COD":
             ok, msg = process_successful_payment(order)
             if not ok:
                 return Response({"error": msg}, status=500)
-
-            Cart.objects.filter(customer=request.user).delete()
-
+            
             return Response({
                 "order": OrderSerializer(order).data,
                 "payment": payment_data
@@ -100,6 +101,8 @@ class CheckoutView(APIView):
             **payment_data
         }, status=201)
 
+# Backwards compatibility alias
+CreateOrderAPIView = CheckoutView 
 
 class PaymentVerificationView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -114,11 +117,10 @@ class PaymentVerificationView(APIView):
         try:
             client.utility.verify_payment_signature(data)
         except razorpay.errors.SignatureVerificationError:
-            logger.warning(f"Payment signature verification failed for order {data.get('razorpay_order_id')}")
             return Response({"error": "Invalid signature"}, status=400)
         except Exception as e:
-            logger.exception(f"Unexpected error during payment verification: {e}")
-            return Response({"error": "Payment verification failed due to a system error"}, status=500)
+            logger.error(f"Payment Verification Error: {e}")
+            return Response({"error": "System error"}, status=500)
 
         payment = get_object_or_404(Payment, gateway_order_id=data["razorpay_order_id"])
         
@@ -129,8 +131,6 @@ class PaymentVerificationView(APIView):
         payment.save()
 
         process_successful_payment(payment.order)
-        Cart.objects.filter(customer=request.user).delete()
-
         return Response({"status": "success"})
 
 class OrderViewSet(viewsets.ReadOnlyModelViewSet):
@@ -138,7 +138,6 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = OrderSerializer
 
     def get_queryset(self):
-        # Optimized queryset with select_related
         qs = Order.objects.select_related("customer", "warehouse").prefetch_related("items", "items__sku").all()
         if self.request.user.is_staff:
             return qs
@@ -155,94 +154,3 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
         ok, msg = cancel_order(order, cancelled_by="CUSTOMER", reason=request.data.get("reason", ""))
         if not ok: return Response({"error": msg}, status=400)
         return Response(OrderSerializer(order).data)
-
-
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status, permissions
-from django.shortcuts import get_object_or_404
-
-from apps.accounts.models import UserAddress
-from apps.orders.models import Order, Cart
-from apps.orders.services import calculate_cart_total # Assuming this helper exists
-
-# Must match the key used in Warehouse View
-SERVICE_WAREHOUSE_KEY = 'quickdash_service_warehouse_id'
-
-class CreateOrderAPIView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request):
-        # 1️⃣ TRUST SERVICEABILITY SESSION (Homepage verified)
-        warehouse_id = request.session.get(SERVICE_WAREHOUSE_KEY)
-
-        if not warehouse_id:
-            # Security Fallback: If session expired or user bypassed checks
-            return Response(
-                {
-                    "error": "Service location expired. Please refresh the home page to set your location."
-                },
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        # 2️⃣ VALIDATE DELIVERY ADDRESS (Exact drop point)
-        address_id = request.data.get("address_id")
-        
-        if not address_id:
-            return Response(
-                {"error": "Delivery address ID is required"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Verify address belongs to user
-        delivery_address = get_object_or_404(
-            UserAddress, 
-            id=address_id, 
-            user=request.user
-        )
-
-        # 3️⃣ GET CART
-        # Assuming Cart model has a OneToOne or ForeignKey to User
-        try:
-            cart = Cart.objects.get(user=request.user)
-            if not cart.items.exists():
-                raise ValueError("Cart is empty")
-        except (Cart.DoesNotExist, ValueError):
-             return Response(
-                {"error": "Cart is empty"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # 4️⃣ CREATE ORDER (NO DISTANCE CHECK HERE)
-        # We assume if the User is browsing under 'warehouse_id' (Session)
-        # and picked 'delivery_address' (Input), the order is valid.
-        
-        try:
-            order = Order.objects.create(
-                user=request.user,
-                warehouse_id=warehouse_id,  # From Session
-                delivery_address=delivery_address, # From Input
-                total_amount=calculate_cart_total(cart),
-                status='CREATED' # Or Order.Status.CREATED
-            )
-            
-            # Optional: Move items from Cart to OrderItems here
-            # ...
-            
-            # 5️⃣ CLEAR CART
-            cart.items.all().delete()
-            cart.delete() # Or just clear items depending on logic
-
-            return Response(
-                {
-                    "order_id": order.id,
-                    "message": "Order placed successfully"
-                },
-                status=status.HTTP_201_CREATED
-            )
-
-        except Exception as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )

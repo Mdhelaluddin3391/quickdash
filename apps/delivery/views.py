@@ -1,19 +1,18 @@
-# apps/delivery/views.py
+import logging
+import math
 from django.db import transaction, models
 from django.utils import timezone
-
-from rest_framework import viewsets, views, status
-from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
 from django.contrib.gis.geos import Point
 from django.contrib.gis.db.models.functions import Distance
 from django.contrib.gis.measure import D
+
+from rest_framework import viewsets, views, status
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
 from apps.warehouse.models import Warehouse
-import math
 from apps.accounts.permissions import IsRider
 from .models import DeliveryTask, RiderEarning
 from .serializers import (
@@ -22,22 +21,14 @@ from .serializers import (
     RiderProfileSerializer,
 )
 
+logger = logging.getLogger(__name__)
+
 class DeliveryEstimateView(APIView):
     """
     Calculates ETA based on user location and nearest active warehouse.
-    FIX: Integrated Routing Engine Interface with Fallback.
+    Logic: Base Prep Time (10-15m) + Travel Time (traffic factor).
     """
     permission_classes = [AllowAny]
-
-    def _get_route_data(self, origin, destination):
-        """
-        Mock Interface for Google Maps / OSRM.
-        In real prod, use `requests` to call external API.
-        """
-        # Placeholder for external call
-        # response = requests.get(...)
-        # if response.ok: return response.json()
-        return None
 
     def post(self, request):
         lat = request.data.get('lat')
@@ -48,7 +39,7 @@ class DeliveryEstimateView(APIView):
 
         user_point = Point(float(lng), float(lat), srid=4326)
         
-        # 1. Find Nearest Warehouse
+        # 1. Find Nearest Active Warehouse
         nearest_wh = Warehouse.objects.filter(is_active=True).annotate(
             distance=Distance('location', user_point)
         ).order_by('distance').first()
@@ -56,34 +47,22 @@ class DeliveryEstimateView(APIView):
         if not nearest_wh:
             return Response({"time": "No Service", "location": "Out of Service Area"})
 
-        distance_km = nearest_wh.distance.km
+        # 2. Calculate Distance (in km)
+        # Note: If SRID=4326, distance is in degrees. We convert approx or use project.
+        # Assuming PostGIS logic (degrees):
+        distance_km = nearest_wh.distance.km if hasattr(nearest_wh.distance, 'km') else nearest_wh.distance * 100
         
-        # 2. Try External Routing Engine
-        eta_minutes = None
-        try:
-            route_data = self._get_route_data(
-                origin=(nearest_wh.location.y, nearest_wh.location.x),
-                destination=(lat, lng)
-            )
-            if route_data:
-                # eta_minutes = route_data['duration_minutes']
-                pass
-        except Exception as e:
-            logger.warning(f"Routing API failed: {e}")
-
-        # 3. Fallback Heuristic (Enhanced)
-        if eta_minutes is None:
-            # Base Prep: 15 mins
-            # Traffic Factor: 5 mins per km (Urban)
-            eta_minutes = 15 + math.ceil(distance_km * 5)
-
+        # 3. Calculate Time (Heuristic)
+        # Base Prep: 15 mins
+        # Traffic Factor: 5 mins per km
+        eta_minutes = 15 + math.ceil(distance_km * 5)
+        
         return Response({
             "eta": f"{eta_minutes} mins",
             "distance_km": round(distance_km, 1),
-            "serviceable": distance_km < 15.0
+            "serviceable": distance_km < 15.0 # 15km Radius check
         })
 
-        
 class RiderDashboardView(views.APIView):
     """
     Rider home screen:
@@ -118,16 +97,11 @@ class RiderDashboardView(views.APIView):
 
         profile.on_duty = not profile.on_duty
         profile.save(update_fields=["on_duty"])
-
+        return Response({"status": "updated", "on_duty": profile.on_duty})
 
 class DeliveryTaskViewSet(viewsets.ModelViewSet):
     """
-    Rider ke orders manage karne ke liye APIs.
-
-    /api/v1/delivery/tasks/               -> list (my tasks)
-    /api/v1/delivery/tasks/<id>/accept/   -> accept order
-    /api/v1/delivery/tasks/<id>/pickup/   -> pickup confirm
-    /api/v1/delivery/tasks/<id>/complete/ -> complete delivery
+    Rider orders management.
     """
     serializer_class = DeliveryTaskSerializer
     permission_classes = [IsAuthenticated, IsRider]
@@ -148,169 +122,61 @@ class DeliveryTaskViewSet(viewsets.ModelViewSet):
         task = self.get_object()
 
         if not self._ensure_owner(task, request.user):
-            return Response(
-                {"error": "Not your task."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+            return Response({"error": "Not your task."}, status=status.HTTP_403_FORBIDDEN)
 
         if task.status != DeliveryTask.DeliveryStatus.PENDING_ASSIGNMENT:
-            return Response(
-                {"error": "Order already accepted or unavailable"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "Order unavailable"}, status=status.HTTP_400_BAD_REQUEST)
 
         task.status = DeliveryTask.DeliveryStatus.ACCEPTED
         task.accepted_at = timezone.now()
         task.save()
-        return Response(
-            {"status": "Order Accepted! Go to Store."},
-            status=status.HTTP_200_OK,
-        )
+        return Response({"status": "Order Accepted! Go to Store."}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
     def reach_store(self, request, pk=None):
-        """
-        Optional intermediate step: Rider AT_STORE.
-        """
         task = self.get_object()
-
         if not self._ensure_owner(task, request.user):
-            return Response(
-                {"error": "Not your task."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        if task.status not in [
-            DeliveryTask.DeliveryStatus.ACCEPTED,
-            DeliveryTask.DeliveryStatus.AT_STORE,
-        ]:
-            return Response(
-                {"error": "Invalid state transition."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "Not your task."}, status=status.HTTP_403_FORBIDDEN)
 
         task.status = DeliveryTask.DeliveryStatus.AT_STORE
         task.save()
-        return Response(
-            {"status": "Marked as at store."},
-            status=status.HTTP_200_OK,
-        )
+        return Response({"status": "Marked as at store."}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
     def pickup_order(self, request, pk=None):
         task = self.get_object()
-
         if not self._ensure_owner(task, request.user):
-            return Response(
-                {"error": "Not your task."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        if task.status not in [
-            DeliveryTask.DeliveryStatus.ACCEPTED,
-            DeliveryTask.DeliveryStatus.AT_STORE,
-        ]:
-            return Response(
-                {"error": "Cannot pickup in current status."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Pickup OTP check (optional, you can enable later)
-        # otp = request.data.get("otp")
-        # if task.pickup_otp and otp != task.pickup_otp:
-        #     return Response({"error": "Invalid pickup OTP"}, status=400)
+            return Response({"error": "Not your task."}, status=status.HTTP_403_FORBIDDEN)
 
         task.status = DeliveryTask.DeliveryStatus.PICKED_UP
         task.picked_up_at = timezone.now()
         task.save()
-        return Response(
-            {"status": "Order Picked Up! Go to Customer."},
-            status=status.HTTP_200_OK,
-        )
+        return Response({"status": "Order Picked Up! Go to Customer."}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
     def complete_delivery(self, request, pk=None):
-        """
-        Completes delivery with strict Geo-Fencing and OTP verification.
-        """
         task = self.get_object()
-
-        # 1. Ownership Check
         if not self._ensure_owner(task, request.user):
             return Response({"error": "Not your task."}, status=status.HTTP_403_FORBIDDEN)
 
-        # 2. State Check
-        if task.status != DeliveryTask.DeliveryStatus.PICKED_UP:
-            return Response({"error": "Only picked-up orders can be completed."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # 3. OTP Verification
+        # OTP Verification
         entered_otp = request.data.get("otp")
         if task.delivery_otp and task.delivery_otp != entered_otp:
-            # Audit Log: Failed OTP attempt could be flagged here
             return Response({"error": "Invalid delivery OTP"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 4. GEO-FENCING (Trust Model Enforcement)
-        # Rider must send their current location to prove they are at the door.
-        rider_lat = request.data.get("lat")
-        rider_lng = request.data.get("lng")
-        
-        if not rider_lat or not rider_lng:
-            return Response({"error": "Location data required to complete delivery."}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            rider_loc = Point(float(rider_lng), float(rider_lat), srid=4326)
-            
-            # Destination from Order
-            dest_lat = task.order.delivery_lat
-            dest_lng = task.order.delivery_lng
-            
-            if dest_lat and dest_lng:
-                dest_loc = Point(float(dest_lng), float(dest_lat), srid=4326)
-                distance = rider_loc.distance(dest_loc) * 100 * 1000 # Convert degrees to approx km then meters? 
-                # Better: use project/measure. 
-                # Quick Fix: PostGIS distance is in degrees for 4326.
-                # We use a rough estimate: 1 deg ~= 111km. 
-                # Or better, check if distance > 0.002 degrees (approx 200m)
-                
-                # Strict check: If > 500 meters away, block it.
-                if distance > 0.005: 
-                    # If we had 'D' object available we would use D(m=500). 
-                    # Assuming basic geometry for safety if D not imported in method scope.
-                    return Response({
-                        "error": "You are too far from delivery location.",
-                        "distance_check": "FAILED"
-                    }, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.warning(f"Geo-fence check failed: {e}")
-            # We fail open or closed based on policy? 
-            # For financial safety, we FAIL CLOSED.
-            return Response({"error": "Location verification failed. Contact support."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # 5. Atomic Completion
         with transaction.atomic():
-            # Re-fetch lock
             task = DeliveryTask.objects.select_for_update().get(id=task.id)
             if task.status != DeliveryTask.DeliveryStatus.PICKED_UP:
-                 return Response({"error": "Race condition detected."}, status=409)
+                 return Response({"error": "Invalid State"}, status=409)
 
             task.status = DeliveryTask.DeliveryStatus.DELIVERED
             task.delivered_at = timezone.now()
             task.save()
             
-            # Trigger payout logic here (handled by signal usually)
-            
-        return Response(
-            {"status": "Order Delivered Successfully! Money added to wallet."},
-            status=status.HTTP_200_OK,
-        )
+        return Response({"status": "Order Delivered Successfully!"}, status=status.HTTP_200_OK)
 
 
 class RiderEarningsView(views.APIView):
-    """
-    Rider earnings history.
-
-    GET /api/v1/delivery/earnings/
-    """
     permission_classes = [IsAuthenticated, IsRider]
 
     def get(self, request):
@@ -319,74 +185,15 @@ class RiderEarningsView(views.APIView):
         ).order_by("-created_at")
 
         serializer = RiderEarningSerializer(earnings_qs, many=True)
-
         today = timezone.now().date()
-        total_today = (
-            earnings_qs.filter(created_at__date=today)
-            .aggregate(sum=models.Sum("total_earning"))
-            .get("sum")
-            or 0
-        )
-
-        return Response(
-            {
-                "history": serializer.data,
-                "summary": {
-                    "today_total": total_today,
-                    "total_unpaid": earnings_qs.filter(
-                        status=RiderEarning.EarningStatus.UNPAID
-                    )
-                    .aggregate(sum=models.Sum("total_earning"))
-                    .get("sum")
-                    or 0,
-                },
-            }
-        )
-
-
-
-
-
-
-class DeliveryEstimateView(APIView):
-    """
-    Calculates ETA based on user location and nearest active warehouse.
-    Logic: Base Prep Time (10m) + Travel Time (3m per km).
-    """
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        lat = request.data.get('lat')
-        lng = request.data.get('lng')
-
-        if not lat or not lng:
-            return Response({"time": "...", "location": "Select Location"}, status=400)
-
-        user_point = Point(float(lng), float(lat), srid=4326)
         
-        # 1. Find Nearest Warehouse
-        nearest_wh = Warehouse.objects.filter(is_active=True).annotate(
-            distance=Distance('location', user_point)
-        ).order_by('distance').first()
+        total_today = earnings_qs.filter(created_at__date=today).aggregate(sum=models.Sum("total_earning")).get("sum") or 0
+        total_unpaid = earnings_qs.filter(status=RiderEarning.EarningStatus.UNPAID).aggregate(sum=models.Sum("total_earning")).get("sum") or 0
 
-        if not nearest_wh:
-            return Response({"time": "No Service", "location": "Out of Service Area"})
-
-        # 2. Calculate Distance (in km)
-        distance_km = nearest_wh.distance.km
-        
-        # 3. Calculate Time (Simple Heuristic)
-        # Base Prep: 10 mins + Travel: 4 mins per km
-        eta_minutes = 10 + math.ceil(distance_km * 4)
-        
-        # Cap min time at 15 mins
-        if eta_minutes < 15: eta_minutes = 15
-
-        # 4. Reverse Geocode (Optional, or just send ETA)
-        # For now, we return the ETA. Frontend can handle the City name via Google Maps API or Browser API.
-        
         return Response({
-            "eta": f"{eta_minutes} mins",
-            "distance_km": round(distance_km, 1),
-            "serviceable": distance_km < 15.0 # 15km Radius check
+            "history": serializer.data,
+            "summary": {
+                "today_total": total_today,
+                "total_unpaid": total_unpaid,
+            },
         })
