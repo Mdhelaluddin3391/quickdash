@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.exceptions import Throttled, ValidationError
 from django.utils import timezone
+from django.db import transaction  # Important for atomic operations
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from google.oauth2 import id_token
@@ -139,11 +140,9 @@ class LoginWithOTPView(views.APIView):
         client_ip = self.get_client_ip(request)
 
         # 1. SECURITY FIX: Brute-Force Protection (Verify Rate Limit)
-        # Separate key from 'send' to allow legitimate retries while blocking script attacks
         try:
             check_otp_rate_limit(phone, f"{role}_VERIFY", limit=5, period=60, ip=client_ip)
         except Throttled:
-            # If throttled, do NOT check the DB (timing attack prevention)
             return Response(
                 {"detail": "Too many failed attempts. Please try again in a minute."}, 
                 status=status.HTTP_429_TOO_MANY_REQUESTS
@@ -167,14 +166,19 @@ class LoginWithOTPView(views.APIView):
         try:
             with transaction.atomic():
                 if role == 'CUSTOMER':
-                    # Atomic Get-or-Create to prevent duplicate users on race condition
+                    # Atomic Get-or-Create
                     user, created = User.objects.select_for_update().get_or_create(
                         phone=phone, 
                         is_customer=True,
-                        defaults={'is_active': True, 'full_name': 'Guest Customer'}
+                        defaults={
+                            'is_active': True, 
+                            'full_name': 'Guest Customer',
+                            'app_role': 'CUSTOMER'
+                        }
                     )
-                    if created:
-                        CustomerProfile.objects.create(user=user)
+                    
+                    # FIX: Use get_or_create to prevent IntegrityError if Signals already created the profile
+                    CustomerProfile.objects.get_or_create(user=user)
                     
                     # Ensure role consistency
                     if user.app_role != 'CUSTOMER':
@@ -206,6 +210,7 @@ class LoginWithOTPView(views.APIView):
                     user.save(update_fields=['app_role'])
         
         except Exception as e:
+            # Log the actual error for debugging
             logger.error(f"Login Transaction Error: {e}")
             return Response({"detail": "Login processing failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

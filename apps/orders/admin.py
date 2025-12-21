@@ -1,16 +1,14 @@
+import json
 from django.contrib import admin
+from django.utils.safestring import mark_safe
 from .models import (
     Order, OrderItem, OrderTimeline, 
     Coupon, Cart, CartItem, OrderCancellation
 )
 
 class OrderItemInline(admin.TabularInline):
-    """
-    Yeh Order admin page ke andar items ko inline (usi page par)
-    dikhane mein madad karega.
-    """
     model = OrderItem
-    extra = 0  # Default mein koi extra khaali form nahi dikhayega
+    extra = 0
     readonly_fields = ('sku', 'sku_name_snapshot', 'unit_price', 'quantity', 'total_price')
 
     def has_add_permission(self, request, obj=None):
@@ -21,9 +19,6 @@ class OrderItemInline(admin.TabularInline):
 
 
 class OrderTimelineInline(admin.TabularInline):
-    """
-    Yeh Order admin page ke andar order ki history dikhayega.
-    """
     model = OrderTimeline
     extra = 0
     readonly_fields = ('timestamp', 'status', 'notes')
@@ -38,52 +33,91 @@ class OrderTimelineInline(admin.TabularInline):
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
     """
-    Order model ke liye Admin panel configuration.
+    Refactored Order Admin to match new model structure.
     """
     list_display = (
-        'id', 
+        'order_id',          # Changed from 'id' to human-readable order_id
         'customer', 
         'status', 
         'payment_status', 
-        'final_amount', 
+        'final_amount',      # Updated from total_amount
         'warehouse', 
         'created_at'
     )
     list_filter = ('status', 'payment_status', 'warehouse', 'created_at')
-    search_fields = ('id', 'customer__phone', 'payment_gateway_order_id')
+    search_fields = ('order_id', 'id', 'customer__phone', 'payment_gateway_order_id')
     
-    # Order page ke andar items aur timeline dikhane ke liye
     inlines = [OrderItemInline, OrderTimelineInline]
     
-    # In fields ko admin mein badla nahi ja sakta (readonly)
+    # Show ALL fields in read-only mode
     readonly_fields = (
         'id', 
+        'order_id',
         'customer', 
         'warehouse', 
-        'total_amount', 
-        'discount_amount', 
-        'final_amount',
+        'final_amount',           # Replaces total_amount
         'payment_gateway_order_id',
-        'packer', 
-        'rider', 
+        'status',
+        'payment_status',
+        'formatted_delivery_address', # Custom method for JSON
+        'formatted_metadata',         # Custom method for JSON
+        'delivery_city',
+        'delivery_pincode',
+        'delivery_lat',
+        'delivery_lng',
         'created_at', 
         'updated_at', 
+        'confirmed_at',
+        'cancelled_at',
         'delivered_at'
+    )
+
+    fieldsets = (
+        ('Order Details', {
+            'fields': ('order_id', 'id', 'status', 'customer', 'warehouse')
+        }),
+        ('Financials', {
+            'fields': ('final_amount', 'payment_status', 'payment_gateway_order_id')
+        }),
+        ('Delivery Info', {
+            'fields': ('formatted_delivery_address', 'delivery_city', 'delivery_pincode', 'delivery_lat', 'delivery_lng')
+        }),
+        ('System Data', {
+            'fields': ('formatted_metadata', 'created_at', 'updated_at', 'confirmed_at', 'delivered_at', 'cancelled_at'),
+            'classes': ('collapse',)
+        }),
     )
 
     def has_add_permission(self, request):
         return False
 
+    # --- Custom Methods to Display JSON Fields Prettily ---
+    
+    def formatted_delivery_address(self, obj):
+        """Displays delivery_address_json as formatted HTML"""
+        if not obj.delivery_address_json:
+            return "-"
+        # Convert dict to a pretty HTML string
+        content = json.dumps(obj.delivery_address_json, indent=2)
+        return mark_safe(f"<pre>{content}</pre>")
+    
+    formatted_delivery_address.short_description = "Delivery Address Snapshot"
 
+    def formatted_metadata(self, obj):
+        """Displays metadata as formatted HTML"""
+        if not obj.metadata:
+            return "-"
+        content = json.dumps(obj.metadata, indent=2)
+        return mark_safe(f"<pre>{content}</pre>")
+    
+    formatted_metadata.short_description = "Metadata (Debug Info)"
+
+
+# ... (Rest of the file remains unchanged: OrderItemAdmin, CartAdmin, etc.)
 @admin.register(OrderItem)
 class OrderItemAdmin(admin.ModelAdmin):
-    """
-    (Optional) OrderItem model ko alag se dekhne ke liye.
-    """
     list_display = ('order', 'sku', 'sku_name_snapshot', 'quantity', 'total_price')
     search_fields = ('order__id', 'sku__sku_code', 'sku_name_snapshot')
-
-
 
 class CartItemInline(admin.TabularInline):
     model = CartItem
@@ -99,7 +133,7 @@ class CartAdmin(admin.ModelAdmin):
     inlines = [CartItemInline]
     
     def has_add_permission(self, request):
-        return False  # Carts are system-generated
+        return False
 
 @admin.register(Coupon)
 class CouponAdmin(admin.ModelAdmin):

@@ -47,6 +47,13 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     objects = UserManager()
 
+    current_session_jti = models.CharField(
+        max_length=255, 
+        null=True, 
+        blank=True, 
+        help_text="Tracks the JWT ID of the currently active session"
+    )
+
     class Meta:
         verbose_name = "User"
         verbose_name_plural = "Users"
