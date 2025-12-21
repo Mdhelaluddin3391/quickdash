@@ -113,6 +113,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.warehouse.middleware.IdempotencyMiddleware",
     "apps.utils.middleware.RequestLogMiddleware",
+    "apps.utils.middleware.LocationEnforcementMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
