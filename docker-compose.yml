@@ -13,8 +13,8 @@ services:
     networks:
       - quickdash_net
     healthcheck:
-      # FIX: Ensure user variable is expanded or defaults cleanly
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} && psql -U $${POSTGRES_USER} -d $${POSTGRES_DB} -c 'SELECT 1;'"]
+      # Fix: Use double $$ to escape generic shell variable expansion in Compose
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-quickdash_db}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -63,8 +63,13 @@ services:
     env_file:
       - .env
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # CRITICAL: Wait for web to finish migrations and start serving
+      web:
+        condition: service_healthy
     networks:
       - quickdash_net
 
@@ -76,8 +81,13 @@ services:
     env_file:
       - .env
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # CRITICAL: Beat must not trigger tasks before migrations are done
+      web:
+        condition: service_healthy
     networks:
       - quickdash_net
 
@@ -91,7 +101,8 @@ services:
       - static_volume:/code/staticfiles
       - media_volume:/code/media
     depends_on:
-      - web
+      web:
+        condition: service_healthy
     networks:
       - quickdash_net
 

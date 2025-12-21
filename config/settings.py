@@ -21,11 +21,16 @@ SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default=False, cast=bool)
 JWT_SIGNING_KEY = config("JWT_SIGNING_KEY", default=None)
 
+# Define ALLOWED_HOSTS early to use in CSRF settings
+if not DEBUG:
+    ALLOWED_HOSTS = config("ALLOWED_HOSTS", cast=Csv())
+else:
+    ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="127.0.0.1,localhost", cast=Csv())
+
 if not DEBUG:
     if not JWT_SIGNING_KEY or JWT_SIGNING_KEY == "unsafe-secret-key-change-in-prod":
         raise ImproperlyConfigured("Production requires a secure JWT_SIGNING_KEY.")
 
-    ALLOWED_HOSTS = config("ALLOWED_HOSTS", cast=Csv())
     
     # FIX: Secure Header Config for Production
     SECURE_SSL_REDIRECT = True
@@ -41,13 +46,18 @@ if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000 # 1 year
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
+
+    # FIX: Nginx/Proxy CSRF Trust
+    # Django 4.0+ requires this for requests originating from trusted proxies
+    CSRF_TRUSTED_ORIGINS = [f"https://{host}" for host in ALLOWED_HOSTS if '*' not in host]
+
 else:
     # Dev settings...
     JWT_SIGNING_KEY = JWT_SIGNING_KEY or SECRET_KEY
-    ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="127.0.0.1,localhost", cast=Csv())
     SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = False
     CSRF_COOKIE_SECURE = False
+    CSRF_TRUSTED_ORIGINS = ["http://localhost:8000", "http://127.0.0.1:8000"]
 
 
 ADMIN_URL = config("ADMIN_URL", default="admin/") 

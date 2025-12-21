@@ -8,7 +8,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /code
 
 # System Deps
-# Removed 'gosu' as we switch user via Docker instruction now
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
@@ -23,9 +22,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Dependencies (Cached Layer)
 COPY requirements.txt .
+# Added uvicorn explicitly to allow Gunicorn to run with uvicorn workers for ASGI/Channels support
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir whitenoise gunicorn
+    pip install --no-cache-dir whitenoise gunicorn uvicorn
 
 # User Setup (Create user BEFORE copying code to handle permissions correctly)
 RUN addgroup --system appgroup && adduser --system --group appuser
@@ -49,6 +49,8 @@ USER appuser
 EXPOSE 8000
 
 # Healthcheck
+# Checks the Django health endpoint. 
+# Gunicorn only starts serving execution of start.sh, meaning Migrations are done.
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD curl --fail http://localhost:8000/api/v1/utils/health/ || exit 1
 
