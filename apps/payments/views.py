@@ -79,6 +79,7 @@ class VerifyPaymentAPIView(APIView):
         intent = serializer.context["payment_intent"]
         order = intent.order
 
+        # 1. Cryptographic Signature Verification
         ok = verify_payment_signature(
             order_id=str(order.id),
             gateway_order_id=data["gateway_order_id"],
@@ -92,33 +93,44 @@ class VerifyPaymentAPIView(APIView):
             intent.save()
             return Response({"detail": "Invalid signature."}, status=400)
 
-        # Idempotent Success Handling
-        with transaction.atomic():
-            intent.status = PaymentIntent.IntentStatus.PAID
-            intent.gateway_payment_id = data["gateway_payment_id"]
-            intent.save()
+        # 2. Atomic Status Update & Payment Recording
+        try:
+            with transaction.atomic():
+                # Lock Intent Row to prevent race with Webhook
+                intent = PaymentIntent.objects.select_for_update().get(id=intent.id)
+                
+                if intent.status == PaymentIntent.IntentStatus.PAID:
+                    return Response({"status": "success", "order_id": str(order.id)})
 
-            payment, created = Payment.objects.get_or_create(
-                transaction_id=data["gateway_payment_id"],
-                defaults={
-                    "order": order,
-                    "user": request.user,
-                    "payment_method": Payment.PaymentMethod.RAZORPAY,
-                    "amount": intent.amount,
-                    "currency": intent.currency,
-                    "status": Payment.PaymentStatus.SUCCESSFUL,
-                    "gateway_order_id": data["gateway_order_id"],
-                },
-            )
-            
-            if not created and payment.status != Payment.PaymentStatus.SUCCESSFUL:
-                payment.status = Payment.PaymentStatus.SUCCESSFUL
-                payment.save()
+                intent.status = PaymentIntent.IntentStatus.PAID
+                intent.gateway_payment_id = data["gateway_payment_id"]
+                intent.save()
 
-        # Signal outside atomic block (or on_commit if configured)
-        payment_succeeded.send(sender=PaymentIntent, order=order)
+                # Create Payment Record
+                payment, _ = Payment.objects.get_or_create(
+                    transaction_id=data["gateway_payment_id"],
+                    defaults={
+                        "order": order,
+                        "user": request.user,
+                        "payment_method": Payment.PaymentMethod.RAZORPAY,
+                        "amount": intent.amount,
+                        "currency": intent.currency,
+                        "status": Payment.PaymentStatus.SUCCESSFUL,
+                        "gateway_order_id": data["gateway_order_id"],
+                    },
+                )
+                
+                # 3. Trigger Order Confirmation (Inventory/Notification)
+                from apps.orders.services import process_successful_payment
+                success, msg = process_successful_payment(order)
+                if not success:
+                    raise Exception(f"Order Processing Failed: {msg}")
 
-        return Response({"status": "success", "order_id": str(order.id)})
+            return Response({"status": "success", "order_id": str(order.id)})
+
+        except Exception as e:
+            logger.error(f"Payment Verification Transaction Failed: {e}")
+            return Response({"detail": "Processing error after payment."}, status=500)
 
 
 @method_decorator(csrf_exempt, name="dispatch")

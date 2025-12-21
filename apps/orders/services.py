@@ -99,9 +99,7 @@ class CheckoutOrchestrator:
 
         try:
             with transaction.atomic():
-                # ... (Baaki logic same rahega jo maine pehle diya tha - Cart Locking, Inventory, Order Creation) ...
-                
-                # ... (Cart Locking)
+                # Cart Locking
                 try:
                     cart = Cart.objects.select_for_update().select_related('customer').get(customer=self.user)
                 except Cart.DoesNotExist:
@@ -116,7 +114,6 @@ class CheckoutOrchestrator:
                 try:
                     batch_check_and_lock_inventory(warehouse.id, cart_items)
                 except ValueError as e:
-                    # Agar warehouse select hone ke baad bhi millisecond mein stock khatam ho gaya
                     return None, None, f"Out of Stock: {str(e)}"
 
                 # Price Calculation
@@ -183,11 +180,14 @@ class CheckoutOrchestrator:
                             )
                             order.payment_gateway_order_id = rzp_id
                             order.save(update_fields=["payment_gateway_order_id"])
+                            
+                            # UPDATED: Return KEY_ID to frontend
                             payment_data = {
                                 "mode": "RAZORPAY",
                                 "razorpay_order_id": rzp_id,
-                                "amount": str(order.final_amount),
-                                "currency": "INR"
+                                "amount": str(int(order.final_amount * 100)),
+                                "currency": "INR",
+                                "key_id": settings.RAZORPAY_KEY_ID
                             }
                         except Exception:
                             raise ValueError("Payment gateway error.")
@@ -203,7 +203,6 @@ class CheckoutOrchestrator:
         except Exception as e:
             logger.exception("Checkout Fatal Error")
             return None, None, "Something went wrong. Please try again."
-
 
 def cancel_order(order, cancelled_by=None, reason=""):
     from .models import OrderTimeline, OrderCancellation

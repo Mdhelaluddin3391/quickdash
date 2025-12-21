@@ -1,9 +1,3 @@
-/* static/assets/js/utils/api.js */
-const API_BASE = '/api/v1'; 
-
-// Helper to get full URL if needed
-const getFullApiUrl = (endpoint) => `${window.location.origin}${API_BASE}${endpoint}`;
-
 async function apiCall(endpoint, method = 'GET', body = null, auth = true) {
     const headers = { 'Content-Type': 'application/json' };
     
@@ -20,13 +14,11 @@ async function apiCall(endpoint, method = 'GET', body = null, auth = true) {
     }
 
     try {
-        // --- FIX START: Handle Absolute URLs ---
+        // Handle Absolute vs Relative URLs
         let url = endpoint;
-        // If endpoint is NOT a full URL (http/https), prepend API_BASE
         if (!endpoint.startsWith('http://') && !endpoint.startsWith('https://')) {
             url = `${API_BASE}${endpoint}`;
         }
-        // --- FIX END ---
 
         const response = await fetch(url, config);
         
@@ -40,7 +32,7 @@ async function apiCall(endpoint, method = 'GET', body = null, auth = true) {
             throw new Error("Unauthorized - Session Expired");
         }
 
-        // --- SAFETY: Check if response is JSON (prevents "Unexpected token <" on 404/500 HTML pages) ---
+        // Safety: Check if response is JSON
         const contentType = response.headers.get("content-type");
         if (contentType && !contentType.includes("application/json")) {
             if (!response.ok) throw new Error(`API Error: ${response.status} ${response.statusText}`);
@@ -48,8 +40,13 @@ async function apiCall(endpoint, method = 'GET', body = null, auth = true) {
 
         const data = await response.json();
         
+        // Handle Backend-Directed Redirects
+        if (data.redirect_url) {
+            window.location.href = data.redirect_url;
+            return;
+        }
+
         if (!response.ok) {
-            // Extract error message from DRF structure
             const errorMessage = data.detail || data.error || (data.non_field_errors ? data.non_field_errors[0] : 'Something went wrong');
             throw new Error(errorMessage);
         }
@@ -60,7 +57,3 @@ async function apiCall(endpoint, method = 'GET', body = null, auth = true) {
         throw error;
     }
 }
-
-// Expose to global window scope
-window.apiCall = apiCall;
-window.getFullApiUrl = getFullApiUrl;

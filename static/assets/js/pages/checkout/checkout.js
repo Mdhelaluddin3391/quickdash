@@ -110,6 +110,7 @@ window.selectPayment = function(method) {
 };
 
 // --- 4. Place Order ---
+// --- 4. Place Order (UPDATED) ---
 document.getElementById('place-order-btn').addEventListener('click', async () => {
     if (!selectedAddressId) {
         alert("Please select a delivery address.");
@@ -121,7 +122,7 @@ document.getElementById('place-order-btn').addEventListener('click', async () =>
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
 
     try {
-        // [STEP 1] Fetch Selected Address Details (To send snapshot)
+        // [STEP 1] Fetch Selected Address Details
         const response = await apiCall('/auth/customer/addresses/');
         const addresses = response.results || response;
         const addrObj = addresses.find(a => a.id === selectedAddressId);
@@ -137,7 +138,7 @@ document.getElementById('place-order-btn').addEventListener('click', async () =>
                 pincode: addrObj.pincode,
                 type: addrObj.address_type
             },
-            // Important: Send Lat/Lng if available for rider routing
+            // Send Lat/Lng for rider routing
             delivery_lat: addrObj.location ? addrObj.location.coordinates[1] : null,
             delivery_lng: addrObj.location ? addrObj.location.coordinates[0] : null
         };
@@ -145,12 +146,16 @@ document.getElementById('place-order-btn').addEventListener('click', async () =>
         // [STEP 3] Order Create API Call
         const orderData = await apiCall('/orders/create/', 'POST', payload);
 
+        // [STEP 4] Handle Payment Flow
         if (selectedPayment === 'COD') {
+            // Direct success for COD
             window.location.href = `/order_success.html?order_id=${orderData.order.id}`;
-        } else {
-            // Initiate Razorpay/Stripe here
-            alert("Online payment integration required."); 
-            window.location.href = `/order_success.html?order_id=${orderData.order.id}`;
+        } else if (selectedPayment === 'RAZORPAY') {
+            // Check if backend provided necessary payment metadata
+            if (!orderData.payment_data || !orderData.payment_data.razorpay_order_id) {
+                throw new Error("Invalid payment initialization from server.");
+            }
+            await initiateRazorpayPayment(orderData.order, orderData.payment_data);
         }
 
     } catch (e) {
@@ -160,6 +165,85 @@ document.getElementById('place-order-btn').addEventListener('click', async () =>
         btn.innerText = "Place Order";
     }
 });
+
+// --- Helper Functions (NEW) ---
+
+async function initiateRazorpayPayment(order, paymentData) {
+    // Dynamic load of Razorpay SDK if not present
+    if (!document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]')) {
+        await new Promise((resolve) => {
+            const script = document.createElement('script');
+            script.src = "https://checkout.razorpay.com/v1/checkout.js";
+            script.onload = resolve;
+            document.body.appendChild(script);
+        });
+    }
+
+    const options = {
+        "key": paymentData.key_id, // Injected from backend
+        "amount": paymentData.amount, // Amount in paise
+        "currency": paymentData.currency,
+        "name": "QuickDash Commerce",
+        "description": `Order #${order.id}`,
+        "order_id": paymentData.razorpay_order_id,
+        "prefill": {
+            // These would ideally come from the user profile if available in JS context
+            "name": "Customer", 
+            "contact": ""
+        },
+        "theme": {
+            "color": "#3399cc"
+        },
+        // Secure Handler: Only redirect after backend verification
+        "handler": async function (response) {
+            await verifyPaymentOnBackend(response, order.id);
+        },
+        "modal": {
+            "ondismiss": function() {
+                const btn = document.getElementById('place-order-btn');
+                btn.disabled = false;
+                btn.innerText = "Retry Payment";
+                alert('Payment cancelled. You can retry or choose COD.');
+            }
+        }
+    };
+
+    const rzp1 = new Razorpay(options);
+    rzp1.on('payment.failed', function (response){
+        console.error(response.error);
+        alert("Payment Failed: " + response.error.description);
+        const btn = document.getElementById('place-order-btn');
+        btn.disabled = false;
+        btn.innerText = "Retry Payment";
+    });
+    rzp1.open();
+}
+
+async function verifyPaymentOnBackend(rzpResponse, orderId) {
+    const btn = document.getElementById('place-order-btn');
+    btn.innerHTML = '<i class="fas fa-shield-alt"></i> Verifying...';
+
+    try {
+        const payload = {
+            gateway_order_id: rzpResponse.razorpay_order_id,
+            gateway_payment_id: rzpResponse.razorpay_payment_id,
+            gateway_signature: rzpResponse.razorpay_signature
+        };
+
+        // Call the Verify API
+        const verifyResult = await apiCall('/payments/verify/', 'POST', payload);
+
+        if (verifyResult.status === 'success') {
+            window.location.href = `/order_success.html?order_id=${orderId}`;
+        } else {
+            throw new Error("Payment verification failed on server.");
+        }
+    } catch (e) {
+        console.error("Verification Error:", e);
+        alert("Payment successful but verification failed. Please contact support. Order ID: " + orderId);
+        btn.innerText = "Verification Failed";
+    }
+}
 
 // --- 5. Modal Setup (Use Location Picker) ---
 window.setupAddressModal = function() {

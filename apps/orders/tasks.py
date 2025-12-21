@@ -45,26 +45,45 @@ def process_razorpay_refund_task(payment_id, is_partial_refund=False, amount=Non
 # FIX: Removed explicit name="auto_cancel_unpaid_orders" to match settings.py path
 @shared_task
 def auto_cancel_unpaid_orders():
-    """Auto-cancel orders stuck in pending/payment states beyond allowed window."""
+    """
+    Optimized batch cancellation. 
+    Only looks for orders created within a specific window to avoid full table scans.
+    """
     from apps.orders.models import Order
     from apps.orders.services import cancel_order
+    
+    # Configuration
+    cancellation_window = getattr(settings, 'ORDER_CANCELLATION_WINDOW', 300) # Default 5 mins
+    
+    # Time thresholds
+    now = timezone.now()
+    cutoff_time = now - timedelta(seconds=cancellation_window)
+    # Safety buffer: Don't process orders older than 24 hours (assume handled or manual intervention)
+    safety_buffer = now - timedelta(hours=24)
 
-    cutoff_minutes = getattr(settings, 'AUTO_CANCEL_PENDING_MINUTES', 30)
-    cutoff = timezone.now() - timedelta(minutes=cutoff_minutes)
-
-    orders = Order.objects.filter(
+    # 1. Fetch Candidates (Using Index on created_at and status)
+    orders_to_cancel = Order.objects.filter(
         status='pending',
         payment_status='pending',
-        created_at__lte=cutoff
-    )
+        created_at__lte=cutoff_time,
+        created_at__gte=safety_buffer 
+    ).only('id', 'warehouse_id', 'status')[:100] # Batch limit for memory safety
+
+    if not orders_to_cancel:
+        return "No expired orders."
 
     count = 0
-    for order in orders:
-        ok, msg = cancel_order(order, cancelled_by='SYSTEM', reason='Auto-cancel unpaid order')
-        if ok:
+    for order in orders_to_cancel:
+        # Atomic cancellation service
+        success, msg = cancel_order(order, cancelled_by='SYSTEM', reason='Payment timeout')
+        if success:
             count += 1
-            logger.info(f"Auto-cancelled order {order.id}")
+            logger.info(f"Auto-cancelled Order {order.id}")
         else:
-            logger.warning(f"Failed to auto-cancel order {order.id}: {msg}")
+            logger.warning(f"Failed to auto-cancel Order {order.id}: {msg}")
 
-    return f"Auto-cancelled {count} orders"
+    # If we hit the limit, re-trigger immediately to clear backlog
+    if len(orders_to_cancel) == 100:
+        auto_cancel_unpaid_orders.delay()
+
+    return f"Cancelled {count} orders."
