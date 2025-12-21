@@ -16,16 +16,15 @@ logger = logging.getLogger(__name__)
 # =========================================================
 
 class Warehouse(models.Model):
-    name = models.CharField(max_length=255)
-    code = models.CharField(max_length=50, unique=True, db_index=True)
-    address = models.TextField()
-    location = gis_models.PointField(srid=4326, null=True, blank=True)
+    name = models.CharField(max_length=100)
+    # Geolocation
+    latitude = models.DecimalField(max_digits=9, decimal_places=6)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6)
+    service_radius_km = models.FloatField(default=3.0) # Strict 3km limit
     is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.name} ({self.code})"
+        return self.name
 
 
 class ServiceArea(models.Model):

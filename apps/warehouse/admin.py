@@ -60,17 +60,42 @@ class BinInventoryInline(admin.TabularInline):
 # Physical Structure Admin
 # ============================================
 
+from django.contrib import admin
+from django.contrib.gis.admin import OSMGeoAdmin
+from .models import Warehouse, ServiceArea, Zone, Aisle, Shelf, Bin, GRN, PickingTask
+
 @admin.register(Warehouse)
-class WarehouseAdmin(gis_admin.GISModelAdmin):  # Fixed: Using GISModelAdmin
-    list_display = ('name', 'code', 'is_active', 'created_at')
+class WarehouseAdmin(OSMGeoAdmin):
+    """
+    OSMGeoAdmin allows you to drag/drop the pin on a map.
+    """
+    list_display = ('name', 'code', 'is_active')
     search_fields = ('name', 'code')
-    list_filter = ('is_active',)
+    # Default map center (e.g., India) if no data
+    default_lat = 20.5937
+    default_lon = 78.9629
+    default_zoom = 5
 
 @admin.register(ServiceArea)
-class ServiceAreaAdmin(gis_admin.GISModelAdmin):  # Fixed: Using GISModelAdmin
+class ServiceAreaAdmin(OSMGeoAdmin):
+    """
+    Crucial: Allows drawing Polygons for delivery zones.
+    """
     list_display = ('name', 'warehouse', 'is_active', 'delivery_time_minutes')
     list_filter = ('warehouse', 'is_active')
     search_fields = ('name',)
+    
+    # Configuration to make drawing easier
+    map_width = 800
+    map_height = 500
+
+# Register other standard models normally
+admin.site.register(Zone)
+admin.site.register(Aisle)
+admin.site.register(Shelf)
+admin.site.register(Bin)
+admin.site.register(GRN)
+admin.site.register(PickingTask)
 
 @admin.register(Zone)
 class ZoneAdmin(admin.ModelAdmin):

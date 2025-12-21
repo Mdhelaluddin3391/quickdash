@@ -9,6 +9,8 @@ from django.conf import settings
 from .managers import UserManager
 from apps.utils.models import TimestampedModel
 from django.db.models import UniqueConstraint, Q
+from django.db import models
+from django.conf import settings
 
 # ==========================
 # USER (The Identity)
@@ -117,6 +119,60 @@ class Address(gis_models.Model):
         verbose_name = "Address"
         verbose_name_plural = "Addresses"
 
+
+class CustomerAddress(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="addresses")
+    # precise coordinates (The Source of Truth)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6)
+    
+    # Human readable
+    address_line_1 = models.CharField(max_length=255) # House/Flat
+    address_line_2 = models.CharField(max_length=255, blank=True) # Area/Street
+    city = models.CharField(max_length=100)
+    pincode = models.CharField(max_length=10)
+    
+    is_default = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            # Indexing lat/lon speeds up lookup queries
+            models.Index(fields=['latitude', 'longitude']),
+        ]
+
+
+from django.contrib.gis.db import models as gis_models
+from django.db import models
+from django.conf import settings
+
+class CustomerAddress(models.Model):
+    class SelectionType(models.TextChoices):
+        AUTO = 'AUTO', 'Auto (GPS)'
+        MANUAL = 'MANUAL', 'Manual (Map/Search)'
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="addresses")
+    
+    # THE SOURCE OF TRUTH
+    # Spatial Indexing (GIST) is automatic with GeometryField in PostGIS
+    location = gis_models.PointField(srid=4326, help_text="Exact Pin Coordinates")
+    
+    # Address details
+    address_text = models.TextField(help_text="Full address from Geocoder")
+    house_no = models.CharField(max_length=50, blank=True)
+    landmark = models.CharField(max_length=100, blank=True)
+    city = models.CharField(max_length=100)
+    pincode = models.CharField(max_length=20, db_index=True)
+    
+    # Logic fields
+    selection_type = models.CharField(max_length=10, choices=SelectionType.choices, default=SelectionType.MANUAL)
+    is_serviceable_cache = models.BooleanField(default=True) # Cache last check
+    last_used_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', '-last_used_at']),
+        ]
 
 # ==========================
 # PROFILES

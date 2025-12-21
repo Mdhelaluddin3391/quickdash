@@ -29,6 +29,10 @@ from .views_onboarding import (
     AdminEmployeeListCreateView,
     AdminEmployeeStatusUpdateView,
 )
+from .views_location import CheckServiceabilityView, SaveCurrentLocationView
+from apps.delivery.views_api import UpdateRiderLocationView
+
+
 
 urlpatterns = [
     # ==========================
@@ -73,4 +77,10 @@ urlpatterns = [
 
     # Misc
     path('location/service-check/', LocationServiceCheckView.as_view(), name='location-service-check'),
+
+    path('location/check-serviceability/', CheckServiceabilityView.as_view(), name='check-serviceability'),
+    path('location/save-current/', SaveCurrentLocationView.as_view(), name='save-current-location'),
+    
+    # RIDER ROUTES
+    path('delivery/rider/update-location/', UpdateRiderLocationView.as_view(), name='rider-update-location'),
 ]

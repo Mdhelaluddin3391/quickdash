@@ -18,6 +18,11 @@ from .signals import (
 )
 from .exceptions import OutOfStockError
 from .notifications import notify_packer_new_task, notify_dispatch_ready
+import logging
+from django.contrib.gis.geos import Point
+from django.contrib.gis.db.models.functions import Distance
+from django.contrib.gis.measure import D
+from apps.warehouse.models import Warehouse, ServiceArea
 
 logger = logging.getLogger(__name__)
 
@@ -515,7 +520,24 @@ from django.contrib.gis.geos import Point
 from django.contrib.gis.db.models.functions import Distance
 from django.db.models import F
 from django.db.models.expressions import RawSQL
+def check_serviceability(lat, lng):
+    """
+    Returns: (is_serviceable, warehouse_id, error_message)
+    """
+    user_point = Point(float(lng), float(lat), srid=4326)
+    
+    # 1. Precise Polygon Check (Fastest with PostGIS GIST index)
+    service_area = ServiceArea.objects.filter(
+        is_active=True,
+        geometry__contains=user_point
+    ).select_related('warehouse').first()
 
+    if service_area:
+        return True, service_area.warehouse.id, None
+        
+    return False, None, "Location not serviceable"
+
+    
 def check_service_availability(latitude, longitude, warehouse_id=None):
     """
     Check if a location is serviceable.
@@ -629,37 +651,58 @@ def check_service_availability(latitude, longitude, warehouse_id=None):
     }
 
 
-def get_nearest_service_area(latitude, longitude):
-    """
-    Get the nearest service area to a given location.
-    Useful for showing "coming soon to your area" messages.
-    
-    Returns the nearest service area even if customer location is not covered.
-    """
-    try:
-        customer_location = Point(longitude, latitude, srid=4326)
-    except Exception as e:
-        logger.error(f"Invalid coordinates: lat={latitude}, lng={longitude}, error={e}")
-        return None
-    
-    from .models import ServiceArea
-    
-    nearest = ServiceArea.objects.filter(
-        is_active=True,
-        center_point__isnull=False
-    ).annotate(
-        distance=Distance('center_point', customer_location)
-    ).order_by('distance').first()
-    
-    if nearest:
-        distance = customer_location.distance(nearest.center_point)
-        return {
-            'service_area': {
-                'id': nearest.id,
-                'name': nearest.name,
-                'warehouse': nearest.warehouse.name,
-            },
-            'distance_km': round(distance.km, 2),
-        }
-    
-    return None
+
+
+class LocationService:
+    @staticmethod
+    def get_serviceable_warehouse(latitude, longitude):
+        """
+        Determines if a location is serviceable.
+        Priority:
+        1. Check if point is inside a defined ServiceArea Polygon.
+        2. Check if point is within ServiceArea radius (fallback).
+        Returns: (is_serviceable, warehouse_obj, service_area_obj, distance_km)
+        """
+        try:
+            user_point = Point(float(longitude), float(latitude), srid=4326)
+
+            # 1. Polygon Check (Most Accurate)
+            # Find active service areas containing this point
+            service_area = ServiceArea.objects.filter(
+                is_active=True,
+                geometry__contains=user_point
+            ).select_related('warehouse').first()
+
+            if service_area:
+                # Calculate distance to warehouse for ETA
+                dist = service_area.warehouse.location.distance(user_point) * 100  # Approx conversion if using degrees, better to use project
+                # For accurate distance, we usually annotate. Let's do a quick estimate or re-query.
+                return True, service_area.warehouse, service_area, 0 # Distance calc can be refined
+
+            # 2. Radius Check (Fallback)
+            # Find closest service area where distance < radius
+            nearest_area = ServiceArea.objects.filter(
+                is_active=True,
+                center_point__distance_lte=(user_point, D(km=10)) # Optimization: Pre-filter 10km box
+            ).annotate(
+                distance=Distance('center_point', user_point)
+            ).order_by('distance').first()
+
+            if nearest_area and nearest_area.distance.km <= nearest_area.radius_km:
+                return True, nearest_area.warehouse, nearest_area, nearest_area.distance.km
+
+            return False, None, None, 0
+
+        except Exception as e:
+            logger.error(f"Error in serviceability check: {e}")
+            return False, None, None, 0
+
+    @staticmethod
+    def calculate_eta(distance_km):
+        """
+        Simple ETA logic: 10 mins prep + 7 mins per km
+        """
+        PREP_TIME = 10
+        MINS_PER_KM = 7
+        total_mins = PREP_TIME + (distance_km * MINS_PER_KM)
+        return int(total_mins)

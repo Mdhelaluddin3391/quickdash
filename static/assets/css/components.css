@@ -1,2 +1,75 @@
-/* Styles for components.css */
-/* Root variables are in base.css */
+/* Location Modal Overlay */
+.location-modal {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.6);
+    z-index: 9999;
+    display: flex;
+    justify-content: center;
+    align-items: flex-end; /* Bottom sheet on mobile */
+}
+
+.location-modal.hidden { display: none; }
+
+.modal-content {
+    background: #fff;
+    width: 100%;
+    max-width: 500px; /* Desktop limit */
+    border-radius: 20px 20px 0 0;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 -5px 20px rgba(0,0,0,0.2);
+    animation: slideUp 0.3s ease-out;
+}
+
+/* Map Area */
+.map-container {
+    position: relative;
+    height: 350px;
+    width: 100%;
+}
+
+#picker-map { width: 100%; height: 100%; }
+
+/* The Static Center Pin */
+.center-pin {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -100%); /* Point to exact center */
+    z-index: 1000;
+    pointer-events: none; /* Let clicks pass through to map */
+}
+.center-pin img { width: 40px; }
+
+/* Floating GPS Button */
+.btn-gps-float {
+    position: absolute;
+    bottom: 20px; right: 20px;
+    background: #fff;
+    border: none;
+    width: 45px; height: 45px;
+    border-radius: 50%;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    z-index: 1001;
+    cursor: pointer;
+    color: #32CD32; /* QuickDash Green */
+    font-size: 1.2rem;
+}
+
+/* Details Panel */
+.location-details { padding: 20px; }
+.status-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 0.8rem; background: #f0f0f0; 
+    padding: 4px 10px; border-radius: 12px; margin-bottom: 10px;
+}
+.error-msg { color: red; font-size: 0.9rem; margin-top: 10px; }
+.hidden { display: none; }
+
+@keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+/* Desktop Adjustment */
+@media(min-width: 768px) {
+    .location-modal { align-items: center; }
+    .modal-content { border-radius: 12px; height: auto; }
+}
