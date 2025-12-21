@@ -29,11 +29,15 @@
     {% block extra_css %}{% endblock %}
 
     <script>
+        // CORE CONFIGURATION - Defined early to prevent ReferenceErrors
         window.APP_CONFIG = {
             API_BASE: "/api/v1",
             USER: JSON.parse(localStorage.getItem('user') || 'null'),
             IS_LOGGED_IN: !!localStorage.getItem('access_token')
         };
+        
+        // Expose API_BASE globally for legacy scripts and direct access
+        window.API_BASE = window.APP_CONFIG.API_BASE;
     </script>
 </head>
 

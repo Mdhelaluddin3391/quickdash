@@ -1,3 +1,18 @@
+/**
+ * QuickDash API Utility
+ * Handles authentication, base URLs, and error parsing.
+ */
+
+// Establish API_BASE with Safe Fallbacks:
+// 1. window.API_BASE (Explicit global from base.html)
+// 2. window.APP_CONFIG.API_BASE (Namespaced config)
+// 3. '/api/v1' (Safe default for same-origin calls)
+const API_BASE = (typeof window.API_BASE !== 'undefined') 
+    ? window.API_BASE 
+    : (window.APP_CONFIG && window.APP_CONFIG.API_BASE) 
+        ? window.APP_CONFIG.API_BASE 
+        : '/api/v1';
+
 async function apiCall(endpoint, method = 'GET', body = null, auth = true) {
     const headers = { 'Content-Type': 'application/json' };
     
@@ -17,7 +32,11 @@ async function apiCall(endpoint, method = 'GET', body = null, auth = true) {
         // Handle Absolute vs Relative URLs
         let url = endpoint;
         if (!endpoint.startsWith('http://') && !endpoint.startsWith('https://')) {
-            url = `${API_BASE}${endpoint}`;
+            // Ensure endpoint has leading slash if missing to avoid concatenation errors
+            const safeEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+            
+            // API_BASE is now guaranteed to be defined by the const above
+            url = `${API_BASE}${safeEndpoint}`;
         }
 
         const response = await fetch(url, config);
