@@ -1,21 +1,28 @@
+// static/assets/js/utils/search.js
+
 document.addEventListener('DOMContentLoaded', () => {
     const searchInput = document.querySelector('input[name="q"]');
-    const searchForm = document.querySelector('.search-bar-row');
+    // Support multiple search bars (desktop/mobile) by targeting the closest container
+    const searchForm = document.querySelector('.search-bar-row') || searchInput?.closest('form');
     
     if (!searchInput || !searchForm) return;
 
-    // 1. Dropdown Banayein
+    // 1. Initialize Dropdown (Singleton Pattern)
     let suggestBox = document.getElementById('search-suggestions');
     if (!suggestBox) {
         suggestBox = document.createElement('div');
         suggestBox.id = 'search-suggestions';
         suggestBox.className = 'search-dropdown';
         suggestBox.style.display = 'none';
-        searchForm.appendChild(suggestBox);
+        
+        // Append correctly based on layout
+        const container = searchForm.style.position === 'relative' ? searchForm : searchForm.parentElement;
+        if(getComputedStyle(container).position === 'static') container.style.position = 'relative';
+        container.appendChild(suggestBox);
     }
 
     let debounceTimer;
-    let currentController = null; // Purani request cancel karne ke liye
+    let currentController = null; 
 
     // 2. Input Listener (Typing)
     searchInput.addEventListener('input', (e) => {
@@ -28,11 +35,11 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // 300ms ka wait (Debounce)
+        // 300ms Debounce
         debounceTimer = setTimeout(() => fetchSuggestions(query), 300);
     });
 
-    // 3. Focus Listener (Dobara click karne par dikhaye)
+    // 3. Focus Listener
     searchInput.addEventListener('focus', () => {
         if (searchInput.value.trim().length >= 2 && suggestBox.innerHTML !== '') {
             suggestBox.style.display = 'block';
@@ -41,7 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 4. API Call with AbortController
     async function fetchSuggestions(query) {
-        // Agar pehle se koi request chal rahi hai, toh use cancel karo
+        // Cancel previous pending request
         if (currentController) {
             currentController.abort();
         }
@@ -49,13 +56,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const signal = currentController.signal;
 
         try {
-            // Note: apiCall function ko modify karna pad sakta hai signal support ke liye,
-            // lekin standard fetch directly use karte hain yahan better control ke liye.
-            const token = localStorage.getItem('accessToken');
-            const headers = { 'Content-Type': 'application/json' };
-            // Search public hai, par agar user login hai toh token bhej sakte hain (optional)
+            // Get Config
+            const apiBase = (window.APP_CONFIG && window.APP_CONFIG.API_BASE) ? window.APP_CONFIG.API_BASE : '/api/v1';
             
-            const response = await fetch(`${APP_CONFIG.API_BASE}/catalog/suggest/?q=${encodeURIComponent(query)}`, {
+            // Prepare Headers
+            const headers = { 'Content-Type': 'application/json' };
+            const token = localStorage.getItem('access_token'); // FIX: Correct key name
+            if (token) {
+                headers['Authorization'] = `Bearer ${token}`;
+            }
+
+            // Fetch
+            const response = await fetch(`${apiBase}/catalog/suggest/?q=${encodeURIComponent(query)}`, {
                 method: 'GET',
                 headers: headers,
                 signal: signal
@@ -68,9 +80,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch (e) {
             if (e.name === 'AbortError') {
-                console.log("Old search cancelled"); // Expected behavior
+                // Ignore cancellations
             } else {
-                console.error("Search error:", e);
+                console.warn("[Search] Error:", e);
             }
         }
     }
@@ -86,29 +98,37 @@ document.addEventListener('DOMContentLoaded', () => {
         
         data.forEach(item => {
             const div = document.createElement('a');
-            div.href = item.url;
+            
+            // Use Backend provided URL or fallback to search results
+            div.href = item.url || `/search_results.html?q=${encodeURIComponent(item.text)}`;
             div.className = 'suggest-item';
+            div.style.textDecoration = 'none';
+            div.style.display = 'flex';
+            div.style.alignItems = 'center';
+            div.style.padding = '10px';
+            div.style.borderBottom = '1px solid #eee';
             
             if (item.type === 'category') {
                 div.innerHTML = `
-                    <div class="s-icon"><i class="${item.icon}"></i></div>
+                    <div class="s-icon" style="margin-right:10px; width:30px; text-align:center;">
+                        <i class="${item.icon || 'fas fa-tag'} text-muted"></i>
+                    </div>
                     <div class="s-info">
-                        <span class="s-main">${item.text}</span>
-                        <span class="s-sub">Category</span>
+                        <div class="s-main" style="font-weight:600; color:#333;">${item.text}</div>
+                        <div class="s-sub" style="font-size:0.8rem; color:#888;">Category</div>
                     </div>
                 `;
             } else {
-                const img = item.image || 'https://via.placeholder.com/40';
-                // Price formatting check
+                const img = item.image || '/static/assets/img/placeholder.png';
                 const price = item.price ? `₹${parseFloat(item.price).toFixed(0)}` : '';
                 
                 div.innerHTML = `
-                    <img src="${img}" class="s-img" alt="img">
-                    <div class="s-info">
-                        <span class="s-main">${item.text}</span>
-                        <span class="s-sub">${item.sub_text}</span>
+                    <img src="${img}" class="s-img" alt="img" style="width:40px; height:40px; object-fit:cover; border-radius:4px; margin-right:10px;">
+                    <div class="s-info" style="flex:1;">
+                        <div class="s-main" style="font-weight:500; color:#333;">${item.text}</div>
+                        <div class="s-sub" style="font-size:0.8rem; color:#888;">${item.sub_text || 'Product'}</div>
                     </div>
-                    <div class="s-price">${price}</div>
+                    <div class="s-price" style="font-weight:bold; color:#32CD32;">${price}</div>
                 `;
             }
             suggestBox.appendChild(div);

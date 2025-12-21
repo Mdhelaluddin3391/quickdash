@@ -8,19 +8,21 @@ let feedObserver;
 let cartMap = {}; // Stores sku_id -> quantity mapping
 
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log("Loading Home Page...");
-
     // 1. Inject Custom CSS for Buttons
     injectHomeStyles();
 
     // 2. Fetch Cart Data First (To show correct quantities)
+    // FIX: This must complete before rendering shelves to show correct buttons
     await fetchCartState();
 
     // 3. Load Static Sections
-    await loadBanners();
-    await loadHomeCategories();
-    await loadFlashSales();
-    await loadBrands();
+    // We run these in parallel for speed
+    Promise.all([
+        loadBanners(),
+        loadHomeCategories(),
+        loadFlashSales(),
+        loadBrands()
+    ]);
 
     // 4. Start Infinite Feed
     initProductShelves();
@@ -79,17 +81,27 @@ function injectHomeStyles() {
 }
 
 async function fetchCartState() {
+    // If user is not logged in, skip fetching cart
     if (!localStorage.getItem('access_token')) return;
+
     try {
-        // Fetch current cart to map quantities
-        const response = await apiCall('/orders/cart/', 'GET', null, false);
+        // FIX: Changed 'false' to 'true' to enable Authentication
+        const response = await apiCall('/orders/cart/', 'GET', null, true);
+        
         const cartItems = response.items || [];
         cartMap = {};
+        
+        // Map SKU IDs to Quantities
         cartItems.forEach(item => {
-            cartMap[item.sku.id] = item.quantity;
+            // Support both flat structure and nested sku object
+            const skuId = item.sku ? item.sku.id : item.sku_id;
+            cartMap[skuId] = item.quantity;
         });
+        
     } catch (e) {
-        console.warn("Could not fetch cart state", e);
+        // If 401 occurs here (token expired), apiCall will handle redirect.
+        // For other errors, we just log warning so homepage still loads.
+        console.warn("[Home] Could not sync cart state:", e);
     }
 }
 
@@ -99,6 +111,7 @@ async function fetchCartState() {
 async function loadBanners() {
     const slider = document.getElementById('hero-slider');
     const midContainer = document.getElementById('mid-banner-container');
+    if (!slider && !midContainer) return;
 
     try {
         const response = await apiCall('/catalog/banners/', 'GET', null, false);
@@ -109,7 +122,7 @@ async function loadBanners() {
         if (slider) {
             if (heroBanners.length > 0) {
                 slider.innerHTML = heroBanners.map(b => `
-                <a href="${b.target_url}" class="promo-card" style="background: ${b.bg_gradient}">
+                <a href="${b.target_url || '#'}" class="promo-card" style="background: ${b.bg_gradient || '#333'}">
                     <div class="promo-content">
                         <h2>${b.title}</h2>
                         <p>Shop Now</p>
@@ -127,19 +140,20 @@ async function loadBanners() {
 
         // B. Mid Banner
         const midBanners = banners.filter(b => b.position === 'MID');
-        if (midContainer && midBanners.length > 0) {
-            midContainer.style.display = 'block';
-            midContainer.innerHTML = `
-            <a href="${midBanners[0].target_url}">
-                <img src="${midBanners[0].image_url}" alt="Offer" loading="lazy">
-            </a>
-        `;
-        } else if (midContainer) {
-            midContainer.style.display = 'none';
+        if (midContainer) {
+            if (midBanners.length > 0) {
+                midContainer.style.display = 'block';
+                midContainer.innerHTML = `
+                <a href="${midBanners[0].target_url || '#'}">
+                    <img src="${midBanners[0].image_url}" alt="Offer" loading="lazy" style="width:100%; border-radius:8px;">
+                </a>`;
+            } else {
+                midContainer.style.display = 'none';
+            }
         }
 
     } catch (e) {
-        console.error("Banner Error:", e);
+        console.warn("[Home] Banner Error:", e);
     }
 }
 
@@ -159,22 +173,19 @@ async function loadHomeCategories() {
         grid.innerHTML = parents.slice(0, 8).map(c => `
         <div class="cat-item-home" onclick="window.location.href='/search_results.html?slug=${c.slug}'">
             <div class="cat-icon-box">
-                <img src="${c.icon_url || 'https://cdn-icons-png.flaticon.com/512/2921/2921822.png'}" alt="${c.name}">
+                <img src="${c.icon_url || 'https://cdn-icons-png.flaticon.com/512/2921/2921822.png'}" alt="${c.name}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/2921/2921822.png'">
             </div>
             <span class="cat-label">${c.name}</span>
         </div>
     `).join('');
 
     } catch (e) {
-        console.error("Home Category Grid Error:", e);
+        console.warn("[Home] Category Error:", e);
     }
 }
 
 // =========================================================
 // 3. FLASH SALES
-// =========================================================
-// =========================================================
-// 3. FLASH SALES (FIXED ADD BUTTON)
 // =========================================================
 async function loadFlashSales() {
     const container = document.getElementById('flash-sale-section');
@@ -194,30 +205,25 @@ async function loadFlashSales() {
         if (sales[0] && sales[0].end_time) startTimer(new Date(sales[0].end_time));
 
         grid.innerHTML = sales.map(sale => {
-            // FIX 1: Check if item is already in cart
             const qty = cartMap[sale.sku_id] || 0;
             
-            // FIX 2: Decide functionality (Counter vs Add Button)
             let btnHtml;
             if (qty > 0) {
-                // Agar cart mein hai, toh Counter dikhao
                 btnHtml = getQtyControlHtml(sale.sku_id, qty);
             } else {
-                // Agar nahi hai, toh Flash Sale wala Orange Button dikhao
                 btnHtml = `<button onclick="addToCart('${sale.sku_id}', 1, this)" style="width:100%; background:#e67e22; color:white; border:none; padding:6px; border-radius:4px; font-weight:600; cursor:pointer;">ADD</button>`;
             }
 
             return `
             <div class="flash-card">
                 <div class="badge-off">${sale.discount_percent}% OFF</div>
-                <img src="${sale.sku_image || 'https://cdn-icons-png.flaticon.com/512/2553/2553691.png'}">
+                <img src="${sale.sku_image || 'https://cdn-icons-png.flaticon.com/512/2553/2553691.png'}" onerror="this.src='https://via.placeholder.com/150'">
                 <div class="f-info">
-                    <div style="height: 40px; overflow: hidden;">${sale.sku_name}</div>
+                    <div style="height: 40px; overflow: hidden; font-size:0.9rem; margin-bottom:5px;">${sale.sku_name}</div>
                     <div class="price">
                         <span>₹${parseFloat(sale.discounted_price).toFixed(0)}</span>
-                        <span style="text-decoration:line-through; font-weight:400;">₹${parseFloat(sale.original_price).toFixed(0)}</span>
+                        <span style="text-decoration:line-through; font-weight:400; font-size:0.8rem; color:#888;">₹${parseFloat(sale.original_price).toFixed(0)}</span>
                     </div>
-                    
                     <div id="action-wrapper-${sale.sku_id}" class="mt-2" style="min-height:36px; display:flex; align-items:center; justify-content:center;">
                         ${btnHtml}
                     </div>
@@ -227,7 +233,7 @@ async function loadFlashSales() {
         }).join('');
 
     } catch (e) {
-        console.error("Flash Sale Error", e);
+        console.warn("[Home] Flash Sale Error", e);
         container.style.display = 'none';
     }
 }
@@ -235,12 +241,16 @@ async function loadFlashSales() {
 function startTimer(endTime) {
     const display = document.getElementById('flash-timer-display');
     if (!display) return;
-    const interval = setInterval(() => {
+    
+    // Clear any existing interval to prevent duplicates
+    if (window.flashTimerInterval) clearInterval(window.flashTimerInterval);
+
+    window.flashTimerInterval = setInterval(() => {
         const now = new Date();
         const diff = endTime - now;
         if (diff <= 0) {
             display.innerText = "Ended";
-            clearInterval(interval);
+            clearInterval(window.flashTimerInterval);
             return;
         }
         const h = Math.floor(diff / (1000 * 60 * 60));
@@ -260,14 +270,19 @@ async function loadBrands() {
         const response = await apiCall('/catalog/brands/', 'GET', null, false);
         const brands = response.results || response;
         if (brands.length === 0) return;
-        scroller.innerHTML = brands.map(b => `<div class="brand-circle" onclick="window.location.href='/search_results.html?search=${b.name}'"> <img src="${b.logo_url || 'https://cdn-icons-png.flaticon.com/512/888/888879.png'}" alt="${b.name}"> </div>`).join('');
+        
+        scroller.innerHTML = brands.map(b => `
+            <div class="brand-circle" onclick="window.location.href='/search_results.html?search=${encodeURIComponent(b.name)}'"> 
+                <img src="${b.logo_url || 'https://cdn-icons-png.flaticon.com/512/888/888879.png'}" alt="${b.name}"> 
+            </div>
+        `).join('');
     } catch (e) {
-        console.error("Brand Error", e);
+        console.warn("[Home] Brand Error", e);
     }
 }
 
 // =========================================================
-// 5. OPTIMIZED INFINITE FEED (BATCH LOADING)
+// 5. INFINITE FEED
 // =========================================================
 
 async function initProductShelves() {
@@ -281,7 +296,7 @@ async function initProductShelves() {
     const loader = document.createElement('div');
     loader.id = 'feed-loader';
     loader.className = 'text-center py-5';
-    loader.innerHTML = '<div class="loader">Loading shelves...</div>';
+    loader.innerHTML = '<div class="spinner-border text-success" role="status"></div><div class="mt-2 text-muted small">Loading suggestions...</div>';
     container.appendChild(loader);
 
     setupFeedObserver();
@@ -313,42 +328,42 @@ async function loadNextFeedBatch() {
         }
 
     } catch (error) {
-        console.error("Feed Load Error:", error);
+        console.warn("[Home] Feed Load Error:", error);
+        if(loader) loader.innerHTML = `<p class="text-center text-muted">That's all for now!</p>`;
     } finally {
         isFeedLoading = false;
     }
 }
 
 function renderSection(section) {
-    const container = document.getElementById('feed-loader'); 
-    if (!container) return;
+    const loader = document.getElementById('feed-loader'); 
+    if (!loader) return;
 
     const html = `
         <section class="category-section" style="animation: fadeIn 0.5s ease-out; margin-bottom: 30px;">
             <div class="section-header d-flex justify-content-between align-items-center px-3 mb-2">
-                <h3 style="font-size: 1.2rem; font-weight: 700;">${section.category_name}</h3>
-                <a href="/search_results.html?slug=${section.category_slug}" class="text-success text-decoration-none small">
+                <h3 style="font-size: 1.1rem; font-weight: 700; margin:0;">${section.category_name}</h3>
+                <a href="/search_results.html?slug=${section.category_slug}" class="text-success text-decoration-none small" style="font-weight:600;">
                     See All <i class="fas fa-chevron-right"></i>
                 </a>
             </div>
             
-            <div class="product-scroll-wrapper d-flex" style="overflow-x: auto; gap: 15px; padding: 10px 15px; scroll-behavior: smooth;">
+            <div class="product-scroll-wrapper d-flex" style="overflow-x: auto; gap: 15px; padding: 10px 15px; scroll-behavior: smooth; -webkit-overflow-scrolling: touch;">
                 ${section.products.map(p => {
-                    // Check if item is in cart
                     const qty = cartMap[p.id] || 0;
                     const buttonHtml = qty > 0 
                         ? getQtyControlHtml(p.id, qty) 
                         : `<button id="btn-${p.id}" onclick="addToCart('${p.id}', 1, this)" class="btn-add-initial">ADD</button>`;
 
                     return `
-                    <div class="prod-card" style="min-width: 160px; max-width: 160px; background: #fff; border-radius: 12px; padding: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                    <div class="prod-card" style="min-width: 160px; max-width: 160px; background: #fff; border-radius: 12px; padding: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border:1px solid #f0f0f0;">
                         <a href="/product.html?code=${p.sku_code}" class="text-decoration-none text-dark">
-                            <div class="prod-img-box position-relative mb-2" style="height: 140px; display: flex; align-items: center; justify-content: center;">
+                            <div class="prod-img-box position-relative mb-2" style="height: 120px; display: flex; align-items: center; justify-content: center;">
                                 ${p.is_featured ? '<span class="badge bg-danger position-absolute top-0 start-0" style="font-size:0.6rem;">HOT</span>' : ''}
                                 <img src="${p.image || 'https://via.placeholder.com/150'}" loading="lazy" style="max-height: 100%; max-width: 100%; object-fit: contain;">
                             </div>
                             <div class="prod-title text-truncate small fw-bold mb-1">${p.name}</div>
-                            <div class="prod-unit text-muted small mb-2" style="font-size: 0.75rem;">${p.unit}</div>
+                            <div class="prod-unit text-muted small mb-2" style="font-size: 0.75rem;">${p.unit || 'Unit'}</div>
                         </a>
                         <div class="prod-footer d-flex justify-content-between align-items-center">
                             <div class="prod-price fw-bold">₹${p.price.toFixed(0)}</div>
@@ -361,15 +376,15 @@ function renderSection(section) {
                 
                 <div class="view-all-card d-flex align-items-center justify-content-center" style="min-width: 120px;">
                      <a href="/search_results.html?slug=${section.category_slug}" class="text-center text-success text-decoration-none">
-                        <div style="font-size: 1.5rem;"><i class="fas fa-arrow-right"></i></div>
-                        <small>View All</small>
+                        <div style="font-size: 2rem; margin-bottom:5px;"><i class="fas fa-arrow-right"></i></div>
+                        <small style="font-weight:600;">View All</small>
                      </a>
                 </div>
             </div>
         </section>
     `;
 
-    container.insertAdjacentHTML('beforebegin', html);
+    loader.insertAdjacentHTML('beforebegin', html);
 }
 
 // --- HTML Generator for Qty Control ---
@@ -386,12 +401,10 @@ function getQtyControlHtml(skuId, qty) {
 function renderEndOfPageCTA(container) {
     if(!container) return;
     container.innerHTML = `
-        <div class="end-page-cta" style="animation: fadeIn 0.5s;">
-            <div class="cta-icon-box"><i class="fas fa-shipping-fast"></i></div>
-            <h3 class="cta-title">Can't find what you're looking for?</h3>
-            <div class="cta-buttons">
-                <button class="btn-cta-action btn-search-trigger" onclick="scrollToSearch()">Search Item</button>
-            </div>
+        <div class="end-page-cta text-center py-4" style="animation: fadeIn 0.5s;">
+            <div class="cta-icon-box text-muted mb-2" style="font-size:2rem;"><i class="fas fa-search"></i></div>
+            <h5 class="cta-title text-muted">That's all for now!</h5>
+            <button class="btn btn-outline-success mt-2" onclick="scrollToSearch()">Search Items</button>
         </div>
     `;
 }
@@ -399,6 +412,9 @@ function renderEndOfPageCTA(container) {
 function setupFeedObserver() {
     const loader = document.getElementById('feed-loader');
     if (!loader) return;
+    
+    if (feedObserver) feedObserver.disconnect();
+    
     const options = { rootMargin: '200px', threshold: 0.1 };
     feedObserver = new IntersectionObserver((entries) => {
         if (entries[0].isIntersecting) {
@@ -414,13 +430,18 @@ function setupFeedObserver() {
 
 // Called when clicking "ADD" initially
 async function addToCart(skuId, qty, btn) {
+    // Auth Check
     if (!localStorage.getItem('access_token')) {
-        window.location.href = '/auth.html';
+        // Use Global URL Config if available
+        const loginUrl = (window.APP_CONFIG && window.APP_CONFIG.URLS) ? window.APP_CONFIG.URLS.LOGIN : '/auth.html';
+        window.location.href = loginUrl;
         return;
     }
 
-    // Immediate UI Feedback (Optimistic)
+    // Immediate UI Feedback
     const wrapper = document.getElementById(`action-wrapper-${skuId}`);
+    const originalHtml = wrapper ? wrapper.innerHTML : '';
+    
     if (wrapper) {
         wrapper.innerHTML = `<div class="spinner-border spinner-border-sm text-success" role="status"></div>`;
     }
@@ -433,23 +454,24 @@ async function addToCart(skuId, qty, btn) {
         cartMap[skuId] = newQty;
 
         // Render Quantity Control
-        if (wrapper) {
-            wrapper.innerHTML = getQtyControlHtml(skuId, newQty);
-        }
+        if (wrapper) wrapper.innerHTML = getQtyControlHtml(skuId, newQty);
         
         // Refresh Global Cart Count (in Navbar)
         if (window.updateGlobalCartCount) window.updateGlobalCartCount();
+        
+        // Show Toast
+        if(window.showToast) showToast("Item added to cart", "success");
 
     } catch (e) {
-        alert("Failed to add: " + e.message);
+        console.error("Failed to add:", e);
+        if(window.showToast) showToast(e.message || "Could not add item", "error");
+        else alert("Failed to add item");
+        
         // Revert UI
-        if (wrapper) {
-            wrapper.innerHTML = `<button id="btn-${skuId}" onclick="addToCart('${skuId}', 1, this)" class="btn-add-initial">ADD</button>`;
-        }
+        if (wrapper) wrapper.innerHTML = originalHtml;
     }
 }
 
-// Called when clicking + or - in the counter
 // Called when clicking + or - in the counter
 async function updateCartQty(skuId, change) {
     const currentQty = cartMap[skuId] || 0;
@@ -458,34 +480,36 @@ async function updateCartQty(skuId, change) {
     const qtySpan = document.getElementById(`qty-${skuId}`);
     const wrapper = document.getElementById(`action-wrapper-${skuId}`);
 
-    // 1. Optimistic UI Update (Turant UI change karein)
+    // 1. Optimistic UI Update
     if (newQty <= 0) {
-        // Agar quantity 0 ho gayi, toh wapas "ADD" button dikhayein
         if (wrapper) wrapper.innerHTML = `<button id="btn-${skuId}" onclick="addToCart('${skuId}', 1, this)" class="btn-add-initial">ADD</button>`;
         delete cartMap[skuId];
     } else {
-        // Agar quantity positive hai, toh number update karein
         if (qtySpan) qtySpan.innerText = newQty;
         cartMap[skuId] = newQty;
     }
 
-    // 2. API Call (Backend Update)
+    // 2. API Call (Background)
     try {
         if (newQty <= 0) {
-            // Remove item API
             await apiCall(`/orders/cart/items/${skuId}/`, 'DELETE');
+            if(window.showToast) showToast("Item removed", "info");
         } else {
-            // Update API
-            // FIX: Hamein 'change' (1) nahi, balki 'newQty' (Total) bhejna hai
+            // FIX: Sending new total quantity, not change
             await apiCall('/orders/cart/add/', 'POST', { sku_id: skuId, quantity: newQty });
         }
         
-        // Header cart count update karein
         if (window.updateGlobalCartCount) window.updateGlobalCartCount();
 
     } catch (e) {
         console.error("Cart Update Failed", e);
-        // Error handling: Agar fail ho jaye toh UI revert kar sakte hain (Optional)
+        if(window.showToast) showToast("Update failed. Refreshing...", "error");
+        
+        // Revert UI by reloading cart state
+        await fetchCartState();
+        // Force refresh shelves to fix numbers
+        // A full reload is safer here to ensure data consistency
+        // window.location.reload(); 
     }
 }
 
@@ -497,11 +521,9 @@ function scrollToSearch() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     setTimeout(() => {
         const searchInput = document.querySelector('input[name="q"]');
-        if (searchInput) searchInput.focus();
+        if (searchInput) {
+            searchInput.focus();
+            searchInput.click(); // For mobile behavior
+        }
     }, 800); 
-}
-
-function triggerAssistant() {
-    const astBtn = document.getElementById('ast-btn');
-    if (astBtn) astBtn.click(); 
 }

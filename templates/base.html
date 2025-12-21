@@ -16,7 +16,6 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
      crossorigin=""/>
-    
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
      crossorigin=""></script>
@@ -29,15 +28,55 @@
     {% block extra_css %}{% endblock %}
 
     <script>
-        // CORE CONFIGURATION - Defined early to prevent ReferenceErrors
-        window.APP_CONFIG = {
-            API_BASE: "/api/v1",
-            USER: JSON.parse(localStorage.getItem('user') || 'null'),
-            IS_LOGGED_IN: !!localStorage.getItem('access_token')
-        };
-        
-        // Expose API_BASE globally for legacy scripts and direct access
-        window.API_BASE = window.APP_CONFIG.API_BASE;
+        (function() {
+            /**
+             * Safe JSON Parser
+             * Prevents White-Screen-of-Death if localStorage has corrupted data
+             */
+            function safeJsonParse(key, fallback = null) {
+                try {
+                    const item = localStorage.getItem(key);
+                    // Handle 'undefined' string literal or null
+                    if (!item || item === 'undefined' || item === 'null') return fallback;
+                    return JSON.parse(item);
+                } catch (e) {
+                    console.warn(`[Config] Failed to parse ${key} from localStorage`, e);
+                    return fallback;
+                }
+            }
+
+            // Centralized Application Configuration
+            window.APP_CONFIG = {
+                // Network & API
+                API_BASE: "/api/v1",
+                
+                // User Session (Safe Parse)
+                USER: safeJsonParse('user', null),
+                IS_LOGGED_IN: !!localStorage.getItem('access_token'),
+                
+                // Centralized URL Routing (Single Source of Truth)
+                // TODO: In Phase 4, we will update these to match Django naming conventions
+                URLS: {
+                    HOME: '/index.html',
+                    LOGIN: '/auth.html',
+                    CART: '/cart.html',
+                    SEARCH: '/search_results.html',
+                    NOT_SERVICEABLE: '/templates/frontend/pages/not_serviceable.html', // Legacy path
+                    PROFILE: '/profile.html'
+                },
+
+                // Feature Flags
+                DEBUG: true
+            };
+
+            // Legacy Backwards Compatibility (for scripts not using APP_CONFIG yet)
+            window.API_BASE = window.APP_CONFIG.API_BASE;
+            
+            // Console Integrity Check
+            if (window.APP_CONFIG.DEBUG) {
+                console.log("🚀 QuickDash Environment Initialized:", window.APP_CONFIG);
+            }
+        })();
     </script>
 </head>
 

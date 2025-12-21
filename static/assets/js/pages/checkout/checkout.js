@@ -3,39 +3,48 @@
 let selectedAddressId = null;
 let selectedPayment = 'COD';
 let cartTotal = 0;
+let addressStore = []; // Cache addresses to avoid re-fetching
 
 document.addEventListener('DOMContentLoaded', async () => {
-    // Auth Check
-    if (!localStorage.getItem('access_token')) {
-        window.location.href = '/auth.html';
+    // 1. Auth Check
+    if (window.APP_CONFIG && !window.APP_CONFIG.IS_LOGGED_IN) {
+        window.location.href = window.APP_CONFIG.URLS.LOGIN;
         return;
     }
-    loadAddresses();
-    loadOrderSummary();
+
+    // 2. Load Data
+    await Promise.all([
+        loadAddresses(),
+        loadOrderSummary()
+    ]);
+    
+    // 3. Setup Modals
     setupAddressModal();
 });
 
 // --- 1. Address Logic ---
 async function loadAddresses() {
     const container = document.getElementById('address-list');
-    container.innerHTML = '<div class="loader">Loading...</div>';
+    if(!container) return;
+    
+    container.innerHTML = '<div class="loader text-center"><div class="spinner-border text-success"></div></div>';
 
     try {
         const response = await apiCall('/auth/customer/addresses/'); 
-        const addresses = response.results || response; 
+        addressStore = response.results || response; // Cache it
 
         container.innerHTML = '';
 
-        if (!addresses || addresses.length === 0) {
+        if (!addressStore || addressStore.length === 0) {
             container.innerHTML = `
                 <div class="alert alert-warning">
                     No address found. 
-                    <a href="#" onclick="window.LocationPicker.open(); return false;">Add Location</a>
+                    <a href="#" onclick="if(window.LocationPicker) window.LocationPicker.open(); return false;">Add Location</a>
                 </div>`;
             return;
         }
 
-        addresses.forEach((addr, index) => {
+        addressStore.forEach((addr, index) => {
             const card = document.createElement('div');
             // Auto-select the first/default address
             const isSelected = addr.is_default || index === 0;
@@ -45,131 +54,170 @@ async function loadAddresses() {
             card.onclick = () => selectAddr(addr.id, card);
 
             // Display Logic
+            const icon = addr.address_type === 'HOME' ? 'fa-home' : 'fa-briefcase';
+            
             card.innerHTML = `
-                <div class="d-flex justify-content-between">
-                    <span class="addr-tag">${addr.address_type}</span>
-                    ${isSelected ? '<i class="fas fa-check-circle text-success"></i>' : ''}
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="addr-tag"><i class="fas ${icon}"></i> ${addr.address_type}</span>
+                    ${isSelected ? '<i class="fas fa-check-circle text-success check-icon"></i>' : ''}
                 </div>
-                <strong>${addr.city}</strong>
-                <p class="mb-0 text-muted small">${addr.full_address}</p>
-                <small>PIN: ${addr.pincode}</small>
+                <div class="mt-2">
+                    <strong>${addr.city || 'Unknown City'}</strong>
+                    <p class="mb-0 text-muted small" style="line-height:1.4;">
+                        ${addr.full_address || addr.address_text || 'No details provided'}
+                    </p>
+                    <small class="text-secondary">PIN: ${addr.pincode}</small>
+                </div>
             `;
             container.appendChild(card);
         });
 
     } catch (e) {
         console.error("Address Load Error:", e);
-        container.innerHTML = '<p class="text-danger">Failed to load addresses.</p>';
+        container.innerHTML = '<p class="text-danger text-center">Failed to load addresses.</p>';
     }
 }
 
 function selectAddr(id, el) {
     selectedAddressId = id;
-    document.querySelectorAll('.addr-card').forEach(c => c.classList.remove('selected'));
-    document.querySelectorAll('.addr-card i.text-success').forEach(i => i.remove());
+    
+    // Visual Update
+    document.querySelectorAll('.addr-card').forEach(c => {
+        c.classList.remove('selected');
+        const icon = c.querySelector('.check-icon');
+        if(icon) icon.remove();
+    });
     
     el.classList.add('selected');
-    // Add visual checkmark
-    el.querySelector('.d-flex').insertAdjacentHTML('beforeend', '<i class="fas fa-check-circle text-success"></i>');
+    const header = el.querySelector('.d-flex');
+    if(header) header.insertAdjacentHTML('beforeend', '<i class="fas fa-check-circle text-success check-icon"></i>');
 }
 
 // --- 2. Order Summary ---
 async function loadOrderSummary() {
     try {
         const cart = await apiCall('/orders/cart/');
-        const subtotal = parseFloat(cart.total_amount);
-        cartTotal = subtotal + 20; // Delivery Fee fixed
         
-        document.getElementById('checkout-total').innerText = `₹${cartTotal.toFixed(2)}`;
+        // Safety check: Is cart empty?
+        if(!cart.items || cart.items.length === 0) {
+            document.getElementById('checkout-items-preview').innerHTML = 
+                '<div class="alert alert-danger">Your cart is empty! <a href="/index.html">Shop Now</a></div>';
+            document.getElementById('place-order-btn').disabled = true;
+            return;
+        }
+
+        const subtotal = parseFloat(cart.total_amount || 0);
+        const fee = 20; // Delivery Fee
+        cartTotal = subtotal + fee;
+        
+        const totalEl = document.getElementById('checkout-total');
+        if(totalEl) totalEl.innerText = `₹${cartTotal.toFixed(2)}`;
         
         const preview = document.getElementById('checkout-items-preview');
-        if(preview && cart.items) {
-            preview.innerHTML = cart.items.map(i => 
-                `<div class="d-flex justify-content-between small mb-1">
-                    <span>${i.quantity} x ${i.sku_name.substring(0, 20)}..</span>
-                    <span>₹${i.total_price}</span>
+        if(preview) {
+            preview.innerHTML = cart.items.map(i => `
+                <div class="d-flex justify-content-between small mb-2 border-bottom pb-2">
+                    <div style="max-width: 70%;">
+                        <span class="fw-bold">${i.quantity} x</span> ${i.sku_name}
+                    </div>
+                    <span class="fw-bold">₹${i.total_price}</span>
                 </div>`
             ).join('');
         }
     } catch(e) {
-        console.error("Cart Error", e);
+        console.error("Cart Summary Error", e);
     }
 }
 
 // --- 3. Payment Selection ---
 window.selectPayment = function(method) {
     selectedPayment = method;
+    
+    // Visual Update
     document.querySelectorAll('.payment-option').forEach(o => o.classList.remove('selected'));
     
-    // Find input by value and check it
     const input = document.querySelector(`input[name="payment"][value="${method}"]`);
     if(input) {
         input.checked = true;
-        input.closest('.payment-option').classList.add('selected');
+        const card = input.closest('.payment-option');
+        if(card) card.classList.add('selected');
     }
 };
 
-// --- 4. Place Order ---
-// --- 4. Place Order (UPDATED) ---
-document.getElementById('place-order-btn').addEventListener('click', async () => {
-    if (!selectedAddressId) {
-        alert("Please select a delivery address.");
-        return;
-    }
-
-    const btn = document.getElementById('place-order-btn');
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
-
-    try {
-        // [STEP 1] Fetch Selected Address Details
-        const response = await apiCall('/auth/customer/addresses/');
-        const addresses = response.results || response;
-        const addrObj = addresses.find(a => a.id === selectedAddressId);
-
-        if (!addrObj) throw new Error("Selected address invalid.");
-
-        // [STEP 2] Prepare Payload
-        const payload = {
-            payment_method: selectedPayment,
-            delivery_address_json: {
-                full_address: addrObj.full_address,
-                city: addrObj.city,
-                pincode: addrObj.pincode,
-                type: addrObj.address_type
-            },
-            // Send Lat/Lng for rider routing
-            delivery_lat: addrObj.location ? addrObj.location.coordinates[1] : null,
-            delivery_lng: addrObj.location ? addrObj.location.coordinates[0] : null
-        };
-
-        // [STEP 3] Order Create API Call
-        const orderData = await apiCall('/orders/create/', 'POST', payload);
-
-        // [STEP 4] Handle Payment Flow
-        if (selectedPayment === 'COD') {
-            // Direct success for COD
-            window.location.href = `/order_success.html?order_id=${orderData.order.id}`;
-        } else if (selectedPayment === 'RAZORPAY') {
-            // Check if backend provided necessary payment metadata
-            if (!orderData.payment_data || !orderData.payment_data.razorpay_order_id) {
-                throw new Error("Invalid payment initialization from server.");
-            }
-            await initiateRazorpayPayment(orderData.order, orderData.payment_data);
+// --- 4. Place Order (ROBUST) ---
+const placeOrderBtn = document.getElementById('place-order-btn');
+if(placeOrderBtn) {
+    placeOrderBtn.addEventListener('click', async () => {
+        if (!selectedAddressId) {
+            if(window.showToast) showToast("Please select a delivery address.", "warning");
+            else alert("Please select a delivery address.");
+            return;
         }
 
-    } catch (e) {
-        console.error("Order Failed:", e);
-        alert("Order Failed: " + (e.message || JSON.stringify(e)));
-        btn.disabled = false;
-        btn.innerText = "Place Order";
-    }
-});
+        const btn = document.getElementById('place-order-btn');
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
 
-// --- Helper Functions (NEW) ---
+        try {
+            // [STEP 1] Get Address from Cache (No need to re-fetch)
+            // Ensure ID type match (int vs string)
+            const addrObj = addressStore.find(a => String(a.id) === String(selectedAddressId));
 
+            if (!addrObj) throw new Error("Selected address is invalid or not found.");
+
+            // [STEP 2] Prepare Payload
+            // Safety: Ensure location exists before accessing coordinates
+            const lat = (addrObj.location && addrObj.location.coordinates) ? addrObj.location.coordinates[1] : null;
+            const lng = (addrObj.location && addrObj.location.coordinates) ? addrObj.location.coordinates[0] : null;
+
+            const payload = {
+                payment_method: selectedPayment,
+                delivery_address_json: {
+                    full_address: addrObj.full_address || addrObj.address_text || "",
+                    city: addrObj.city || "",
+                    pincode: addrObj.pincode || "",
+                    type: addrObj.address_type || "HOME"
+                },
+                delivery_lat: lat,
+                delivery_lng: lng
+            };
+
+            console.log("Submitting Order Payload:", payload);
+
+            // [STEP 3] Create Order API
+            const orderData = await apiCall('/orders/create/', 'POST', payload);
+
+            // [STEP 4] Handle Success / Redirect
+            if (selectedPayment === 'COD') {
+                window.location.href = `/templates/frontend/checkout/success.html?order_id=${orderData.order.id}`;
+            } else if (selectedPayment === 'RAZORPAY') {
+                if (!orderData.payment_data || !orderData.payment_data.razorpay_order_id) {
+                    throw new Error("Invalid payment initialization from server.");
+                }
+                await initiateRazorpayPayment(orderData.order || {id: orderData.order_id}, orderData.payment_data);
+            }
+
+        } catch (e) {
+            console.error("Order Creation Failed:", e);
+            
+            // BETTER ERROR HANDLING
+            let errorMsg = "Order Failed. ";
+            if (e.message) errorMsg += e.message;
+            // Attempt to show backend field errors if present
+            if(e.detail) errorMsg += " (" + e.detail + ")";
+            
+            if(window.showToast) showToast(errorMsg, "error");
+            else alert(errorMsg);
+            
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+    });
+}
+
+// --- Helper: Razorpay ---
 async function initiateRazorpayPayment(order, paymentData) {
-    // Dynamic load of Razorpay SDK if not present
     if (!document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]')) {
         await new Promise((resolve) => {
             const script = document.createElement('script');
@@ -180,21 +228,17 @@ async function initiateRazorpayPayment(order, paymentData) {
     }
 
     const options = {
-        "key": paymentData.key_id, // Injected from backend
-        "amount": paymentData.amount, // Amount in paise
+        "key": paymentData.key_id, 
+        "amount": paymentData.amount, 
         "currency": paymentData.currency,
-        "name": "QuickDash Commerce",
+        "name": "QuickDash",
         "description": `Order #${order.id}`,
         "order_id": paymentData.razorpay_order_id,
         "prefill": {
-            // These would ideally come from the user profile if available in JS context
-            "name": "Customer", 
-            "contact": ""
+            "name": window.APP_CONFIG?.USER?.first_name || "Customer", 
+            "contact": window.APP_CONFIG?.USER?.phone || ""
         },
-        "theme": {
-            "color": "#3399cc"
-        },
-        // Secure Handler: Only redirect after backend verification
+        "theme": { "color": "#32CD32" },
         "handler": async function (response) {
             await verifyPaymentOnBackend(response, order.id);
         },
@@ -203,7 +247,7 @@ async function initiateRazorpayPayment(order, paymentData) {
                 const btn = document.getElementById('place-order-btn');
                 btn.disabled = false;
                 btn.innerText = "Retry Payment";
-                alert('Payment cancelled. You can retry or choose COD.');
+                if(window.showToast) showToast('Payment cancelled.', 'info');
             }
         }
     };
@@ -211,7 +255,9 @@ async function initiateRazorpayPayment(order, paymentData) {
     const rzp1 = new Razorpay(options);
     rzp1.on('payment.failed', function (response){
         console.error(response.error);
-        alert("Payment Failed: " + response.error.description);
+        if(window.showToast) showToast("Payment Failed: " + response.error.description, "error");
+        else alert("Payment Failed");
+        
         const btn = document.getElementById('place-order-btn');
         btn.disabled = false;
         btn.innerText = "Retry Payment";
@@ -225,39 +271,35 @@ async function verifyPaymentOnBackend(rzpResponse, orderId) {
 
     try {
         const payload = {
-            gateway_order_id: rzpResponse.razorpay_order_id,
-            gateway_payment_id: rzpResponse.razorpay_payment_id,
-            gateway_signature: rzpResponse.razorpay_signature
+            razorpay_order_id: rzpResponse.razorpay_order_id,
+            razorpay_payment_id: rzpResponse.razorpay_payment_id,
+            razorpay_signature: rzpResponse.razorpay_signature
         };
 
-        // Call the Verify API
-        const verifyResult = await apiCall('/payments/verify/', 'POST', payload);
+        const verifyResult = await apiCall('/orders/verify-payment/', 'POST', payload);
 
         if (verifyResult.status === 'success') {
-            window.location.href = `/order_success.html?order_id=${orderId}`;
+            window.location.href = `/templates/frontend/checkout/success.html?order_id=${orderId}`;
         } else {
-            throw new Error("Payment verification failed on server.");
+            throw new Error("Payment verification failed.");
         }
     } catch (e) {
         console.error("Verification Error:", e);
-        alert("Payment successful but verification failed. Please contact support. Order ID: " + orderId);
+        alert("Payment verification failed. Please contact support.");
         btn.innerText = "Verification Failed";
     }
 }
 
-// --- 5. Modal Setup (Use Location Picker) ---
+// --- 5. Modal Bridge ---
 window.setupAddressModal = function() {
-    // This targets the "Add Address" button on Checkout page
     const addBtn = document.getElementById('add-address-btn');
-    
     if (addBtn) {
         addBtn.onclick = (e) => {
             e.preventDefault();
-            // Open the Map Modal
             if (window.LocationPicker) {
                 window.LocationPicker.open();
             } else {
-                console.error("LocationPicker library missing");
+                console.error("LocationPicker module missing");
             }
         };
     }

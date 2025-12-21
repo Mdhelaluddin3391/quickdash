@@ -25,18 +25,22 @@ def run_seed():
         # 1. WAREHOUSE SETUP (Infrastructure)
         # ==========================================
         print("🏗️  Setting up Warehouse & Bins...")
+        
+        # FIX: Matches apps/warehouse/models.py structure
+        # Removed 'address' and 'location', added 'latitude'/'longitude'
         wh, _ = Warehouse.objects.get_or_create(
             code="WH-MAIN",
             defaults={
                 "name": "Central Fulfillment Center", 
-                "address": "Tech Park, Bangalore", 
+                "latitude": 12.9716,  # Bangalore Lat
+                "longitude": 77.5946, # Bangalore Lng
+                "service_radius_km": 10000000.0,
                 "is_active": True, 
-                "location": "POINT(77.5946 12.9716)" # Bangalore Coords
             }
         )
         
         # Structure: Zone -> Aisle -> Shelf -> Bin
-        zone, _ = Zone.objects.get_or_create(warehouse=wh, code="Z1", name="General Storage")
+        zone, _ = Zone.objects.get_or_create(warehouse=wh, code="Z1", defaults={"name": "General Storage"})
         
         # Create 5 Aisles, 5 Shelves per Aisle, 10 Bins per Shelf = 250 Bins
         all_bins = []
@@ -161,7 +165,7 @@ def run_seed():
         ]
         for idx, b in enumerate(banners):
             Banner.objects.create(
-                title=b[0], position=b[1], bg_gradient=b[2], target_url="/category.html", 
+                title=b[0], position=b[1], bg_gradient=b[2], target_url="/search_results.html", 
                 image_url="https://placehold.co/600x300", is_active=True, sort_order=idx
             )
 
