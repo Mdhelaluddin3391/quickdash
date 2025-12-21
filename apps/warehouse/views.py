@@ -11,16 +11,16 @@ from rest_framework.views import APIView
 
 from apps.warehouse.utils.warehouse_selector import WarehouseSelector, get_nearest_service_area
 from .models import (
-    Warehouse, BinInventory, PickingTask, PickItem,
-    PackingTask, GRN, CycleCountTask, ServiceArea
+    Warehouse, Bin, BinInventory, PickingTask, PickItem,
+    PackingTask, GRN, PutawayTask, CycleCountTask, ServiceArea, PickSkip
 )
 from .serializers import (
-    WarehouseSerializer, BinInventorySerializer, PickingTaskSerializer,
-    PackingTaskSerializer, DispatchRecordSerializer, ShortPickResolveSerializer,
-    FulfillmentCancelSerializer, CreateGRNSerializer, GRNSerializer,
-    PlacePutawaySerializer, PutawayTaskSerializer, CreateCycleCountSerializer,
-    CycleCountTaskSerializer, RecordCycleCountSerializer, DispatchOTPVerifySerializer,
-    ServiceAreaSerializer,
+    WarehouseSerializer, BinSerializer, BinInventorySerializer, 
+    PickingTaskSerializer, PackingTaskSerializer, DispatchRecordSerializer, 
+    ShortPickResolveSerializer, FulfillmentCancelSerializer, CreateGRNSerializer, 
+    GRNSerializer, PlacePutawaySerializer, PutawayTaskSerializer, 
+    CreateCycleCountSerializer, CycleCountTaskSerializer, RecordCycleCountSerializer, 
+    DispatchOTPVerifySerializer, ServiceAreaSerializer,
 )
 from .permissions import (
     PickerOnly, PackerOnly, WarehouseManagerOnly, AnyEmployee,
@@ -44,6 +44,25 @@ class WarehouseViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = WarehouseSerializer
     permission_classes = [IsAuthenticated]
 
+class BinViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    View for Warehouse Managers to audit/view bins.
+    """
+    serializer_class = BinSerializer
+    permission_classes = [IsAuthenticated, WarehouseManagerOnly]
+
+    def get_queryset(self):
+        qs = Bin.objects.select_related("zone__warehouse")
+        emp = getattr(self.request.user, "employee_profile", None)
+        if emp and emp.warehouse_code:
+            qs = qs.filter(zone__warehouse__code=emp.warehouse_code)
+        
+        warehouse_id = self.request.query_params.get("warehouse_id")
+        if warehouse_id:
+            qs = qs.filter(zone__warehouse_id=warehouse_id)
+            
+        return qs
+
 class BinInventoryList(generics.ListAPIView):
     permission_classes = [IsAuthenticated, WarehouseManagerOnly]
     serializer_class = BinInventorySerializer
@@ -54,7 +73,7 @@ class BinInventoryList(generics.ListAPIView):
         sku = self.request.query_params.get("sku")
         
         emp = getattr(self.request.user, "employee_profile", None)
-        if emp:
+        if emp and emp.warehouse_code:
             qs = qs.filter(bin__zone__warehouse__code=emp.warehouse_code)
 
         if wh: qs = qs.filter(bin__zone__warehouse_id=wh)
@@ -62,11 +81,17 @@ class BinInventoryList(generics.ListAPIView):
 
         return qs.order_by("bin__bin_code")
 
+# ==========================
+# TASK VIEWSETS
+# ==========================
+
 class PickingTaskViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = PickingTaskSerializer
     permission_classes = [IsAuthenticated, PickerOnly]
 
     def get_queryset(self):
+        # Pickers only see tasks assigned to them or unassigned in their warehouse
+        # Assuming model has logic for assignment, here we stick to personal assignment
         return (
             PickingTask.objects.filter(picker=self.request.user)
             .select_related('warehouse', 'picker')
@@ -74,11 +99,77 @@ class PickingTaskViewSet(viewsets.ReadOnlyModelViewSet):
             .order_by("-created_at")
         )
 
+class PackingTaskViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Allows Packers to see tasks that need packing.
+    """
+    serializer_class = PackingTaskSerializer
+    permission_classes = [IsAuthenticated, PackerOnly]
+
+    def get_queryset(self):
+        qs = PackingTask.objects.select_related(
+            'picking_task', 
+            'picking_task__warehouse',
+            'picking_task__picker', 
+            'packer'
+        ).prefetch_related('picking_task__items', 'picking_task__items__sku')
+
+        # Filter by employee warehouse if applicable
+        emp = getattr(self.request.user, "employee_profile", None)
+        if emp and emp.warehouse_code:
+            qs = qs.filter(picking_task__warehouse__code=emp.warehouse_code)
+
+        # Allow filtering by status (default to open tasks)
+        status_param = self.request.query_params.get("status")
+        if status_param:
+            qs = qs.filter(status=status_param)
+            
+        return qs.order_by("-created_at")
+
+class PutawayTaskViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Allows warehouse staff to view Putaway tasks generated from GRNs.
+    """
+    serializer_class = PutawayTaskSerializer
+    permission_classes = [IsAuthenticated, AnyEmployee]
+
+    def get_queryset(self):
+        qs = PutawayTask.objects.select_related('grn', 'warehouse', 'putaway_user')\
+            .prefetch_related('items', 'items__grn_item__sku', 'items__placed_bin')
+        
+        emp = getattr(self.request.user, "employee_profile", None)
+        if emp and emp.warehouse_code:
+            qs = qs.filter(warehouse__code=emp.warehouse_code)
+            
+        return qs.order_by("-created_at")
+
 class CycleCountTaskViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CycleCountTaskSerializer
     permission_classes = [IsAuthenticated, WarehouseManagerOnly]
+    
     def get_queryset(self):
-        return CycleCountTaskSerializer.Meta.model.objects.all().order_by("-created_at")
+        qs = CycleCountTask.objects.select_related('warehouse', 'task_user')
+        emp = getattr(self.request.user, "employee_profile", None)
+        if emp and emp.warehouse_code:
+            qs = qs.filter(warehouse__code=emp.warehouse_code)
+        return qs.order_by("-created_at")
+
+class GRNViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    View for Warehouse Managers to see Inbound history.
+    """
+    serializer_class = GRNSerializer
+    permission_classes = [IsAuthenticated, WarehouseManagerOnly]
+
+    def get_queryset(self):
+        qs = GRN.objects.select_related('warehouse', 'created_by')\
+            .prefetch_related('items', 'items__sku')
+        
+        emp = getattr(self.request.user, "employee_profile", None)
+        if emp and emp.warehouse_code:
+            qs = qs.filter(warehouse__code=emp.warehouse_code)
+            
+        return qs.order_by("-created_at")
 
 # ==========================
 # OPERATIONAL APIS
@@ -147,7 +238,6 @@ class AdminResolveShortPickAPIView(views.APIView):
     def post(self, request):
         serializer = ShortPickResolveSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        from .models import PickSkip
         skip = get_object_or_404(PickSkip, id=serializer.validated_data["skip_id"])
         try:
             with transaction.atomic():
@@ -234,11 +324,6 @@ class RecordCycleCountView(views.APIView):
 SERVICE_WAREHOUSE_KEY = 'quickdash_service_warehouse_id'
 
 class CheckServiceabilityAPIView(APIView):
-    """
-    Receives GPS coordinates.
-    Determines if we operate there.
-    Saves Warehouse ID to Session.
-    """
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
@@ -251,10 +336,8 @@ class CheckServiceabilityAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 1. Logic: Find Warehouse
         warehouse = WarehouseSelector.get_serviceable_warehouse(lat, lng)
 
-        # 2. Outcome: Success
         if warehouse:
             request.session[SERVICE_WAREHOUSE_KEY] = warehouse.id
             request.session.modified = True 
@@ -266,7 +349,6 @@ class CheckServiceabilityAPIView(APIView):
                 "message": f"Delivering from {warehouse.name}"
             })
 
-        # 3. Outcome: Failure
         else:
             if SERVICE_WAREHOUSE_KEY in request.session:
                 del request.session[SERVICE_WAREHOUSE_KEY]

@@ -4,7 +4,13 @@ from . import views
 
 router = DefaultRouter()
 router.register(r"warehouses", views.WarehouseViewSet, basename="warehouses")
+router.register(r"bins", views.BinViewSet, basename="warehouse-bins")
+
+# Task Management Routers
 router.register(r"picking/tasks", views.PickingTaskViewSet, basename="picking-tasks")
+router.register(r"packing/tasks", views.PackingTaskViewSet, basename="packing-tasks")
+router.register(r"putaway/tasks", views.PutawayTaskViewSet, basename="putaway-tasks")
+router.register(r"inbound/grn-list", views.GRNViewSet, basename="grn-list")
 router.register(r"cycle-count/tasks", views.CycleCountTaskViewSet, basename="cycle-count-tasks")
 
 urlpatterns = [
@@ -12,7 +18,7 @@ urlpatterns = [
 
     path("inventory/bin/", views.BinInventoryList.as_view(), name="wms-bin-inventory-list"),
 
-    # Picking / Packing
+    # Picking / Packing Actions
     path("picking/scan/", views.scan_pick_view, name="wms-picking-scan"),
     path("picking/skip/", views.mark_pickitem_skipped_view, name="wms-picking-skip"),
     path("packing/complete/", views.complete_packing_view, name="wms-packing-complete"),
@@ -24,11 +30,11 @@ urlpatterns = [
     path("resolution/shortpick/", views.AdminResolveShortPickAPIView.as_view(), name="wms-resolve-shortpick"),
     path("resolution/fc/", views.AdminFulfillmentCancelAPIView.as_view(), name="wms-admin-fc"),
 
-    # Inbound
+    # Inbound Actions
     path("inbound/grn/", views.CreateGRNAPIView.as_view(), name="wms-create-grn"),
     path("inbound/putaway/place/", views.place_putaway_item_view, name="wms-putaway-place"),
 
-    # Cycle Count
+    # Cycle Count Actions
     path("cycle-count/create/", views.CreateCycleCountView.as_view(), name="wms-cc-create"),
     path("cycle-count/record/", views.record_cycle_count_view, name="wms-cc-record"),
 
