@@ -8,15 +8,21 @@
     <meta name="description" content="QuickDash - Fastest Delivery for Groceries, Vegetables & More">
     <meta name="theme-color" content="#32CD32">
 
-
     <title>{% block title %}QuickDash{% endblock %}</title>
 
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+     crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+     crossorigin=""></script>
+
     <link rel="icon" type="image/x-icon" href="{% static 'favicon.ico' %}">
     <link rel="stylesheet" href="{% static 'assets/css/base.css' %}">
     <link rel="stylesheet" href="{% static 'assets/css/components.css' %}">
-
     <link rel="stylesheet" href="{% static 'assets/css/assistant.css' %}">
 
     {% block extra_css %}{% endblock %}
@@ -25,7 +31,6 @@
         window.APP_CONFIG = {
             API_BASE: "/api/v1",
             USER: JSON.parse(localStorage.getItem('user') || 'null'),
-            // FIX: Standardized to 'access_token' to match Login JS
             IS_LOGGED_IN: !!localStorage.getItem('access_token')
         };
     </script>
@@ -52,74 +57,61 @@
             <h4>QuickDash Assistant</h4>
             <i class="fas fa-times" id="ast-close" style="cursor:pointer;"></i>
         </div>
-        <div class="ast-body" id="ast-msgs">
-        </div>
+        <div class="ast-body" id="ast-msgs"></div>
         <div class="ast-footer">
             <input type="text" id="ast-input" placeholder="Type '5kg Onion'...">
             <button id="ast-send"><i class="fas fa-paper-plane"></i></button>
         </div>
     </div>
 
-<div id="location-modal" class="location-modal hidden">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3>Select Delivery Location</h3>
-            <button id="close-loc-modal" class="btn-icon"><i class="fas fa-times"></i></button>
-        </div>
-
-        <div class="location-search-box">
-            <i class="fas fa-search"></i>
-            <input type="text" id="loc-search-input" placeholder="Search area, street, landmark...">
-        </div>
-
-        <div class="map-container">
-            <div id="picker-map"></div>
-            <div class="center-pin">
-                <img src="/static/assets/img/pin_marker.png" alt="Pin">
-            </div>
-            
-            <button id="btn-trigger-gps" class="btn-gps-float">
-                <i class="fas fa-crosshairs"></i>
-            </button>
-        </div>
-
-        <div class="location-details">
-            <div class="status-badge" id="loc-mode-badge">
-                <span class="dot"></span> <span id="loc-mode-text">Manual Location</span>
-            </div>
-            
-            <h4 id="loc-address-title">Select a location</h4>
-            <p id="loc-address-text">Drag map to pin exact delivery spot</p>
-
-            <div id="service-error" class="error-msg hidden">
-                <i class="fas fa-exclamation-circle"></i> We do not deliver to this location yet.
+    <div id="location-modal" class="location-modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Select Delivery Location</h3>
+                <button id="close-loc-modal" class="btn-icon"><i class="fas fa-times"></i></button>
             </div>
 
-            <button id="btn-confirm-location" class="btn-primary" disabled>
-                Confirm Location
-            </button>
+            <div class="location-search-box">
+                <i class="fas fa-search"></i>
+                <input type="text" id="loc-search-input" placeholder="Search area, street, landmark...">
+            </div>
+
+            <div class="map-container">
+                <div id="picker-map"></div>
+                <div class="center-pin">
+                    <img src="/static/assets/img/pin_marker.png" alt="Pin" style="height:40px;"> 
+                    </div>
+                
+                <button id="btn-trigger-gps" class="btn-gps-float">
+                    <i class="fas fa-crosshairs"></i>
+                </button>
+            </div>
+
+            <div class="location-details">
+                <div class="status-badge" id="loc-mode-badge">
+                    <span class="dot"></span> <span id="loc-mode-text">Manual Location</span>
+                </div>
+                
+                <h4 id="loc-address-title">Select a location</h4>
+                <p id="loc-address-text">Drag map to pin exact delivery spot</p>
+
+                <div id="service-error" class="error-msg hidden">
+                    <i class="fas fa-exclamation-circle"></i> We do not deliver to this location yet.
+                </div>
+
+                <button id="btn-confirm-location" class="btn-primary" disabled>
+                    Confirm Location
+                </button>
+            </div>
         </div>
     </div>
-</div>
-    <div id="location-popup-overlay"
-        style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9998;"></div>
 
-    <div id="location-bottom-sheet" style="
-        position: fixed; 
-        bottom: -100%; 
-        left: 0; 
-        width: 100%; 
-        background: white; 
-        border-radius: 20px 20px 0 0; 
-        padding: 20px; 
-        z-index: 9999; 
-        transition: bottom 0.3s ease-in-out; 
-        box-shadow: 0 -4px 10px rgba(0,0,0,0.1);
-    ">
+    <div id="location-popup-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9998;"></div>
+
+    <div id="location-bottom-sheet" style="position: fixed; bottom: -100%; left: 0; width: 100%; background: white; border-radius: 20px 20px 0 0; padding: 20px; z-index: 9999; transition: bottom 0.3s ease-in-out; box-shadow: 0 -4px 10px rgba(0,0,0,0.1);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
             <h3 style="margin:0; font-size:1.1rem; font-weight:700;">Delivery Location</h3>
-            <button onclick="closeLocationPopup()"
-                style="background:none; border:none; font-size:1.2rem; cursor:pointer;">&times;</button>
+            <button onclick="closeLocationPopup()" style="background:none; border:none; font-size:1.2rem; cursor:pointer;">&times;</button>
         </div>
 
         <p style="font-size:0.9rem; color:#666; margin-bottom:20px;">
@@ -127,64 +119,39 @@
         </p>
 
         <div style="display:flex; flex-direction:column; gap:10px;">
-            <button onclick="requestUserLocation()" style="
-                background: #32CD32; 
-                color: white; 
-                border: none; 
-                padding: 12px; 
-                border-radius: 8px; 
-                font-weight: 600; 
-                display:flex; align-items:center; justify-content:center; gap:8px;
-            ">
+            <button onclick="requestUserLocation()" style="background: #32CD32; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: 600; display:flex; align-items:center; justify-content:center; gap:8px; cursor: pointer;">
                 <i class="fas fa-location-arrow"></i> Use Current Location
             </button>
 
             {% if request.user.is_authenticated %}
-            <a href="/addresses.html" style="
-                background: #f0f0f0; 
-                color: #333; 
-                text-decoration:none;
-                padding: 12px; 
-                border-radius: 8px; 
-                font-weight: 600; 
-                text-align:center;
-            ">
+            <a href="/addresses.html" style="background: #f0f0f0; color: #333; text-decoration:none; padding: 12px; border-radius: 8px; font-weight: 600; text-align:center;">
                 Select Saved Address
             </a>
             {% else %}
-            <a href="/auth.html" style="
-                background: #fff; 
-                color: #32CD32; 
-                border: 1px solid #32CD32;
-                text-decoration:none;
-                padding: 12px; 
-                border-radius: 8px; 
-                font-weight: 600; 
-                text-align:center;
-            ">
+            <a href="/auth.html" style="background: #fff; color: #32CD32; border: 1px solid #32CD32; text-decoration:none; padding: 12px; border-radius: 8px; font-weight: 600; text-align:center;">
                 Login to Select Address
             </a>
             {% endif %}
         </div>
     </div>
 
+    <script src="{% static 'assets/js/utils/api.js' %}"></script>
+    <script src="{% static 'assets/js/utils/validators.js' %}"></script>
+    <script src="{% static 'assets/js/utils/formatters.js' %}"></script>
+    <script src="{% static 'assets/js/utils/assistant.js' %}"></script>
+    <script src="{% static 'assets/js/utils/search.js' %}"></script>
+    
+    <script src="{% static 'assets/js/utils/location_picker.js' %}"></script>
+    <script src="{% static 'assets/js/utils/location_manager.js' %}"></script>
+    
+    <script src="{% static 'assets/js/utils/base.js' %}"></script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            if (window.updateGlobalCartCount) window.updateGlobalCartCount();
+        });
+    </script>
+
+    {% block extra_js %}{% endblock %}
 </body>
-
-<script src="{% static 'assets/js/utils/api.js' %}"></script>
-<script src="{% static 'assets/js/utils/validators.js' %}"></script>
-<script src="{% static 'assets/js/utils/formatters.js' %}"></script>
-<script src="{% static 'assets/js/utils/assistant.js' %}"></script>
-<script src="{% static 'assets/js/utils/search.js' %}"></script>
-<script src="{% static 'assets/js/utils/base.js' %}"></script>
-<script src="{% static 'assets/js/utils/location_manager.js' %}"></script>
-
-<script>
-    document.addEventListener('DOMContentLoaded', () => {
-        if (window.updateGlobalCartCount) window.updateGlobalCartCount();
-    });
-</script>
-
-{% block extra_js %}{% endblock %}
-</body>
-
 </html>

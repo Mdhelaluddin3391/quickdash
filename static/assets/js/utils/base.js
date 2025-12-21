@@ -3,17 +3,33 @@
 document.addEventListener('DOMContentLoaded', () => {
     initLocationWidget();
     loadNavbarCategories(); 
-    checkAndShowLocationPopup(); // New Function call
+    checkAndShowLocationPopup(); // Soft ask popup
+    bindNavbarLocationClick();   // New listener for Navbar click
     if (window.updateGlobalCartCount) window.updateGlobalCartCount();
 });
 
-// --- NEW POPUP LOGIC ---
+// --- NAVBAR CLICK BINDING ---
+function bindNavbarLocationClick() {
+    const navLocBtn = document.getElementById('navbar-location-box');
+    if (navLocBtn) {
+        navLocBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            // Open the new Map Modal
+            if (window.LocationPicker) {
+                LocationPicker.open();
+            } else {
+                console.error("LocationPicker module not loaded");
+            }
+        });
+    }
+}
+
+// --- POPUP LOGIC ---
 function checkAndShowLocationPopup() {
-    // Check if user already dismissed it in this session or has a location set
     const dismissed = sessionStorage.getItem('location_popup_dismissed');
-    const hasLocation = localStorage.getItem('user_lat') && localStorage.getItem('user_lng'); // Simple check idea
+    const hasLocation = localStorage.getItem('user_lat') && localStorage.getItem('user_lng'); 
     
-    // Agar location nahi hai aur popup dismiss nahi kiya hai, tab dikhao
+    // If no location & not dismissed, show bottom sheet
     if (!dismissed && !hasLocation) {
         setTimeout(() => {
             const sheet = document.getElementById('location-bottom-sheet');
@@ -22,49 +38,37 @@ function checkAndShowLocationPopup() {
                 sheet.style.bottom = '0';
                 overlay.style.display = 'block';
             }
-        }, 1500); // 1.5 second baad popup aayega
+        }, 1500); 
     }
 }
 
-function closeLocationPopup() {
+window.closeLocationPopup = function() {
     const sheet = document.getElementById('location-bottom-sheet');
     const overlay = document.getElementById('location-popup-overlay');
     
     if (sheet) sheet.style.bottom = '-100%';
     if (overlay) overlay.style.display = 'none';
     
-    // Session mein save karein taaki refresh karne par baar baar na aye
     sessionStorage.setItem('location_popup_dismissed', 'true');
-}
+};
 
+// --- UPDATED: Connects Bottom Sheet "Use Current Location" to New Picker ---
 window.requestUserLocation = function() {
-    if (navigator.geolocation) {
-        closeLocationPopup(); // Popup band karein process start hone par
-        const locText = document.getElementById('header-location');
-        if(locText) locText.innerText = "Locating...";
-        
-        navigator.geolocation.getCurrentPosition(
-            (pos) => {
-                const { latitude, longitude } = pos.coords;
-                // Save locally for UI checks
-                localStorage.setItem('user_lat', latitude);
-                localStorage.setItem('user_lng', longitude);
-                
-                checkServiceabilityAndRedirect(latitude, longitude, "Current Location");
-            },
-            (err) => {
-                alert("Location access denied. Please enable it manually.");
-            }
-        );
+    // 1. Close the soft popup
+    closeLocationPopup(); 
+    
+    // 2. Open the Main Map Modal
+    if (window.LocationPicker) {
+        LocationPicker.open();       // Show Modal
+        LocationPicker.triggerGPS(); // Auto-start GPS logic inside the map
     } else {
-        alert("Geolocation is not supported by this browser.");
+        alert("Location System loading... please try again.");
     }
 };
 
-// --- EXISTING FUNCTIONS (UPDATED) ---
+// --- EXISTING FUNCTIONS ---
 
 async function loadNavbarCategories() {
-    // ... (Same as before) ...
     const nav = document.getElementById('dynamic-navbar');
     if (!nav) return;
     try {
@@ -87,58 +91,29 @@ async function initLocationWidget() {
     const locText = document.getElementById('header-location');
     if (!locText) return;
 
-    const token = localStorage.getItem('access_token'); // BUG FIX: Correct key
+    // 1. Check if we have a temporary session location (from LocationPicker)
+    const savedAddress = localStorage.getItem('user_address_text');
+    if (savedAddress) {
+        locText.innerText = savedAddress;
+        return;
+    }
 
+    // 2. Fallback: Check Backend Profile if logged in
+    const token = localStorage.getItem('access_token');
     if (token) {
         try {
             const response = await apiCall('/auth/customer/addresses/');
             const addresses = response.results || response;
             const defaultAddr = addresses.find(a => a.is_default) || addresses[0];
 
-            if (defaultAddr && defaultAddr.latitude) {
-                if(document.getElementById('current-city-display')) {
-                    document.getElementById('current-city-display').innerText = defaultAddr.city;
-                }
-                checkServiceabilityAndRedirect(defaultAddr.latitude, defaultAddr.longitude, defaultAddr.city);
-                return;
+            if (defaultAddr && defaultAddr.city) {
+                locText.innerText = `${defaultAddr.address_text || defaultAddr.city}`;
+                // Cache it locally to avoid API call next reload
+                localStorage.setItem('user_address_text', defaultAddr.city);
             }
         } catch (e) {
             console.warn("Address fetch failed", e);
         }
-    }
-    
-    // Logged in nahi hai ya address nahi hai, toh kuch mat karo (Popup sambhal lega)
-    // Guest GPS logic ko 'requestUserLocation' function mein shift kar diya hai
-}
-
-async function checkServiceabilityAndRedirect(lat, lng, cityName) {
-    const locText = document.getElementById('header-location');
-    
-    try {
-        const response = await apiCall('/delivery/estimate/', 'POST', { lat, lng }, false);
-
-        // *** FIX: Removed Forced Redirect ***
-        // Ab hum user ko redirect nahi karenge, bas header mein status dikhayenge
-
-        if (!response.serviceable) {
-            if(locText) {
-                locText.innerHTML = `<span style="color:red; font-weight:bold;">Not Serviceable</span> • ${cityName}`;
-            }
-            // Optional: Show a small toast notification instead of full page redirect
-            if(window.showError) showError(`Sorry, we don't deliver to ${cityName} yet.`);
-        } else {
-            if(locText) {
-                locText.innerHTML = `
-                    <span style="font-weight:700; color:#32CD32;">${response.eta}</span> 
-                    <span style="color:#ccc;">•</span> 
-                    ${cityName}
-                `;
-            }
-        }
-
-    } catch (e) {
-        console.error("Service Check Error", e);
-        if(locText) locText.innerText = cityName || "Location Set";
     }
 }
 
@@ -147,7 +122,6 @@ window.updateGlobalCartCount = async function () {
     const badge = document.getElementById('nav-cart-count');
     if (!badge) return;
 
-    // [FIX] Sahi key 'access_token' use karein
     if (!localStorage.getItem('access_token')) {
         badge.innerText = '0';
         badge.style.display = 'none';
@@ -157,16 +131,9 @@ window.updateGlobalCartCount = async function () {
     try {
         const cart = await apiCall('/orders/cart/');
         const count = cart.items ? cart.items.length : 0;
-
         badge.innerText = count;
         badge.style.display = count > 0 ? 'flex' : 'none';
-
-        const pageBadge = document.getElementById('cart-count-badge');
-        if (pageBadge) pageBadge.innerText = `(${count})`;
-
     } catch (e) {
-        console.warn("Cart count update failed", e);
-        // Fail hone par badge chupa do
         badge.style.display = 'none';
     }
 };
