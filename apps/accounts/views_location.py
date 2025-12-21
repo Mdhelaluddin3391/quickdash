@@ -23,6 +23,7 @@ class CheckServiceabilityView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Warehouse service logic call
         is_serviceable, warehouse, area, dist = LocationService.get_serviceable_warehouse(lat, lng)
 
         if is_serviceable:
@@ -63,13 +64,10 @@ class SaveCurrentLocationView(APIView):
         if not lat or not lng:
             return Response({"error": "Missing coordinates"}, status=400)
 
-        # Create Point object
+        # Create Point object (Longitude, Latitude)
         location_point = Point(float(lng), float(lat), srid=4326)
 
         # Update or Create Address
-        # Logic: If user has no addresses, make this default. 
-        # If user selects "Use Current Location", we often create a transient address.
-        
         address, created = Address.objects.update_or_create(
             user=request.user,
             address_type=Address.AddressType.OTHER, 
@@ -83,41 +81,3 @@ class SaveCurrentLocationView(APIView):
         )
 
         return Response({"status": "success", "address_id": address.id})
-
-
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from django.conf import settings
-import requests
-
-class GeocodeView(APIView):
-    """
-    Proxy Google/Mapbox API calls through backend to hide API Keys
-    and allow caching.
-    """
-    def post(self, request):
-        lat = request.data.get('lat')
-        lng = request.data.get('lng')
-        
-        # 1. Check Serviceability First (Don't waste API cost on undeliverable areas)
-        is_serviceable, wh_id, _ = check_serviceability(lat, lng)
-        
-        # 2. Call External Geocoding API (e.g., Google Maps)
-        # In prod, check Redis cache first! key=f"geo:{lat:.4f}:{lng:.4f}"
-        api_key = settings.GOOGLE_MAPS_API_KEY
-        url = f"https://maps.googleapis.com/maps/api/geocode/json?latlng={lat},{lng}&key={api_key}"
-        resp = requests.get(url).json()
-        
-        formatted_address = "Unknown Location"
-        components = {}
-        
-        if resp['status'] == 'OK':
-            formatted_address = resp['results'][0]['formatted_address']
-            # ... parse city/pincode from components ...
-
-        return Response({
-            "address": formatted_address,
-            "components": components,
-            "is_serviceable": is_serviceable,
-            "warehouse_id": wh_id
-        })

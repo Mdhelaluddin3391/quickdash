@@ -12,16 +12,27 @@ try:
     import firebase_admin
     from firebase_admin import credentials, messaging
 
-    # FIX: Initialize Firebase App if not already initialized
+    # FIX: Check for App Initialization safely
     if not firebase_admin._apps:
-        cred_path = settings.FIREBASE_CREDENTIALS_PATH
-        if cred_path and os.path.exists(cred_path):
-            cred = credentials.Certificate(cred_path)
+        
+        # Priority 1: Use JSON Credentials from Settings (Environment Variable)
+        if hasattr(settings, 'FIREBASE_CREDENTIALS') and settings.FIREBASE_CREDENTIALS:
+            cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS)
             firebase_admin.initialize_app(cred)
-            logger.info("Firebase initialized successfully.")
+            logger.info("Firebase initialized successfully (via JSON Config).")
+            
+        # Priority 2: Use File Path (Legacy)
+        elif hasattr(settings, 'FIREBASE_CREDENTIALS_PATH') and settings.FIREBASE_CREDENTIALS_PATH:
+            cred_path = settings.FIREBASE_CREDENTIALS_PATH
+            if os.path.exists(cred_path):
+                cred = credentials.Certificate(cred_path)
+                firebase_admin.initialize_app(cred)
+                logger.info("Firebase initialized successfully (via File Path).")
+            else:
+                logger.warning("Firebase credentials file not found at %s.", cred_path)
+        
         else:
-            logger.warning("Firebase credentials not found at %s. Push notifications disabled.", cred_path)
-            messaging = None
+            logger.warning("No Firebase credentials found in settings. Push notifications disabled.")
             
 except ImportError:
     logger.warning("firebase_admin library not installed.")

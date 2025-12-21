@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
      crossorigin=""/>
+    
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
      crossorigin=""></script>
@@ -71,35 +72,31 @@
                 <button id="close-loc-modal" class="btn-icon"><i class="fas fa-times"></i></button>
             </div>
 
-            <div class="location-search-box">
-                <i class="fas fa-search"></i>
-                <input type="text" id="loc-search-input" placeholder="Search area, street, landmark...">
-            </div>
-
-            <div class="map-container">
-                <div id="picker-map"></div>
-                <div class="center-pin">
-                    <img src="/static/assets/img/pin_marker.png" alt="Pin" style="height:40px;"> 
-                    </div>
+            <div class="map-container" style="position: relative; height: 350px;">
+                <div id="picker-map" style="width: 100%; height: 100%;"></div>
                 
-                <button id="btn-trigger-gps" class="btn-gps-float">
+                <div class="center-pin" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -100%); z-index: 1000; pointer-events: none;">
+                    <i class="fas fa-map-marker-alt text-danger fa-3x" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));"></i>
+                </div>
+                
+                <button id="btn-trigger-gps" class="btn-gps-float" style="position: absolute; bottom: 20px; right: 20px; z-index: 1000; background: white; padding: 10px; border-radius: 50%; border: none; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">
                     <i class="fas fa-crosshairs"></i>
                 </button>
             </div>
 
-            <div class="location-details">
+            <div class="location-details" style="padding: 20px;">
                 <div class="status-badge" id="loc-mode-badge">
-                    <span class="dot"></span> <span id="loc-mode-text">Manual Location</span>
+                    <small id="loc-mode-text" class="text-muted">Mode: Manual</small>
                 </div>
                 
-                <h4 id="loc-address-title">Select a location</h4>
-                <p id="loc-address-text">Drag map to pin exact delivery spot</p>
+                <h4 id="loc-address-title" style="margin: 10px 0 5px;">Select a location</h4>
+                <p id="loc-address-text" class="text-muted small">Drag map to pin exact delivery spot</p>
 
-                <div id="service-error" class="error-msg hidden">
+                <div id="service-error" class="error-msg hidden text-danger small">
                     <i class="fas fa-exclamation-circle"></i> We do not deliver to this location yet.
                 </div>
 
-                <button id="btn-confirm-location" class="btn-primary" disabled>
+                <button id="btn-confirm-location" class="btn btn-primary w-100 mt-3" disabled>
                     Confirm Location
                 </button>
             </div>
@@ -107,7 +104,6 @@
     </div>
 
     <div id="location-popup-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9998;"></div>
-
     <div id="location-bottom-sheet" style="position: fixed; bottom: -100%; left: 0; width: 100%; background: white; border-radius: 20px 20px 0 0; padding: 20px; z-index: 9999; transition: bottom 0.3s ease-in-out; box-shadow: 0 -4px 10px rgba(0,0,0,0.1);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
             <h3 style="margin:0; font-size:1.1rem; font-weight:700;">Delivery Location</h3>
@@ -122,16 +118,6 @@
             <button onclick="requestUserLocation()" style="background: #32CD32; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: 600; display:flex; align-items:center; justify-content:center; gap:8px; cursor: pointer;">
                 <i class="fas fa-location-arrow"></i> Use Current Location
             </button>
-
-            {% if request.user.is_authenticated %}
-            <a href="/addresses.html" style="background: #f0f0f0; color: #333; text-decoration:none; padding: 12px; border-radius: 8px; font-weight: 600; text-align:center;">
-                Select Saved Address
-            </a>
-            {% else %}
-            <a href="/auth.html" style="background: #fff; color: #32CD32; border: 1px solid #32CD32; text-decoration:none; padding: 12px; border-radius: 8px; font-weight: 600; text-align:center;">
-                Login to Select Address
-            </a>
-            {% endif %}
         </div>
     </div>
 

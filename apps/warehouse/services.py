@@ -537,7 +537,7 @@ def check_serviceability(lat, lng):
         
     return False, None, "Location not serviceable"
 
-    
+
 def check_service_availability(latitude, longitude, warehouse_id=None):
     """
     Check if a location is serviceable.
@@ -652,7 +652,40 @@ def check_service_availability(latitude, longitude, warehouse_id=None):
 
 
 
+def get_nearest_service_area(lat, lng):
+    """
+    Finds the nearest service area (and thus warehouse) to the given coordinates.
+    Useful for "Locate Me" feature to snap to the closest service hub.
+    """
+    try:
+        pnt = Point(float(lng), float(lat), srid=4326)
+        
+        # Priority 1: Inside a defined polygon
+        area = ServiceArea.objects.filter(is_active=True, geometry__contains=pnt).select_related('warehouse').first()
+        
+        if not area:
+            # Priority 2: Closest center point
+            area = ServiceArea.objects.filter(is_active=True, center_point__isnull=False).annotate(
+                dist=Distance('center_point', pnt)
+            ).order_by('dist').first()
+            
+        if area:
+            return {
+                "id": area.id,
+                "name": area.name,
+                "warehouse": {
+                    "id": area.warehouse.id,
+                    "name": area.warehouse.name
+                },
+                "is_serviceable": True # Simplified for nearest logic
+            }
+        return None
+    except Exception as e:
+        logger.error(f"Error in get_nearest_service_area: {e}")
+        return None
 
+
+        
 class LocationService:
     @staticmethod
     def get_serviceable_warehouse(latitude, longitude):

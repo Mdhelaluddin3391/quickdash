@@ -1,7 +1,7 @@
 from django.contrib import admin
-from django.contrib.gis import admin as gis_admin
-from django.contrib import messages  # <-- Needed for success messages
-from django.db import transaction     # <-- Needed for safe stock updates
+from django.contrib.gis.admin import GISModelAdmin  # FIX: Django 5 Compatible
+from django.contrib import messages
+from django.db import transaction
 
 from .models import (
     Warehouse, ServiceArea, Zone, Aisle, Shelf, Bin, BinInventory,
@@ -60,42 +60,19 @@ class BinInventoryInline(admin.TabularInline):
 # Physical Structure Admin
 # ============================================
 
-from django.contrib import admin
-from django.contrib.gis.admin import OSMGeoAdmin
-from .models import Warehouse, ServiceArea, Zone, Aisle, Shelf, Bin, GRN, PickingTask
-
 @admin.register(Warehouse)
-class WarehouseAdmin(OSMGeoAdmin):
-    """
-    OSMGeoAdmin allows you to drag/drop the pin on a map.
-    """
+class WarehouseAdmin(GISModelAdmin):
     list_display = ('name', 'code', 'is_active')
     search_fields = ('name', 'code')
-    # Default map center (e.g., India) if no data
-    default_lat = 20.5937
-    default_lon = 78.9629
-    default_zoom = 5
 
 @admin.register(ServiceArea)
-class ServiceAreaAdmin(OSMGeoAdmin):
-    """
-    Crucial: Allows drawing Polygons for delivery zones.
-    """
+class ServiceAreaAdmin(GISModelAdmin):
     list_display = ('name', 'warehouse', 'is_active', 'delivery_time_minutes')
     list_filter = ('warehouse', 'is_active')
     search_fields = ('name',)
-    
-    # Configuration to make drawing easier
-    map_width = 800
-    map_height = 500
 
-# Register other standard models normally
-admin.site.register(Zone)
-admin.site.register(Aisle)
-admin.site.register(Shelf)
-admin.site.register(Bin)
-admin.site.register(GRN)
-admin.site.register(PickingTask)
+# FIX: Removed duplicate admin.site.register() calls causing the crash.
+# The @admin.register decorators below handle registration automatically.
 
 @admin.register(Zone)
 class ZoneAdmin(admin.ModelAdmin):
@@ -169,20 +146,16 @@ class GRNAdmin(admin.ModelAdmin):
     list_display = ('grn_number', 'warehouse', 'status', 'received_at')
     list_filter = ('status', 'warehouse')
     inlines = [GRNItemInline]
-    actions = ['process_grn_stock']  # <-- Added Action Button
+    actions = ['process_grn_stock']
 
     @admin.action(description='✅ Receive Stock (Update Inventory)')
     def process_grn_stock(self, request, queryset):
-        """
-        Processes the selected GRNs and updates inventory stock.
-        """
         count = 0
         for grn in queryset:
             if grn.status == 'received':
                 self.message_user(request, f"GRN {grn.grn_number} is already received!", level=messages.WARNING)
                 continue
 
-            # Find a target bin (First available bin in the warehouse)
             target_bin = Bin.objects.filter(shelf__aisle__zone__warehouse=grn.warehouse).first()
             
             if not target_bin:
@@ -193,18 +166,15 @@ class GRNAdmin(admin.ModelAdmin):
                 for item in grn.items.all():
                     qty_to_add = item.received_qty if item.received_qty > 0 else item.expected_qty
                     
-                    # Get or Create Inventory Record
                     inventory, created = BinInventory.objects.get_or_create(
                         bin=target_bin,
                         sku=item.sku,
                         defaults={'qty': 0}
                     )
                     
-                    # Update Stock
                     inventory.qty += qty_to_add
                     inventory.save()
 
-                    # Create Movement Log
                     StockMovement.objects.create(
                         sku=item.sku,
                         warehouse=grn.warehouse,

@@ -1,47 +1,57 @@
-// static/assets/js/pages/account/addresses.js
+/* static/assets/js/pages/account/addresses.js */
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Load existing addresses
     loadAddresses();
-
-    // Attach Event Listener Safely
-    const addForm = document.getElementById('add-addr-form');
-    if (addForm) {
-        addForm.addEventListener('submit', handleAddAddress);
-    }
 });
 
+// 1. Load Addresses from Backend
 async function loadAddresses() {
     const grid = document.getElementById('address-grid');
     if(!grid) return;
     
-    grid.innerHTML = '<div class="loader">Loading...</div>';
+    grid.innerHTML = '<div class="loader">Loading addresses...</div>';
 
     try {
-        // Correct URL: /api/v1/auth/customer/addresses/
+        // API Call
         const response = await apiCall('/auth/customer/addresses/');
-        
-        // Handle DRF pagination (response.results) or flat list
+        // Handle pagination or flat list
         const addresses = Array.isArray(response) ? response : (response.results || []);
 
         grid.innerHTML = '';
 
         if(addresses.length === 0) {
-            grid.innerHTML = '<p class="text-muted">No addresses saved.</p>';
+            grid.innerHTML = `
+                <div class="text-center p-4" style="width:100%">
+                    <p class="text-muted">No addresses saved yet.</p>
+                    <button class="btn btn-primary btn-sm" onclick="openAddressModal()">
+                        <i class="fas fa-map-marker-alt"></i> Add New Address
+                    </button>
+                </div>`;
             return;
         }
 
         addresses.forEach(a => {
             const div = document.createElement('div');
             div.className = 'addr-item';
+            // Styling the card
             div.innerHTML = `
-                <span class="addr-type">${a.address_type}</span>
-                <h4>${a.city}</h4>
-                <p class="text-muted mb-0">${a.full_address} - ${a.pincode}</p>
-                <div class="addr-actions">
-                    ${a.is_default ? '<span class="text-success text-sm"><i class="fas fa-check"></i> Default</span>' : 
-                    `<button class="btn-link" onclick="setDefault('${a.id}')">Set Default</button>`}
-                    <button class="btn-text-danger" onclick="deleteAddr('${a.id}')">Delete</button>
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="badge bg-light text-dark border">${a.address_type}</span>
+                    ${a.is_default ? '<span class="text-success small"><i class="fas fa-check-circle"></i> Default</span>' : ''}
+                </div>
+                <h5 class="mb-1">${a.city}</h5>
+                <p class="text-muted small mb-3" style="min-height: 40px;">
+                    ${a.full_address} <br> 
+                    <strong>PIN: ${a.pincode}</strong>
+                </p>
+                <div class="addr-actions d-flex gap-2">
+                    ${!a.is_default ? 
+                        `<button class="btn btn-sm btn-outline-primary flex-fill" onclick="setDefault('${a.id}')">Make Default</button>` 
+                        : '<button class="btn btn-sm btn-success disabled flex-fill">Active</button>'}
+                    
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteAddr('${a.id}')">
+                        <i class="fas fa-trash"></i>
+                    </button>
                 </div>
             `;
             grid.appendChild(div);
@@ -49,60 +59,37 @@ async function loadAddresses() {
 
     } catch (e) {
         console.error("Load Error:", e);
-        grid.innerHTML = '<p class="text-danger">Error loading addresses.</p>';
+        grid.innerHTML = '<p class="text-danger">Failed to load addresses.</p>';
     }
 }
 
-async function handleAddAddress(e) {
-    e.preventDefault();
-
-    const btn = e.target.querySelector('button[type="submit"]');
-    const originalText = btn.innerText;
-    btn.innerText = "Saving...";
-    btn.disabled = true;
-
-    const addressTypeInput = document.querySelector('input[name="address_type"]:checked');
-    const addressTypeValue = addressTypeInput ? addressTypeInput.value : 'HOME';
-
-    const payload = {
-        full_address: document.getElementById('a-line').value,
-        city: document.getElementById('a-city').value,
-        pincode: document.getElementById('a-pincode').value,
-        address_type: addressTypeValue,
-        lat: 12.9716, // Placeholder coordinates
-        lng: 77.5946 
-    };
-
-    try {
-        await apiCall('/auth/customer/addresses/', 'POST', payload);
-        alert("Address Saved Successfully!");
-        closeAddrModal();
-        e.target.reset(); 
-        loadAddresses(); 
-    } catch(err) {
-        console.error(err);
-        alert("Error: " + err.message);
-    } finally {
-        btn.innerText = originalText;
-        btn.disabled = false;
+// 2. Open Map Modal (Replaces old form logic)
+window.openAddressModal = function() {
+    // Check if the global LocationPicker is loaded
+    if (window.LocationPicker) {
+        window.LocationPicker.open();
+    } else {
+        alert("Location Service is initializing... please wait.");
     }
-}
+};
 
-// Modal Logic
-window.openAddressModal = function() { document.getElementById('addr-modal').style.display = 'flex'; }
-window.closeAddrModal = function() { document.getElementById('addr-modal').style.display = 'none'; }
-
+// 3. Delete Address
 window.deleteAddr = async function(id) {
-    if(!confirm("Are you sure?")) return;
+    if(!confirm("Are you sure you want to delete this address?")) return;
     try {
         await apiCall(`/auth/customer/addresses/${id}/`, 'DELETE');
-        loadAddresses();
-    } catch (e) { alert(e.message); }
-}
+        loadAddresses(); // Refresh list
+    } catch (e) { 
+        alert(e.message); 
+    }
+};
 
+// 4. Set Default Address
 window.setDefault = async function(id) {
     try {
         await apiCall(`/auth/customer/addresses/${id}/set-default/`, 'POST');
-        loadAddresses();
-    } catch (e) { alert(e.message); }
-}
+        loadAddresses(); // Refresh list
+    } catch (e) { 
+        alert(e.message); 
+    }
+};

@@ -1,13 +1,11 @@
 import uuid
 import logging
-from django.db import models, transaction
-from django.db.models import CheckConstraint, Q, Sum, F
+from django.db import models
+from django.db.models import CheckConstraint, Q, F, Value, Case, When
 from django.conf import settings
 from django.utils import timezone
 from django.contrib.gis.db import models as gis_models
 from apps.catalog.models import SKU
-from django.db import models
-from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +15,10 @@ logger = logging.getLogger(__name__)
 
 class Warehouse(models.Model):
     name = models.CharField(max_length=100)
+    
+    # FIX: Added 'code' field because it is used in Admin and Zone model
+    code = models.CharField(max_length=50, unique=True, help_text="Unique Warehouse Code (e.g. BLR-01)")
+    
     # Geolocation
     latitude = models.DecimalField(max_digits=9, decimal_places=6)
     longitude = models.DecimalField(max_digits=9, decimal_places=6)
@@ -24,7 +26,7 @@ class Warehouse(models.Model):
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
-        return self.name
+        return f"{self.name} ({self.code})"
 
 
 class ServiceArea(models.Model):
@@ -67,6 +69,7 @@ class Zone(models.Model):
         unique_together = ("warehouse", "code")
 
     def __str__(self):
+        # Now this will work because Warehouse has 'code'
         return f"{self.warehouse.code}-{self.code}"
 
 class Aisle(models.Model):
@@ -109,7 +112,6 @@ class BinInventory(models.Model):
                 check=Q(qty__gte=0), 
                 name="bin_inventory_qty_gte_0"
             ),
-            # FIX: Ensure we don't reserve more than available
             CheckConstraint(
                 check=Q(reserved_qty__lte=F('qty')), 
                 name="bin_inventory_reserved_lte_qty"
