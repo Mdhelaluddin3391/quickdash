@@ -136,87 +136,98 @@ class LoginWithOTPView(views.APIView):
         otp_code = serializer.validated_data['otp']
         role = serializer.validated_data['role']
         device_id = serializer.validated_data.get('device_id', '')
-        
-        # 1. Validate OTP
+        client_ip = self.get_client_ip(request)
+
+        # 1. SECURITY FIX: Brute-Force Protection (Verify Rate Limit)
+        # Separate key from 'send' to allow legitimate retries while blocking script attacks
+        try:
+            check_otp_rate_limit(phone, f"{role}_VERIFY", limit=5, period=60, ip=client_ip)
+        except Throttled:
+            # If throttled, do NOT check the DB (timing attack prevention)
+            return Response(
+                {"detail": "Too many failed attempts. Please try again in a minute."}, 
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
+
+        # 2. Validate OTP
         otp_record = PhoneOTP.objects.filter(phone=phone, login_type=role).order_by('-created_at').first()
         
         if not otp_record:
-            return Response({"detail": "OTP not found. Request a new one."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "OTP expired or not found."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Check validity (expiration, matches code, not used)
         is_valid, message = otp_record.is_valid(otp_code)
         if not is_valid:
             return Response({"detail": message}, status=status.HTTP_400_BAD_REQUEST)
         
-        # 2. Get or Create User (Crash-Safe)
+        # 3. Get or Create User (Atomic Registration)
         user = None
         created = False
         
         try:
-            if role == 'CUSTOMER':
-                # Use get_or_create to handle race conditions during initial sign-up
-                user, created = User.objects.get_or_create(
-                    phone=phone, 
-                    is_customer=True,
-                    defaults={'is_active': True}
-                )
-                if created:
-                    CustomerProfile.objects.create(user=user)
-                user.app_role = 'CUSTOMER'
-                user.save(update_fields=['app_role'])
+            with transaction.atomic():
+                if role == 'CUSTOMER':
+                    # Atomic Get-or-Create to prevent duplicate users on race condition
+                    user, created = User.objects.select_for_update().get_or_create(
+                        phone=phone, 
+                        is_customer=True,
+                        defaults={'is_active': True, 'full_name': 'Guest Customer'}
+                    )
+                    if created:
+                        CustomerProfile.objects.create(user=user)
+                    
+                    # Ensure role consistency
+                    if user.app_role != 'CUSTOMER':
+                        user.app_role = 'CUSTOMER'
+                        user.save(update_fields=['app_role'])
 
-            elif role == 'RIDER':
-                try:
-                    user = User.objects.get(phone=phone, is_rider=True)
-                except User.MultipleObjectsReturned:
-                    logger.critical(f"Multiple Rider accounts found for phone {phone}")
-                    return Response({"detail": "Account error. Please contact support."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                except User.DoesNotExist:
-                    return Response({"detail": "Rider account does not exist."}, status=status.HTTP_403_FORBIDDEN)
-                
-                if not hasattr(user, 'rider_profile'):
-                     return Response({"detail": "Rider profile missing."}, status=status.HTTP_403_FORBIDDEN)
-                if user.rider_profile.approval_status != RiderProfile.ApprovalStatus.APPROVED:
-                    return Response({"detail": "Rider account is not approved."}, status=status.HTTP_403_FORBIDDEN)
-                user.app_role = 'RIDER'
-                user.save(update_fields=['app_role'])
+                elif role == 'RIDER':
+                    user = User.objects.filter(phone=phone, is_rider=True).first()
+                    if not user:
+                        return Response({"detail": "Rider account does not exist."}, status=status.HTTP_403_FORBIDDEN)
+                    
+                    # Security: Enforce Approval
+                    if not hasattr(user, 'rider_profile') or \
+                       user.rider_profile.approval_status != RiderProfile.ApprovalStatus.APPROVED:
+                        return Response({"detail": "Account not approved."}, status=status.HTTP_403_FORBIDDEN)
+                    
+                    user.app_role = 'RIDER'
+                    user.save(update_fields=['app_role'])
 
-            elif role == 'EMPLOYEE':
-                try:
-                    user = User.objects.get(phone=phone, is_employee=True)
-                except User.MultipleObjectsReturned:
-                    logger.critical(f"Multiple Employee accounts found for phone {phone}")
-                    return Response({"detail": "Account error. Please contact support."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                except User.DoesNotExist:
-                    return Response({"detail": "Employee account does not exist."}, status=status.HTTP_403_FORBIDDEN)
-
-                if not hasattr(user, 'employee_profile'):
-                     return Response({"detail": "Employee profile missing."}, status=status.HTTP_403_FORBIDDEN)
-                if not user.employee_profile.is_active_employee:
-                    return Response({"detail": "Employee account is inactive."}, status=status.HTTP_403_FORBIDDEN)
-                user.app_role = 'EMPLOYEE'
-                user.save(update_fields=['app_role'])
+                elif role == 'EMPLOYEE':
+                    user = User.objects.filter(phone=phone, is_employee=True).first()
+                    if not user:
+                         return Response({"detail": "Employee account does not exist."}, status=status.HTTP_403_FORBIDDEN)
+                    
+                    if not hasattr(user, 'employee_profile') or not user.employee_profile.is_active_employee:
+                         return Response({"detail": "Account inactive."}, status=status.HTTP_403_FORBIDDEN)
+                    
+                    user.app_role = 'EMPLOYEE'
+                    user.save(update_fields=['app_role'])
         
         except Exception as e:
-            logger.error(f"Login error for {phone}: {e}")
-            return Response({"detail": "An unexpected error occurred."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Login Transaction Error: {e}")
+            return Response({"detail": "Login processing failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # 3. Mark OTP as used
+        # 4. Mark OTP as used (Anti-Replay)
         otp_record.is_used = True
         otp_record.save(update_fields=['is_used'])
 
-        # 4. Create Session
+        # 5. Session Management
         jti = str(uuid.uuid4())
         UserSession.objects.create(
             user=user,
             role=role,
             jti=jti,
-            client=request.META.get('HTTP_USER_AGENT', ''),
-            ip_address=self.get_client_ip(request),
+            client=request.META.get('HTTP_USER_AGENT', '')[:255],
+            ip_address=client_ip,
             device_id=device_id
         )
 
-        # 5. Generate Token
         user.current_session_jti = jti 
+        user.save(update_fields=['current_session_jti'])
+
+        # 6. Token Generation
         refresh = CustomTokenObtainPairSerializer.get_token(user)
 
         return Response({

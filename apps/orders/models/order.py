@@ -5,6 +5,12 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+import uuid
+from decimal import Decimal
+from django.db import models
+from django.conf import settings
+from django.utils.translation import gettext_lazy as _
+from apps.warehouse.models import Warehouse
 
 # ============================================
 # Shared Enums
@@ -69,141 +75,119 @@ class Coupon(models.Model):
 
 
 class Order(models.Model):
-    """
-    Core Order aggregate.
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    class OrderStatus(models.TextChoices):
+        PENDING = 'pending', _('Pending')
+        CONFIRMED = 'confirmed', _('Confirmed')
+        PREPARING = 'preparing', _('Preparing')
+        SHIPPED = 'shipped', _('Shipped')
+        DELIVERED = 'delivered', _('Delivered')
+        CANCELLED = 'cancelled', _('Cancelled')
 
+    class PaymentStatus(models.TextChoices):
+        PENDING = 'pending', _('Pending')
+        PAID = 'paid', _('Paid')
+        FAILED = 'failed', _('Failed')
+        REFUNDED = 'refunded', _('Refunded')
+
+    # Identifiers
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order_id = models.CharField(max_length=20, unique=True, editable=False)  # Human-readable ID (e.g., #ORD-1234)
+    
+    # Relationships
     customer = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        related_name="orders",
-        on_delete=models.PROTECT,
-        db_index=True,
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.PROTECT, 
+        related_name='orders'
     )
     warehouse = models.ForeignKey(
-        "warehouse.Warehouse",
-        related_name="orders",
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
+        Warehouse, 
+        on_delete=models.PROTECT, 
+        related_name='orders'
     )
 
-    status = models.CharField(max_length=20, choices=ORDER_STATUS_CHOICES, default="pending", db_index=True)
+    # Delivery Data
+    delivery_address_json = models.JSONField(
+        default=dict, 
+        help_text="Snapshot of full address at checkout"
+    )
+    delivery_city = models.CharField(max_length=100, blank=True, null=True)
+    delivery_pincode = models.CharField(max_length=20, blank=True, null=True)
+    delivery_lat = models.FloatField(blank=True, null=True)
+    delivery_lng = models.FloatField(blank=True, null=True)
+
+    # Financials (CRITICAL FIXES)
+    # ---------------------------------------------------------------------
+    # LOGIC FIX: Explicit final_amount FROZEN at checkout.
+    # We do not rely on dynamic summing of items for historical accuracy.
+    final_amount = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        default=Decimal("0.00"),
+        help_text="The exact amount shown to user at checkout (Frozen)."
+    )
+
+    # LOGIC FIX: Store Idempotency Keys and Gateway Metadata
+    # Prevents 'Zombie Orders' and double-processing.
+    metadata = models.JSONField(
+        default=dict, 
+        blank=True, 
+        help_text="System metadata (Idempotency keys, debug info, gateway_response)"
+    )
+    # ---------------------------------------------------------------------
+
+    # Status Flags
+    status = models.CharField(
+        max_length=20, 
+        choices=OrderStatus.choices, 
+        default=OrderStatus.PENDING,
+        db_index=True
+    )
     payment_status = models.CharField(
-        max_length=20, choices=PAYMENT_STATUS_CHOICES, default="pending", db_index=True
+        max_length=20, 
+        choices=PaymentStatus.choices, 
+        default=PaymentStatus.PENDING,
+        db_index=True
     )
-
-    # Amounts
-    total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
-    discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
-    taxes_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
-    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
-    rider_tip = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
-    final_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
-
-    # Coupon
-    coupon = models.ForeignKey(
-        Coupon,
-        related_name="orders",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-    )
-
     payment_gateway_order_id = models.CharField(
-        max_length=100, null=True, blank=True, help_text="Razorpay order id", db_index=True
-    )
-
-    # [FIX] Flattened Address Fields for Analytics
-    # We still keep JSON for the full snapshot, but key fields are extracted
-    delivery_address_json = models.JSONField(default=dict)
-    
-    delivery_city = models.CharField(max_length=100, null=True, blank=True, db_index=True)
-    delivery_pincode = models.CharField(max_length=10, null=True, blank=True, db_index=True)
-    
-    # Geo
-    delivery_lat = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-    delivery_lng = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-
-    # Ops users
-    packer = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        related_name="packed_orders",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-    )
-    rider = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        related_name="delivered_orders",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
+        max_length=100, 
+        blank=True, 
+        null=True, 
+        db_index=True
     )
 
     # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     confirmed_at = models.DateTimeField(null=True, blank=True)
-    dispatched_at = models.DateTimeField(null=True, blank=True)
-    delivered_at = models.DateTimeField(null=True, blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        db_table = "orders"
-        ordering = ["-created_at"]
+        ordering = ['-created_at']
         indexes = [
-            models.Index(fields=["customer", "status"]),
-            models.Index(fields=["payment_status", "created_at"]),
-            models.Index(fields=["delivery_city", "status"]), # Analytic Index
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['customer', 'status']),
         ]
 
-    def __str__(self):
-        return f"Order {self.id}"
+    def save(self, *args, **kwargs):
+        if not self.order_id:
+            # Simple fallback ID generation if not handled by signal
+            self.order_id = f"ORD-{uuid.uuid4().hex[:8].upper()}"
+        super().save(*args, **kwargs)
 
-    def recalculate_totals(self, save: bool = False, skip_aggregation: bool = False):
+    def recalculate_totals(self, save=True):
         """
-        FIX: Added skip_aggregation to support F() updates.
+        Helper to sum up OrderItems. 
+        NOTE: Only use this during cart-to-order conversion. 
+        After that, trust 'final_amount'.
         """
-        from .item import OrderItem
-
-        if not skip_aggregation:
-            subtotal = (
-                OrderItem.objects.filter(order=self).aggregate(
-                    total=models.Sum("total_price")
-                )["total"]
-                or Decimal("0.00")
-            )
-            self.total_amount = subtotal
+        total = self.items.aggregate(
+            total=models.Sum('total_price')
+        )['total'] or Decimal("0.00")
         
-        # Else: self.total_amount is already updated via F() in OrderItem.save
-
-        subtotal = self.total_amount
-
-        discount = Decimal("0.00")
-        if self.coupon and self.coupon.is_valid(subtotal):
-            discount = self.coupon.calculate_discount(subtotal)
-
-        self.discount_amount = discount
-        self.taxes_amount = self.taxes_amount or Decimal("0.00")
-        self.delivery_fee = self.delivery_fee or Decimal("0.00")
-        self.rider_tip = self.rider_tip or Decimal("0.00")
-
-        self.final_amount = (
-            subtotal
-            - discount
-            + self.taxes_amount
-            + self.delivery_fee
-            + self.rider_tip
-        )
-
+        self.final_amount = total
         if save:
-            self.save(update_fields=[
-                "total_amount",
-                "discount_amount",
-                "taxes_amount",
-                "delivery_fee",
-                "rider_tip",
-                "final_amount",
-                "updated_at",
-            ])
+            self.save(update_fields=['final_amount'])
+
+    def __str__(self):
+        return f"{self.order_id} ({self.customer.email or self.customer.phone})"

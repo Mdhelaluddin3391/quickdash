@@ -52,36 +52,77 @@ class CheckoutOrchestrator:
     # EXECUTE CHECKOUT
     # ---------------------------------------------
     def execute(self):
-        # 1. Validate warehouse
+        # 1. Idempotency Check (Prevent Zombie Orders)
+        idempotency_key = self.data.get("idempotency_key")
+        if idempotency_key:
+            existing_order = Order.objects.filter(metadata__idempotency_key=idempotency_key).first()
+            if existing_order:
+                # Return existing order state without re-executing logic
+                payment_data = None
+                if existing_order.payment_status != 'paid':
+                    # Re-construct payment data if needed, or return generic pending status
+                    payment_data = {"status": existing_order.payment_status}
+                return existing_order, payment_data, None
+
+        # 2. Validate warehouse (Geo-Logic Trust)
         warehouse = self._get_warehouse()
         if not warehouse:
             return None, None, "No serviceable warehouse found for this location."
 
-        # 2. Validate cart exists
-        try:
-            cart = Cart.objects.select_related('customer').prefetch_related('items__sku').get(customer=self.user)
-        except Cart.DoesNotExist:
-            return None, None, "Cart not found."
+        expected_total = self.data.get("expected_total")
+        if expected_total is None:
+             # Strict enforcement: Frontend MUST send what user saw
+             return None, None, "Pricing version mismatch. Please refresh."
 
-        if not cart.items.exists():
-            return None, None, "Cart is empty."
-
-        # 3. Create order in safe transaction
         try:
             with transaction.atomic():
+                # 3. Aggressive Cart Locking (Prevent Cart Mutation)
+                # Lock the PARENT cart to prevent new items being added mid-transaction
+                try:
+                    cart = Cart.objects.select_for_update().select_related('customer').get(customer=self.user)
+                except Cart.DoesNotExist:
+                    return None, None, "Cart not found."
 
-                # A. Lock inventory
-                # We strictly use the Cart for checkout to ensure DB locking works correctly.
+                if not cart.items.exists():
+                    return None, None, "Cart is empty."
+
+                # Lock items and Sort by SKU ID to prevent Deadlocks during inventory locking
                 cart_items = list(cart.items.select_for_update().select_related('sku'))
-                cart_items.sort(key=lambda x: x.sku.id) # Prevent Deadlocks
+                cart_items.sort(key=lambda x: x.sku.id)
 
+                # 4. Inventory Reservation
+                # Delegate to the batch locker for atomic inventory updates
+                from apps.inventory.services import batch_check_and_lock_inventory
+                try:
+                    batch_check_and_lock_inventory(warehouse.id, cart_items)
+                except ValueError as e:
+                    return None, None, f"Inventory Error: {str(e)}"
+
+                # 5. Price Re-Calculation & Integrity Check
+                total_check = Decimal("0.00")
+                items_to_create = []
+                
                 for item in cart_items:
-                    try:
-                        check_and_lock_inventory(warehouse.id, item.sku.id, item.quantity)
-                    except ValueError as e:
-                        return None, None, f"Out of Stock: {item.sku.name} ({str(e)})"
+                    # Always use current DB price, never trust the cart's stale price
+                    current_unit_price = item.sku.sale_price or Decimal("0.00")
+                    line_total = current_unit_price * item.quantity
+                    total_check += line_total
+                    
+                    items_to_create.append(OrderItem(
+                        sku=item.sku,
+                        quantity=item.quantity,
+                        unit_price=current_unit_price,
+                        total_price=line_total,
+                        sku_name_snapshot=item.sku.name
+                    ))
 
-                # B. Create Order
+                # 6. Price Slippage Guard
+                # Allow a tiny epsilon for float math, though Decimal should be exact.
+                # If DB price changed since user loaded page, ABORT.
+                if abs(total_check - Decimal(str(expected_total))) > Decimal("0.05"):
+                    return None, None, "Prices have changed since you viewed the cart. Please review and try again."
+
+                # 7. Create Order
                 order = Order.objects.create(
                     customer=self.user,
                     warehouse=warehouse,
@@ -92,30 +133,19 @@ class CheckoutOrchestrator:
                     delivery_lng=self.lng,
                     status='pending',
                     payment_status='pending',
+                    final_amount=total_check, # Explicitly save the verified amount
+                    metadata={"idempotency_key": idempotency_key} if idempotency_key else {}
                 )
 
-                # C. Create Order Items
-                items_to_create = []
-                for item in cart_items:
-                    unit_price = item.sku.sale_price or Decimal("0.00")
-                    items_to_create.append(OrderItem(
-                        order=order,
-                        sku=item.sku,
-                        quantity=item.quantity,
-                        unit_price=unit_price,
-                        total_price=unit_price * item.quantity,
-                        sku_name_snapshot=item.sku.name
-                    ))
-
+                # Bulk create items with order reference
+                for i in items_to_create:
+                    i.order = order
                 OrderItem.objects.bulk_create(items_to_create)
 
-                # D. Compute totals
-                order.recalculate_totals(save=True)
-                
-                # E. Clear Cart
+                # 8. Clear Cart
                 cart.items.all().delete()
 
-                # F. Payment
+                # 9. Payment Orchestration
                 payment_data = None
 
                 if self.payment_method == "COD":
@@ -129,8 +159,8 @@ class CheckoutOrchestrator:
                     payment_data = {"mode": "COD", "status": "PENDING"}
 
                 elif self.payment_method == "RAZORPAY":
-                    try:
-                        if order.final_amount > 0:
+                    if order.final_amount > 0:
+                        try:
                             rzp_id = create_razorpay_order(order, order.final_amount)
                             Payment.objects.create(
                                 order=order,
@@ -147,13 +177,14 @@ class CheckoutOrchestrator:
                                 "amount": str(order.final_amount),
                                 "currency": "INR"
                             }
-                        else:
-                            payment_data = {"mode": "FREE", "status": "SUCCESS"}
-                            order.payment_status = "paid"
-                            order.save()
-                    except Exception as e:
-                        logger.error(f"Razorpay error: {e}")
-                        raise ValueError("Payment gateway error. Try COD.")
+                        except Exception as e:
+                            logger.error(f"Razorpay error: {e}")
+                            # Rollback the entire transaction if payment setup fails
+                            raise ValueError("Payment gateway error. Please try again.")
+                    else:
+                        payment_data = {"mode": "FREE", "status": "SUCCESS"}
+                        order.payment_status = "paid"
+                        order.save()
 
                 return order, payment_data, None
 
@@ -161,7 +192,7 @@ class CheckoutOrchestrator:
             return None, None, str(ve)
         except Exception as e:
             logger.exception("Fatal checkout failure")
-            return None, None, "Internal checkout error."
+            return None, None, "Internal system error during checkout."
 
 
 def cancel_order(order, cancelled_by=None, reason=""):

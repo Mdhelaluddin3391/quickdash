@@ -66,29 +66,64 @@ def verify_payment_signature(gateway_order_id: str, gateway_payment_id: str, gat
         return False
 
 
-def initiate_refund(refund: Refund) -> tuple[bool, str | dict]:
+# apps/payments/services.py
+
+def initiate_refund(refund_obj: Refund) -> tuple[bool, str | dict]:
     """
     Call Razorpay refund API for a given Refund record.
+    Includes strict double-refund protection.
     """
-    payment = refund.payment
-    if payment.payment_method != Payment.PaymentMethod.RAZORPAY:
-        return False, "Only Razorpay payments support online refunds."
-
-    if not payment.transaction_id:
-        return False, "No transaction ID found on Payment."
-
-    if not razorpay_client:
-        return False, "Razorpay client not configured."
+    from django.db import transaction
+    from django.db.models import Sum
 
     try:
-        rp_refund = razorpay_client.payment.refund(
-            payment.transaction_id,
-            {
-                "amount": int(refund.amount * 100),
-                "speed": "normal",
-            },
-        )
-        return True, rp_refund
+        with transaction.atomic():
+            # 1. Lock the Payment Record to serialize refund attempts
+            payment = Payment.objects.select_for_update().get(id=refund_obj.payment.id)
+            
+            if payment.payment_method != Payment.PaymentMethod.RAZORPAY:
+                return False, "Only Razorpay payments support online refunds."
+
+            if not payment.transaction_id:
+                return False, "No transaction ID found on Payment."
+
+            if not razorpay_client:
+                return False, "Razorpay client not configured."
+
+            # 2. Financial Integrity Check
+            # Calculate total ALREADY refunded (excluding this new attempt if it's already saved but not processed)
+            existing_refunds = Refund.objects.filter(
+                payment=payment, 
+                status='COMPLETED'
+            ).exclude(id=refund_obj.id).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+            if (existing_refunds + refund_obj.amount) > payment.amount:
+                return False, f"Refund amount exceeds refundable balance. Refunded: {existing_refunds}, Max: {payment.amount}"
+
+            # 3. Execute Gateway Call
+            try:
+                rp_refund = razorpay_client.payment.refund(
+                    payment.transaction_id,
+                    {
+                        "amount": int(refund_obj.amount * 100), # Convert to paise
+                        "speed": "normal",
+                        "notes": {"refund_id": str(refund_obj.id)}
+                    },
+                )
+                
+                # 4. Update Status on Success
+                refund_obj.gateway_refund_id = rp_refund.get('id')
+                refund_obj.status = 'COMPLETED'
+                refund_obj.save()
+                
+                return True, rp_refund
+                
+            except razorpay.errors.RazorpayError as e:
+                logger.error(f"Razorpay Refund Error: {e}")
+                refund_obj.status = 'FAILED'
+                refund_obj.save()
+                return False, str(e)
+
     except Exception as e:
-        logger.exception("Error initiating refund for payment %s: %s", payment.id, e)
+        logger.exception("Error initiating refund for payment %s: %s", refund_obj.payment.id, e)
         return False, str(e)

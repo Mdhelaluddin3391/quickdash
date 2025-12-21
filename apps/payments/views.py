@@ -138,53 +138,52 @@ class RazorpayWebhookView(View):
 
         try:
             body_str = request.body.decode("utf-8")
+            # 1. Verify Signature first to reject spoofed requests
             client.utility.verify_webhook_signature(body_str, signature, webhook_secret)
             
             payload = json.loads(body_str)
             event_type = payload.get("event")
             event_id = payload.get("id")
 
-            # FIX: Atomic Idempotency Check
-            # Prevent race conditions where two identical webhooks hit simultaneously
+            # 2. Atomic Idempotency Check
             from apps.warehouse.models import IdempotencyKey
             from datetime import timedelta
             
             with transaction.atomic():
-                try:
-                    idem_key, created = IdempotencyKey.objects.get_or_create(
-                        key=event_id,
-                        defaults={
-                            "route": "razorpay_webhook",
-                            "expires_at": timezone.now() + timedelta(days=7),
-                            "response_status": 200
-                        }
-                    )
-                except Exception:
-                    # In case of DB collision not handled by get_or_create (rare but possible in some DBs)
-                    return JsonResponse({"status": "already_processed"})
+                # Try to acquire a lock on this event_id
+                idem_key, created = IdempotencyKey.objects.select_for_update().get_or_create(
+                    key=event_id,
+                    defaults={
+                        "route": "razorpay_webhook",
+                        "expires_at": timezone.now() + timedelta(days=7),
+                        "response_status": 200
+                    }
+                )
                 
+                # If key existed, we have processed this. Return 200 to silence Razorpay.
                 if not created:
-                    logger.info(f"Webhook event {event_id} already processed. Skipping.")
+                    logger.info(f"Webhook event {event_id} replay detected.")
                     return JsonResponse({"status": "already_processed"})
 
-                # Proceed with logic only if we created the key
+                # 3. Process Logic
                 if event_type == "payment.captured":
                     entity = payload["payload"]["payment"]["entity"]
                     gateway_order_id = entity["order_id"]
                     gateway_payment_id = entity["id"]
 
+                    # Lock the intent to prevent race with the Frontend 'VerifyPayment' API
                     intent = PaymentIntent.objects.select_for_update().filter(
                         gateway_order_id=gateway_order_id
                     ).first()
                     
                     if not intent:
-                        logger.critical(f"Webhook: Payment {gateway_payment_id} captured but NO INTENT found for Order {gateway_order_id}")
-                        # We return 200 to stop Razorpay from retrying indefinitely on a logic error
+                        logger.critical(f"Webhook: Orphaned Payment {gateway_payment_id} for Order {gateway_order_id}")
                         return JsonResponse({"status": "intent_missing"})
 
                     order = intent.order
 
-                    Payment.objects.get_or_create(
+                    # Create Payment record idempotently
+                    payment, pay_created = Payment.objects.get_or_create(
                         transaction_id=gateway_payment_id,
                         defaults={
                             "order": order,
@@ -197,12 +196,17 @@ class RazorpayWebhookView(View):
                             "gateway_response": entity,
                         }
                     )
-                    
+
+                    # Update Intent and Order status
                     if intent.status != PaymentIntent.IntentStatus.PAID:
                         intent.status = PaymentIntent.IntentStatus.PAID
                         intent.save(update_fields=['status'])
                         
-                        logger.info(f"Webhook: Payment {gateway_payment_id} synced for Order {order.id}")
+                        # Trigger Order Success Logic
+                        from apps.orders.services import process_successful_payment
+                        process_successful_payment(order)
+
+                        logger.info(f"Webhook: Payment {gateway_payment_id} confirmed Order {order.id}")
 
             return JsonResponse({"status": "ok"})
 

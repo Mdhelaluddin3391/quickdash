@@ -10,8 +10,12 @@ from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from django.core.cache import cache
 from .models import PhoneOTP, UserSession
 from .tasks import send_sms_task
+from django.core.cache import cache
+from rest_framework.exceptions import Throttled
+import logging
 
 logger = logging.getLogger(__name__)
+
 
 def normalize_phone(phone: str) -> str:
     phone = phone.strip().replace(" ", "")
@@ -49,31 +53,52 @@ def get_client_ip(request):
     x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
     return x_forwarded_for.split(",")[0].strip() if x_forwarded_for else request.META.get("REMOTE_ADDR")
 
-def check_otp_rate_limit(phone: str, login_type: str, ip=None):
+def check_otp_rate_limit(identifier, action_type, limit=3, period=300, ip=None):
     """
-    Prevents OTP spam using Redis atomic operations.
+    Rate limits OTP actions by Phone OR IP.
+    
+    :param identifier: Phone number or User ID
+    :param action_type: 'LOGIN_ATTEMPT', 'SEND_OTP', etc.
+    :param limit: Max attempts allowed
+    :param period: Time window in seconds
+    :param ip: Client IP address (optional but recommended for security)
     """
-    # 1. Phone Throttle (1 request per 60s)
-    rate_limit_key = f"otp_limit:{login_type}:{phone}"
     
-    is_allowed = cache.set(rate_limit_key, "locked", timeout=60, nx=True)
+    # 1. Throttle by Identifier (Phone)
+    key_id = f"throttle_{action_type}_{identifier}"
+    attempts_id = cache.get(key_id, 0)
     
-    if not is_allowed:
-        ttl = cache.ttl(rate_limit_key)
-        raise ValidationError({"detail": f"Please wait {ttl} seconds before requesting another OTP."})
-
-    # 2. IP Throttle (Max 20 requests per hour)
+    if attempts_id >= limit:
+        logger.warning(f"Throttling {identifier} for {action_type}")
+        raise Throttled(detail=f"Too many attempts. Try again in {period//60} minutes.")
+        
+    # 2. Throttle by IP (Prevent Distributed Attacks)
     if ip:
-        ip_key = f"otp_spam_ip:{ip}"
+        key_ip = f"throttle_{action_type}_ip_{ip}"
+        attempts_ip = cache.get(key_ip, 0)
+        # Allow more leeway for IP (e.g., 3x limit) in case of NAT
+        if attempts_ip >= (limit * 5): 
+            logger.warning(f"Blocking IP {ip} for {action_type}")
+            raise Throttled(detail="Too many requests from this network.")
+
+    # Increment Counters
+    # We use 'set' with nx=True or similar, but for simple cache:
+    if attempts_id == 0:
+        cache.set(key_id, 1, timeout=period)
+    else:
         try:
-            request_count = cache.incr(ip_key)
+            cache.incr(key_id)
         except ValueError:
-            cache.set(ip_key, 1, timeout=3600)
-            request_count = 1
-            
-        if request_count > 20: 
-             logger.warning(f"OTP Spam detected from IP: {ip}")
-             raise ValidationError({"detail": "Too many requests from this IP. Try again later."})
+            cache.set(key_id, 1, timeout=period)
+
+    if ip:
+        if attempts_ip == 0:
+            cache.set(key_ip, 1, timeout=period)
+        else:
+            try:
+                cache.incr(key_ip)
+            except ValueError:
+                 cache.set(key_ip, 1, timeout=period)
 
 def validate_staff_email_domain(email):
     """

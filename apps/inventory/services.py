@@ -112,10 +112,42 @@ def find_best_warehouse_for_items(order_items, customer_location=None):
     return best_wh
 
 
-def batch_check_and_lock_inventory(warehouse_id, items_list):
-    """Surgical Fix: Lock all required SKUs in one batch query."""
-    sku_ids = [item.sku_id for item in items_list]
-    # Lock all relevant rows at once
+# apps/inventory/services.py
+
+def batch_check_and_lock_inventory(warehouse_id, cart_items):
+    """
+    Surgical Fix: Lock all required SKUs in one batch query to prevent deadlocks.
+    Input: List of CartItems (must be pre-sorted by SKU ID for safety, though query handles sorting).
+    """
+    sku_map = {item.sku_id: item.quantity for item in cart_items}
+    sku_ids = list(sku_map.keys())
+
+    # 1. Lock all relevant rows at once.
+    # ordering by id is crucial for deadlock prevention across transactions
     stocks = InventoryStock.objects.select_for_update().filter(
-        warehouse_id=warehouse_id, sku_id__in=sku_ids
+        warehouse_id=warehouse_id, 
+        sku_id__in=sku_ids
     ).order_by('sku_id')
+
+    stock_dict = {s.sku_id: s for s in stocks}
+
+    # 2. Validate and Decrement in Memory
+    for sku_id, qty_needed in sku_map.items():
+        stock = stock_dict.get(sku_id)
+        
+        if not stock:
+            raise ValueError(f"SKU {sku_id} not found in warehouse.")
+            
+        if stock.available_qty < qty_needed:
+            raise ValueError(f"Insufficient stock for {stock.sku.name}. Available: {stock.available_qty}")
+
+        # 3. Apply decrement
+        # We use F() for safety, but since we have the lock, direct assignment is also safe here.
+        # However, F() is best practice for audit trails.
+        stock.available_qty = F('available_qty') - qty_needed
+        stock.reserved_qty = F('reserved_qty') + qty_needed
+
+    # 4. Bulk Update to save round trips
+    InventoryStock.objects.bulk_update(stocks, ['available_qty', 'reserved_qty'])
+    
+    return True

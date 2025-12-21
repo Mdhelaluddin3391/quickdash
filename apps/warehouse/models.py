@@ -6,6 +6,8 @@ from django.conf import settings
 from django.utils import timezone
 from django.contrib.gis.db import models as gis_models
 from apps.catalog.models import SKU
+from django.db import models
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -470,16 +472,23 @@ class CycleCountItem(models.Model):
 # =========================================================
 
 class IdempotencyKey(models.Model):
+    """
+    Locks a specific event ID (e.g., Razorpay Event, User Request) 
+    to prevent race conditions and replay attacks.
+    """
     key = models.CharField(max_length=255, unique=True, db_index=True)
-    route = models.CharField(max_length=255)
-    request_hash = models.CharField(max_length=64, blank=True)
-    response_status = models.SmallIntegerField(null=True, blank=True)
+    route = models.CharField(max_length=100, help_text="Where this key came from (e.g. 'razorpay_webhook')")
+    
+    response_status = models.IntegerField(default=200)
     response_body = models.JSONField(null=True, blank=True)
-    expires_at = models.DateTimeField(db_index=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
-
+    expires_at = models.DateTimeField(null=True, blank=True)
+    
     def is_expired(self):
-        return self.expires_at < timezone.now()
+        return self.expires_at and timezone.now() > self.expires_at
 
     class Meta:
-        verbose_name_plural = "Idempotency Keys"
+        indexes = [
+            models.Index(fields=['key', 'route']),
+        ]
