@@ -43,6 +43,8 @@ def batch_check_and_lock_inventory(warehouse_id, items_list):
         if stock.available_qty < qty:
             raise ValueError(f"Insufficient stock for {item['sku'].name} (Requested: {qty}, Available: {stock.available_qty})")
         
-        # We do NOT deduct here. The Order Service deduces Logical Stock, 
+
+
+# We do NOT deduct here. The Order Service deduces Logical Stock, 
         # or Warehouse Service deduces Physical Stock.
-        # This function primarily validates and holds the lock.
+        # This function primarily validates and holds the lock. 
