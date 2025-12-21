@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Service Unavailable - QuickDash</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/assets/css/base.css">
+    <style>
+        .unavailable-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            text-align: center;
+            padding: 20px;
+        }
+        .unavailable-img { width: 250px; margin-bottom: 20px; }
+        .btn-change-loc {
+            margin-top: 20px;
+            background: #ff4d4f;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            text-decoration: none;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="unavailable-container">
+        <img src="/static/assets/img/robot_icon.png" alt="No Service" class="unavailable-img">
+        <h1>We're not there yet!</h1>
+        <p>Sorry, QuickDash is currently not available in this area.</p>
+        <p>We are expanding rapidly. Check back soon!</p>
+        
+        <button onclick="changeLocation()" class="btn-change-loc">
+            Change Location
+        </button>
+    </div>
+
+    <script>
+        function changeLocation() {
+            // 1. Clear the block flag
+            sessionStorage.removeItem('quickdash_warehouse_id');
+            sessionStorage.removeItem('quickdash_lat');
+            sessionStorage.removeItem('quickdash_lng');
+            
+            // 2. Redirect to home (which will detect missing location and prompt user)
+            window.location.href = '/';
+        }
+    </script>
+</body>
+</html>

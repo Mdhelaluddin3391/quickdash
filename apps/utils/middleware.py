@@ -38,3 +38,46 @@ class RequestLogMiddleware:
             )
 
         return response
+
+
+from django.shortcuts import redirect
+from django.urls import reverse
+
+SERVICE_WAREHOUSE_KEY = 'quickdash_service_warehouse_id'
+
+class LocationEnforcementMiddleware:
+    """
+    Middleware to ensure a user has a valid Service Location in their session
+    before accessing Checkout or Cart flows.
+    """
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        # List of paths that REQUIRE a valid location session
+        protected_paths = [
+            '/checkout/',
+            '/cart/',
+            '/api/v1/orders/create/',
+        ]
+        
+        # Check if current path starts with any protected path
+        if any(request.path.startswith(path) for path in protected_paths):
+            
+            # Check Session
+            if not request.session.get(SERVICE_WAREHOUSE_KEY):
+                
+                # If API call, return 403 JSON
+                if request.path.startswith('/api/'):
+                    from django.http import JsonResponse
+                    return JsonResponse(
+                        {"error": "Location not set. Please go to Homepage."}, 
+                        status=403
+                    )
+                
+                # If UI page, redirect to Service Unavailable or Home
+                # Assuming you have a named URL 'home' or 'service_unavailable'
+                return redirect('/service-unavailable/')
+
+        response = self.get_response(request)
+        return response

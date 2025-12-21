@@ -7,7 +7,10 @@ from django.core.exceptions import ValidationError
 from rest_framework import viewsets, views, generics, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
-
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from apps.warehouse.utils.warehouse_selector import WarehouseSelector
 from .models import (
     Warehouse, BinInventory, PickingTask, PickItem,
     PackingTask, GRN, CycleCountTask, ServiceArea
@@ -257,18 +260,59 @@ class LocationBaseView(views.APIView):
             raise ValidationError("Latitude and Longitude required")
         return float(lat), float(lng), wh_id
 
-class CheckServiceAvailabilityAPIView(LocationBaseView):
-    permission_classes = [AllowAny]
-    def handle_req(self, request):
-        try:
-            lat, lng, wh_id = self._extract_location(request)
-            result = check_service_availability(lat, lng, wh_id)
-            return Response(result)
-        except Exception as e:
-            return Response({"error": str(e)}, status=400)
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from django.conf import settings
 
-    def get(self, r): return self.handle_req(r)
-    def post(self, r): return self.handle_req(r)
+from apps.warehouse.utils.warehouse_selector import WarehouseSelector
+# Define constant for session key to avoid typos
+SERVICE_WAREHOUSE_KEY = 'quickdash_service_warehouse_id'
+
+class CheckServiceabilityAPIView(APIView):
+    """
+    Receives GPS coordinates.
+    Determines if we operate there.
+    Saves Warehouse ID to Session.
+    """
+    permission_classes = [] # Public allowed
+
+    def post(self, request, *args, **kwargs):
+        lat = request.data.get('lat')
+        lng = request.data.get('lng')
+
+        if not lat or not lng:
+            return Response(
+                {"serviceable": False, "message": "Location coordinates missing."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 1. Logic: Find Warehouse
+        warehouse = WarehouseSelector.get_serviceable_warehouse(lat, lng)
+
+        # 2. Outcome: Success
+        if warehouse:
+            # CRITICAL: Save to Session
+            request.session[SERVICE_WAREHOUSE_KEY] = warehouse.id
+            request.session.modified = True 
+            
+            return Response({
+                "serviceable": True,
+                "warehouse_id": warehouse.id,
+                "warehouse_name": warehouse.name,
+                "message": f"Delivering from {warehouse.name}"
+            })
+
+        # 3. Outcome: Failure
+        else:
+            # CRITICAL: Clear Session so they can't checkout
+            if SERVICE_WAREHOUSE_KEY in request.session:
+                del request.session[SERVICE_WAREHOUSE_KEY]
+            
+            return Response({
+                "serviceable": False,
+                "message": "Sorry, we do not deliver to this area yet."
+            })
 
 class GetNearestServiceAreaAPIView(LocationBaseView):
     permission_classes = [AllowAny]
@@ -288,3 +332,5 @@ class ServiceAreaListAPIView(generics.ListAPIView):
     queryset = ServiceArea.objects.filter(is_active=True)
     serializer_class = ServiceAreaSerializer
     permission_classes = [AllowAny]
+
+

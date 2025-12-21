@@ -9,7 +9,16 @@ from rest_framework import status, viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status, permissions
+from django.shortcuts import get_object_or_404
 
+from apps.accounts.models import UserAddress
+from apps.orders.models import Order, Cart
+from apps.orders.services import calculate_cart_total # Assuming this helper exists
+
+# Must match the key used in Warehouse View
 from apps.accounts.permissions import IsCustomer
 from apps.payments.models import Payment
 from .models import Order, Cart, CartItem
@@ -24,6 +33,8 @@ from .services import (
 )
 
 logger = logging.getLogger(__name__)
+SERVICE_WAREHOUSE_KEY = 'quickdash_service_warehouse_id'
+
 
 class CartView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -144,3 +155,94 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
         ok, msg = cancel_order(order, cancelled_by="CUSTOMER", reason=request.data.get("reason", ""))
         if not ok: return Response({"error": msg}, status=400)
         return Response(OrderSerializer(order).data)
+
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status, permissions
+from django.shortcuts import get_object_or_404
+
+from apps.accounts.models import UserAddress
+from apps.orders.models import Order, Cart
+from apps.orders.services import calculate_cart_total # Assuming this helper exists
+
+# Must match the key used in Warehouse View
+SERVICE_WAREHOUSE_KEY = 'quickdash_service_warehouse_id'
+
+class CreateOrderAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        # 1️⃣ TRUST SERVICEABILITY SESSION (Homepage verified)
+        warehouse_id = request.session.get(SERVICE_WAREHOUSE_KEY)
+
+        if not warehouse_id:
+            # Security Fallback: If session expired or user bypassed checks
+            return Response(
+                {
+                    "error": "Service location expired. Please refresh the home page to set your location."
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # 2️⃣ VALIDATE DELIVERY ADDRESS (Exact drop point)
+        address_id = request.data.get("address_id")
+        
+        if not address_id:
+            return Response(
+                {"error": "Delivery address ID is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Verify address belongs to user
+        delivery_address = get_object_or_404(
+            UserAddress, 
+            id=address_id, 
+            user=request.user
+        )
+
+        # 3️⃣ GET CART
+        # Assuming Cart model has a OneToOne or ForeignKey to User
+        try:
+            cart = Cart.objects.get(user=request.user)
+            if not cart.items.exists():
+                raise ValueError("Cart is empty")
+        except (Cart.DoesNotExist, ValueError):
+             return Response(
+                {"error": "Cart is empty"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 4️⃣ CREATE ORDER (NO DISTANCE CHECK HERE)
+        # We assume if the User is browsing under 'warehouse_id' (Session)
+        # and picked 'delivery_address' (Input), the order is valid.
+        
+        try:
+            order = Order.objects.create(
+                user=request.user,
+                warehouse_id=warehouse_id,  # From Session
+                delivery_address=delivery_address, # From Input
+                total_amount=calculate_cart_total(cart),
+                status='CREATED' # Or Order.Status.CREATED
+            )
+            
+            # Optional: Move items from Cart to OrderItems here
+            # ...
+            
+            # 5️⃣ CLEAR CART
+            cart.items.all().delete()
+            cart.delete() # Or just clear items depending on logic
+
+            return Response(
+                {
+                    "order_id": order.id,
+                    "message": "Order placed successfully"
+                },
+                status=status.HTTP_201_CREATED
+            )
+
+        except Exception as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

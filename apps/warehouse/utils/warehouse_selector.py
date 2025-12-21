@@ -1,99 +1,51 @@
-# apps/warehouse/utils/warehouse_selector.py
-
-from django.db.models import Sum, F
-from django.contrib.gis.measure import D
-from django.contrib.gis.db.models.functions import Distance
-from django.contrib.gis.geos import Point
-from apps.inventory.models import InventoryStock
+import math
 from apps.warehouse.models import Warehouse
 
-def select_best_warehouse(order_items, customer_location=None):
+class WarehouseSelector:
     """
-    Selects the optimal warehouse based on:
-    1. Capability (Must have stock)
-    2. Proximity (Within 10km ONLY)
-    3. Score (Stock availability - Distance Penalty)
-    
-    order_items: list of dicts {'sku_id': uuid, 'qty': int}
-    customer_location: tuple (lat, lng)
+    Service to find the nearest active warehouse for a given lat/lng.
     """
-    
-    # 1. Spatial Filtering (STRICT 10KM LIMIT)
-    warehouses = Warehouse.objects.filter(is_active=True)
-    
-    if customer_location:
-        # Tuple (lat, lng) ko Point object mein convert karein
-        # Note: Point(lng, lat) hota hai standard GIS mein
-        if isinstance(customer_location, (tuple, list)):
-            pnt = Point(float(customer_location[1]), float(customer_location[0]), srid=4326)
-        else:
-            pnt = customer_location
-            
-        # FILTER: Sirf 10km radius wale warehouses
-        warehouses = warehouses.filter(
-            location__dwithin=(pnt, D(km=10))
-        ).annotate(
-            dist=Distance('location', pnt)
-        ).order_by('dist')
-    
-    # Agar 10km mein koi warehouse nahi hai, toh turant return karein
-    if not warehouses.exists():
-        return None
 
-    # 2. Stock Availability Check (Batch Query)
-    sku_ids = [it['sku_id'] for it in order_items]
-    
-    stocks = InventoryStock.objects.filter(
-        warehouse__in=warehouses,
-        sku_id__in=sku_ids
-    ).values('warehouse_id', 'sku_id', 'available_qty')
+    @staticmethod
+    def haversine_distance(lat1, lon1, lat2, lon2):
+        """
+        Calculate the great circle distance in kilometers between two points 
+        on the earth (specified in decimal degrees).
+        """
+        # Convert decimal degrees to radians
+        lon1, lat1, lon2, lat2 = map(math.radians, [float(lon1), float(lat1), float(lon2), float(lat2)])
 
-    # Build Map: { wh_id: { sku_id: qty } }
-    wh_stock_map = {}
-    for s in stocks:
-        wh_id = s['warehouse_id']
-        if wh_id not in wh_stock_map:
-            wh_stock_map[wh_id] = {}
-        wh_stock_map[wh_id][str(s['sku_id'])] = s['available_qty']
+        # Haversine formula
+        dlon = lon2 - lon1
+        dlat = lat2 - lat1
+        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        r = 6371  # Radius of earth in kilometers
+        return c * r
 
-    # 3. Scoring Algorithm
-    best_wh = None
-    best_score = -float('inf')
+    @classmethod
+    def get_serviceable_warehouse(cls, lat, lng):
+        """
+        Returns the nearest active warehouse if within service radius.
+        Returns None if no warehouse serves this area.
+        """
+        warehouses = Warehouse.objects.filter(is_active=True)
+        nearest_wh = None
+        min_dist = float('inf')
 
-    for wh in warehouses:
-        stock_map = wh_stock_map.get(wh.id, {})
-        
-        current_score = 0
-        fully_stocked = True
-        
-        for item in order_items:
-            req_sku = str(item['sku_id'])
-            req_qty = item['qty']
-            
-            avail = stock_map.get(req_sku, 0)
-            
-            # Critical: Agar ek bhi item missing hai, toh heavy penalty
-            if avail < req_qty:
-                fully_stocked = False
-                current_score -= 5000  # Penalty for missing items
-            else:
-                current_score += 100   # Bonus for having item
-        
-        if fully_stocked:
-            current_score += 1000 # Jackpot bonus for full order
+        for wh in warehouses:
+            # Skip if warehouse has no coordinates
+            if not wh.latitude or not wh.longitude:
+                continue
 
-        # Apply Distance Penalty: -10 points per km (Jitna paas, utna behtar)
-        if hasattr(wh, 'dist') and wh.dist is not None:
-            current_score -= (wh.dist.km * 10)
+            dist = cls.haversine_distance(lat, lng, wh.latitude, wh.longitude)
 
-        if current_score > best_score:
-            best_score = current_score
-            best_wh = wh
+            # Check strict radius (e.g., Warehouse defined radius or default 5km)
+            # Assuming warehouse.service_radius exists, else default to 5.0
+            radius = getattr(wh, 'service_radius', 5.0) 
 
-    # 4. Final Validation
-    # Agar best score bhi bahut negative hai (matlab items out of stock hain),
-    # toh None return karein taaki user ko error dikhe.
-    if best_score < -4000:
-        return None
+            if dist <= radius and dist < min_dist:
+                min_dist = dist
+                nearest_wh = wh
 
-    return best_wh
+        return nearest_wh
