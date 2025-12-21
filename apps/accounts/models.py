@@ -208,23 +208,34 @@ class PhoneOTP(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     @classmethod
+    @classmethod
     def create_otp(cls, phone, login_type, code, ttl_minutes=5):
         now = timezone.now()
         
-        # Rate Limit: 1 request per 60 seconds
-        last_otp = cls.objects.filter(phone=phone, login_type=login_type).order_by('-created_at').first()
-        if last_otp and last_otp.created_at > now - timedelta(seconds=60):
-            return None, "Please wait 60 seconds before requesting a new OTP."
-
-        # Rate Limit: Max 20 requests per hour
-        one_hour_ago = now - timedelta(hours=1)
-        hourly_count = cls.objects.filter(phone=phone, created_at__gte=one_hour_ago).count()
-        if hourly_count >= 20:
-            return None, "Too many OTP requests. Please try again later."
-
-        expires_at = now + timedelta(minutes=ttl_minutes)
-        
         with transaction.atomic():
+            # LOCKING: Lock the most recent OTP record for this phone to serialize checks.
+            # If no record exists, the race window is negligible for the first ever request, 
+            # but subsequent concurrent spam is blocked.
+            last_otp = cls.objects.select_for_update().filter(
+                phone=phone, login_type=login_type
+            ).order_by('-created_at').first()
+
+            # 1. Rate Limit: 1 request per 60 seconds (Strict DB enforcement)
+            if last_otp and last_otp.created_at > now - timedelta(seconds=60):
+                return None, "Please wait 60 seconds before requesting a new OTP."
+
+            # 2. Rate Limit: Max 20 requests per hour
+            one_hour_ago = now - timedelta(hours=1)
+            # Use count() which is fast on indexed fields
+            hourly_count = cls.objects.filter(
+                phone=phone, created_at__gte=one_hour_ago
+            ).count()
+            
+            if hourly_count >= 20:
+                return None, "Too many OTP requests. Please try again later."
+
+            expires_at = now + timedelta(minutes=ttl_minutes)
+            
             # Invalidate previous unused OTPs
             cls.objects.filter(phone=phone, login_type=login_type, is_used=False).update(is_used=True)
             

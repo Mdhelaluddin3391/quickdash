@@ -5,6 +5,9 @@ from .models import InventoryStock
 from apps.warehouse.models import Warehouse
 from django.contrib.gis.geos import Point
 from django.db.models import F
+from django.contrib.gis.db.models.functions import Distance
+from django.contrib.gis.measure import D
+from django.contrib.gis.geos import Point
 
 @transaction.atomic
 def check_and_lock_inventory(warehouse_id, sku_id, qty_needed):
@@ -22,47 +25,64 @@ def check_and_lock_inventory(warehouse_id, sku_id, qty_needed):
     stock.save(update_fields=['available_qty'])
     return True
 
+from django.contrib.gis.db.models.functions import Distance
+from django.contrib.gis.measure import D
+from django.contrib.gis.geos import Point
+
 def find_best_warehouse_for_items(order_items, customer_location=None):
     """
-    Finds the warehouse that can fulfill the maximum number of items.
-    FIX: If customer_location is provided, prioritize distance.
+    Optimized warehouse selection using PostGIS DB-level filtering.
+    Eliminates O(N*M) Python loops for distance calculation.
     """
-    candidate_warehouses = Warehouse.objects.filter(is_active=True)
-    if not candidate_warehouses.exists():
+    # 1. Base Query
+    warehouses = Warehouse.objects.filter(is_active=True)
+    
+    # 2. Apply PostGIS Distance Filtering & Sorting (DB Level)
+    if customer_location:
+        # Normalize input to Point
+        if isinstance(customer_location, (tuple, list)):
+            pnt = Point(float(customer_location[1]), float(customer_location[0]), srid=4326)
+        else:
+            pnt = customer_location
+            
+        # Filter warehouses within reasonable radius (e.g., 20km) to reduce search space
+        # and annotate distance for scoring.
+        warehouses = warehouses.filter(
+            location__dwithin=(pnt, D(km=20))
+        ).annotate(
+            distance=Distance('location', pnt)
+        ).order_by('distance')
+
+    if not warehouses.exists():
         return None
 
+    # 3. Efficient Stock Fetching (Single Query)
     sku_ids = [it["sku_id"] for it in order_items]
     
-    # 1. Fetch all stock
+    # Fetch only relevant stock for candidate warehouses
     stocks = InventoryStock.objects.filter(
-        warehouse__in=candidate_warehouses,
+        warehouse__in=warehouses,
         sku_id__in=sku_ids,
         available_qty__gt=0
-    ).select_related('warehouse').values(
-        'warehouse_id', 'sku_id', 'available_qty', 
-        'warehouse__location' # Fetch location
-    )
+    ).values('warehouse_id', 'sku_id', 'available_qty')
 
-    # 2. Build Map & Warehouse Info
+    # 4. In-Memory Scoring (Map Reduce)
+    # We now loop over a much smaller dataset (only valid warehouses nearby)
     wh_stock_map = {}
-    wh_locations = {}
-    
     for row in stocks:
         wh_id = row['warehouse_id']
-        sku_id = str(row['sku_id'])
-        qty = row['available_qty']
-        
         if wh_id not in wh_stock_map:
             wh_stock_map[wh_id] = {}
-            wh_locations[wh_id] = row['warehouse__location'] # Store location
-            
-        wh_stock_map[wh_id][sku_id] = qty
+        wh_stock_map[wh_id][str(row['sku_id'])] = row['available_qty']
 
-    best_wh_id = None
+    best_wh = None
     best_score = -float('inf')
-    
-    # 3. Score warehouses
-    for wh_id, stock_map in wh_stock_map.items():
+
+    # Evaluate candidates (already ordered by distance if loc provided)
+    for wh in warehouses:
+        wh_id = wh.id
+        stock_map = wh_stock_map.get(wh_id, {})
+        
         score = 0
         fully_fulfillable = True
         
@@ -72,39 +92,24 @@ def find_best_warehouse_for_items(order_items, customer_location=None):
             
             avail = stock_map.get(req_sku, 0)
             if avail >= req_qty:
-                score += 100 # Base score for fulfillment
+                score += 100
             else:
                 fully_fulfillable = False
         
-        # Bonus for full fulfillment
         if fully_fulfillable:
             score += 1000
 
-        # FIX: Distance Penalty
-        if customer_location and wh_locations.get(wh_id):
-            try:
-                # Ensure customer_location is a Point
-                if isinstance(customer_location, (tuple, list)):
-                    pnt = Point(float(customer_location[1]), float(customer_location[0]), srid=4326)
-                else:
-                    pnt = customer_location
-                
-                wh_pnt = wh_locations[wh_id]
-                if wh_pnt and pnt:
-                    dist_km = wh_pnt.distance(pnt) * 100 # Approx degree to KM factor or use .distance().km if projected
-                    # Heuristic: Subtract 1 point per km
-                    score -= dist_km
-            except Exception:
-                pass # Fallback to availability only
+        # Apply Distance Penalty (if applicable)
+        # 1km = 100 points penalty
+        if hasattr(wh, 'distance') and wh.distance is not None:
+             # distance object .km attribute
+             score -= (wh.distance.km * 100)
 
         if score > best_score:
             best_score = score
-            best_wh_id = wh_id
+            best_wh = wh
 
-    if best_wh_id:
-        return Warehouse.objects.get(id=best_wh_id)
-    
-    return None
+    return best_wh
 
 
 def batch_check_and_lock_inventory(warehouse_id, items_list):

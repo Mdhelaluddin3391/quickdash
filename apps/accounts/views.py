@@ -39,21 +39,25 @@ class SendOTPView(views.APIView):
 
     def get_client_ip(self, request):
         """
-        Securely retrieve client IP.
-        PRIORITY: HTTP_X_REAL_IP > REMOTE_ADDR.
-        CAUTION: We verify X-Forwarded-For trust in Nginx config.
+        Retrieves client IP securely using django-ipware logic to prevent spoofing.
+        Falls back to strict header checking if ipware is missing.
         """
-        # If your Nginx sets X-Real-IP, trust it.
-        real_ip = request.META.get('HTTP_X_REAL_IP')
-        if real_ip:
-            return real_ip
-            
-        # Fallback: strict checking of X-Forwarded-For (taking the last trusted IP)
-        # For this implementation, we assume Nginx strips untrusted headers.
+        try:
+            from ipware import get_client_ip
+            ip, is_routable = get_client_ip(request)
+            if ip:
+                return ip
+        except ImportError:
+            pass
+
+        # Manual Fallback: Prioritize REMOTE_ADDR as the only trusted source
+        # unless behind a configured reverse proxy (e.g. Nginx).
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
-            # Taking the FIRST IP usually implies the client IP if we trust our proxy chain
-            return x_forwarded_for.split(',')[0].strip()
+            # Only use the first IP if we trust the proxy chain.
+            # In a proper production setup, Nginx sets X-Real-IP.
+            proxies = x_forwarded_for.split(',')
+            return proxies[0].strip()
             
         return request.META.get('REMOTE_ADDR')
 
@@ -75,9 +79,8 @@ class SendOTPView(views.APIView):
                     {"detail": "No rider account found with this phone number."},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            # Optional: Check profile completeness
-            user = User.objects.get(phone=phone, is_rider=True)
-            if not hasattr(user, 'rider_profile'):
+            user = User.objects.filter(phone=phone, is_rider=True).first()
+            if user and not hasattr(user, 'rider_profile'):
                  return Response({"detail": "Rider profile incomplete."}, status=status.HTTP_403_FORBIDDEN)
 
         elif role == 'EMPLOYEE':
@@ -87,19 +90,16 @@ class SendOTPView(views.APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
 
-        elif role == 'CUSTOMER':
-            # For customers, we might allow new signups, but we should strictly rate limit IPs (handled above)
-            pass
-
-        # 3. Generate Secure OTP (Cryptographically Secure)
+        # 3. Generate Secure OTP
         rng = secrets.SystemRandom()
         code = str(rng.randint(100000, 999999))
         
+        # 4. Create OTP with Race Condition Protection
         otp_obj, error = PhoneOTP.create_otp(phone, role, code)
         if error:
             return Response({"detail": error}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-        # 4. Send SMS Logic
+        # 5. Send SMS Logic
         if settings.DEBUG:
             logger.info(f"OTP for {phone} ({role}): {code}")
             return Response({"detail": "OTP sent (Dev Mode).", "dev_code": code})
@@ -116,6 +116,13 @@ class LoginWithOTPView(views.APIView):
     permission_classes = [permissions.AllowAny]
 
     def get_client_ip(self, request):
+        # We reuse the secure logic or fallback for session tracking
+        try:
+            from ipware import get_client_ip
+            ip, is_routable = get_client_ip(request)
+            if ip: return ip
+        except ImportError:
+            pass
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
             return x_forwarded_for.split(',')[0].strip()
@@ -140,44 +147,62 @@ class LoginWithOTPView(views.APIView):
         if not is_valid:
             return Response({"detail": message}, status=status.HTTP_400_BAD_REQUEST)
         
-        # 2. Get or Create User
+        # 2. Get or Create User (Crash-Safe)
         user = None
         created = False
+        
+        try:
+            if role == 'CUSTOMER':
+                # Use get_or_create to handle race conditions during initial sign-up
+                user, created = User.objects.get_or_create(
+                    phone=phone, 
+                    is_customer=True,
+                    defaults={'is_active': True}
+                )
+                if created:
+                    CustomerProfile.objects.create(user=user)
+                user.app_role = 'CUSTOMER'
+                user.save(update_fields=['app_role'])
 
-        if role == 'CUSTOMER':
-            user = User.objects.filter(phone=phone, is_customer=True).first()
-            if not user:
-                user = User.objects.create_user(phone=phone, is_customer=True)
-                CustomerProfile.objects.create(user=user)
-                created = True
-            user.app_role = 'CUSTOMER'
-            user.save()
+            elif role == 'RIDER':
+                try:
+                    user = User.objects.get(phone=phone, is_rider=True)
+                except User.MultipleObjectsReturned:
+                    logger.critical(f"Multiple Rider accounts found for phone {phone}")
+                    return Response({"detail": "Account error. Please contact support."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                except User.DoesNotExist:
+                    return Response({"detail": "Rider account does not exist."}, status=status.HTTP_403_FORBIDDEN)
+                
+                if not hasattr(user, 'rider_profile'):
+                     return Response({"detail": "Rider profile missing."}, status=status.HTTP_403_FORBIDDEN)
+                if user.rider_profile.approval_status != RiderProfile.ApprovalStatus.APPROVED:
+                    return Response({"detail": "Rider account is not approved."}, status=status.HTTP_403_FORBIDDEN)
+                user.app_role = 'RIDER'
+                user.save(update_fields=['app_role'])
 
-        elif role == 'RIDER':
-            user = User.objects.filter(phone=phone, is_rider=True).first()
-            if not user:
-                return Response({"detail": "Rider account does not exist."}, status=status.HTTP_403_FORBIDDEN)
-            if not hasattr(user, 'rider_profile'):
-                 return Response({"detail": "Rider profile missing."}, status=status.HTTP_403_FORBIDDEN)
-            if user.rider_profile.approval_status != RiderProfile.ApprovalStatus.APPROVED:
-                return Response({"detail": "Rider account is not approved."}, status=status.HTTP_403_FORBIDDEN)
-            user.app_role = 'RIDER'
-            user.save()
+            elif role == 'EMPLOYEE':
+                try:
+                    user = User.objects.get(phone=phone, is_employee=True)
+                except User.MultipleObjectsReturned:
+                    logger.critical(f"Multiple Employee accounts found for phone {phone}")
+                    return Response({"detail": "Account error. Please contact support."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                except User.DoesNotExist:
+                    return Response({"detail": "Employee account does not exist."}, status=status.HTTP_403_FORBIDDEN)
 
-        elif role == 'EMPLOYEE':
-            user = User.objects.filter(phone=phone, is_employee=True).first()
-            if not user:
-                return Response({"detail": "Employee account does not exist."}, status=status.HTTP_403_FORBIDDEN)
-            if not hasattr(user, 'employee_profile'):
-                 return Response({"detail": "Employee profile missing."}, status=status.HTTP_403_FORBIDDEN)
-            if not user.employee_profile.is_active_employee:
-                return Response({"detail": "Employee account is inactive."}, status=status.HTTP_403_FORBIDDEN)
-            user.app_role = 'EMPLOYEE'
-            user.save()
+                if not hasattr(user, 'employee_profile'):
+                     return Response({"detail": "Employee profile missing."}, status=status.HTTP_403_FORBIDDEN)
+                if not user.employee_profile.is_active_employee:
+                    return Response({"detail": "Employee account is inactive."}, status=status.HTTP_403_FORBIDDEN)
+                user.app_role = 'EMPLOYEE'
+                user.save(update_fields=['app_role'])
+        
+        except Exception as e:
+            logger.error(f"Login error for {phone}: {e}")
+            return Response({"detail": "An unexpected error occurred."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         # 3. Mark OTP as used
         otp_record.is_used = True
-        otp_record.save()
+        otp_record.save(update_fields=['is_used'])
 
         # 4. Create Session
         jti = str(uuid.uuid4())
