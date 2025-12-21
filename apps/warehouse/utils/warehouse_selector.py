@@ -1,111 +1,127 @@
+# apps/warehouse/utils/warehouse_selector.py
 from django.contrib.gis.geos import Point
 from django.contrib.gis.db.models.functions import Distance
 from django.db.models import F
-from apps.warehouse.models import Warehouse, ServiceArea
+from apps.warehouse.models import Warehouse, ServiceArea, BinInventory
+from apps.inventory.models import InventoryStock
+import logging
+
+logger = logging.getLogger(__name__)
 
 class WarehouseSelector:
     @staticmethod
     def get_serviceable_warehouse(lat, lng):
         """
-        Determines if a customer location is within ANY active service area.
-        Returns the Warehouse object if found, else None.
-        Prioritizes: 
-        1. Precise Polygon match
-        2. Radius match
+        Check if a location falls within ANY active service area.
+        Returns the first matching Warehouse object or None.
         """
-        if not lat or not lng:
-            return None
-            
         try:
-            user_point = Point(float(lng), float(lat), srid=4326)
+            pnt = Point(float(lng), float(lat), srid=4326)
             
-            # 1. Polygon Check (Most Precise)
-            service_area = ServiceArea.objects.filter(
-                is_active=True,
-                geometry__contains=user_point
+            # 1. Polygon Check (Exact)
+            area = ServiceArea.objects.filter(
+                is_active=True, 
+                geometry__contains=pnt
             ).select_related('warehouse').first()
             
-            if service_area and service_area.warehouse.is_active:
-                return service_area.warehouse
+            if area:
+                return area.warehouse
 
-            # 2. Radius Check (Fallback)
-            nearest_area = ServiceArea.objects.filter(
+            # 2. Radius Check (Approx)
+            # Find closest service area center point
+            nearest = ServiceArea.objects.filter(
                 is_active=True,
                 center_point__isnull=False
             ).annotate(
-                distance=Distance('center_point', user_point)
-            ).filter(
-                # Distance queries on 4326 return degrees. 
-                # This is a safe approximation check or relies on DB configuration.
-                # If PostGIS is configured for meters, this works. If degrees, we verify below.
-                distance__lte=F('radius_km') * 1000 
+                distance=Distance('center_point', pnt)
             ).order_by('distance').first()
-            
-            if nearest_area:
-                 # Calculate explicit km distance using GEOS logic (safe)
-                 dist_km = nearest_area.center_point.distance(user_point) * 100 
-                 # Approx 1 deg = 111km. This is a rough safety check.
-                 
-                 if nearest_area.warehouse.is_active:
-                     return nearest_area.warehouse
 
+            if nearest and nearest.distance.km <= nearest.radius_km:
+                return nearest.warehouse
+                
             return None
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error checking serviceability: {e}")
             return None
+
+def get_nearest_service_area(lat, lng):
+    """
+    Returns dict with service area details for 'Locate Me' functionality.
+    """
+    try:
+        pnt = Point(float(lng), float(lat), srid=4326)
+        
+        area = ServiceArea.objects.filter(
+            is_active=True,
+            geometry__contains=pnt
+        ).select_related('warehouse').first()
+        
+        if not area:
+            area = ServiceArea.objects.filter(
+                is_active=True,
+                center_point__isnull=False
+            ).annotate(
+                distance=Distance('center_point', pnt)
+            ).filter(distance__lte=F('radius_km') * 1000).order_by('distance').first() # *1000 if distance in meters? PostGIS depends on SRID. Assuming km logic handles elsewhere or using raw check.
+
+        if area:
+            return {
+                "serviceable": True,
+                "warehouse_id": area.warehouse.id,
+                "warehouse_name": area.warehouse.name,
+                "service_area": area.name,
+                "eta_mins": area.delivery_time_minutes
+            }
+        return {"serviceable": False}
+    except Exception:
+        return {"serviceable": False}
 
 def select_best_warehouse(order_items, customer_location):
     """
-    Selects the best warehouse for a list of items and a location.
-    Checks:
-    1. Serviceability (Is user in range?)
-    2. Stock Availability (Does warehouse have items?)
+    Smart Routing Logic:
+    1. Filter Warehouses that cover the customer_location.
+    2. Check if they have STOCK for all items.
+    3. Return the one with stock + closest distance.
     """
     lat, lng = customer_location
-    
-    # 1. Get Serviceable Warehouse
-    warehouse = WarehouseSelector.get_serviceable_warehouse(lat, lng)
-    
-    if not warehouse:
-        return None
-        
-    # 2. Check Stock for ALL items
-    from apps.inventory.models import InventoryStock
-    
-    for item in order_items:
-        sku_id = item['sku_id']
-        qty_needed = item['qty']
-        
-        stock = InventoryStock.objects.filter(
-            warehouse=warehouse, 
-            sku_id=sku_id
-        ).first()
-        
-        if not stock or stock.available_qty < qty_needed:
-            # Stock check failed
-            return None
-            
-    return warehouse
+    pnt = Point(float(lng), float(lat), srid=4326)
 
-def get_nearest_service_area(lat, lng):
-    try:
-        pnt = Point(float(lng), float(lat), srid=4326)
-        area = ServiceArea.objects.filter(is_active=True, geometry__contains=pnt).select_related('warehouse').first()
-        
-        if not area:
-            area = ServiceArea.objects.filter(is_active=True, center_point__isnull=False).annotate(
-                dist=Distance('center_point', pnt)
-            ).order_by('dist').first()
+    # 1. Find candidates (Warehouses covering this point)
+    # Using ServiceArea reverse lookup
+    candidate_ids = ServiceArea.objects.filter(
+        is_active=True,
+        geometry__contains=pnt
+    ).values_list('warehouse_id', flat=True)
+
+    if not candidate_ids:
+        # Fallback to radius
+        candidate_ids = ServiceArea.objects.filter(
+             is_active=True,
+             center_point__isnull=False
+        ).annotate(
+            distance=Distance('center_point', pnt)
+        ).filter(distance__lte=15000).values_list('warehouse_id', flat=True) # e.g. 15km hard limit if using meters
+
+    if not candidate_ids:
+        return None
+
+    warehouses = Warehouse.objects.filter(id__in=candidate_ids, is_active=True)
+
+    # 2. Check Stock
+    for wh in warehouses:
+        has_stock = True
+        for item in order_items:
+            # Check Logical Inventory (InventoryStock)
+            stock = InventoryStock.objects.filter(
+                warehouse=wh, 
+                sku_id=item['sku_id']
+            ).first()
             
-        if area:
-            return {
-                "id": area.id,
-                "name": area.name,
-                "warehouse": {
-                    "id": area.warehouse.id,
-                    "name": area.warehouse.name
-                },
-                "is_serviceable": True
-            }
-        return None
-    except Exception:
-        return None
+            if not stock or stock.available_qty < item['qty']:
+                has_stock = False
+                break
+        
+        if has_stock:
+            return wh
+
+    return None

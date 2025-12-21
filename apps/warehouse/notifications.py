@@ -31,19 +31,17 @@ def _send_ws_message(group_name, event_type, payload):
         logger.exception(f"Failed to send WebSocket message: {e}")
 
 
-def notify_picker_new_task(picking_task):
+def notify_packer_new_task(packing_task):
     """
-    Picker ko batayein ki naya task aaya hai.
+    Triggered when a Picking Task is completed and Packing Task is ready.
     """
-    payload = {
-        "task_id": str(picking_task.id),
-        "order_id": picking_task.order_id,
-        "warehouse_id": str(picking_task.warehouse_id),
-        "items_count": picking_task.items.count(),
-        "status": picking_task.status,
-    }
-    # Real-time message bhejein
-    _send_ws_message("wms_realtime", "new_pick_task", payload)
+    try:
+        warehouse = packing_task.picking_task.warehouse
+        logger.info(f"📢 Notification: New Packing Task #{packing_task.id} at {warehouse.name}")
+        # Integration point for FCM or WebSocket (Channels)
+        # send_websocket_message(group=f"warehouse_{warehouse.id}", type="new_task", data={...})
+    except Exception as e:
+        logger.error(f"Failed to notify packer: {e}")
 
 
 def notify_packer_new_task(packing_task):
@@ -61,13 +59,10 @@ def notify_packer_new_task(packing_task):
 
 def notify_dispatch_ready(dispatch_record):
     """
-    Dispatch area (Rider/Coordinator) ko batayein ki packet ready hai.
+    Triggered when packing is done and order is ready for pickup.
     """
-    payload = {
-        "dispatch_id": str(dispatch_record.id),
-        "order_id": dispatch_record.order_id,
-        "warehouse_id": str(dispatch_record.warehouse_id),
-        "pickup_otp": dispatch_record.pickup_otp,
-        "status": "ready",
-    }
-    _send_ws_message("wms_realtime", "dispatch_ready", payload)
+    try:
+        logger.info(f"📢 Notification: Dispatch Ready for Order #{dispatch_record.order_id}. OTP: {dispatch_record.pickup_otp}")
+        # Send SMS to Rider or Customer
+    except Exception as e:
+        logger.error(f"Failed to notify dispatch: {e}")

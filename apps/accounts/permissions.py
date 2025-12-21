@@ -1,67 +1,32 @@
-from rest_framework.permissions import BasePermission
-from .models import EmployeeProfile
+# apps/accounts/permissions.py
+from rest_framework import permissions
 
-
-class IsCustomer(BasePermission):
+class IsCustomer(permissions.BasePermission):
     def has_permission(self, request, view):
-        user = getattr(request, "user", None)
-        if not user or not user.is_authenticated:
+        return request.user.is_authenticated and getattr(request.user, 'role', '') == 'CUSTOMER'
+
+class WarehouseManagerOnly(permissions.BasePermission):
+    def has_permission(self, request, view):
+        # Assuming EmployeeProfile model links user to role/warehouse
+        if not request.user.is_authenticated:
             return False
-        return hasattr(user, 'customer_profile')
+        profile = getattr(request.user, 'employee_profile', None)
+        return profile and profile.role in ['MANAGER', 'ADMIN']
 
-
-class IsRider(BasePermission):
+class PickerOnly(permissions.BasePermission):
     def has_permission(self, request, view):
-        user = getattr(request, "user", None)
-        if not user or not user.is_authenticated:
+        if not request.user.is_authenticated:
             return False
-        return hasattr(user, 'rider_profile')
+        profile = getattr(request.user, 'employee_profile', None)
+        return profile and profile.role in ['PICKER', 'MANAGER', 'ADMIN']
 
-
-class IsAdmin(BasePermission):
+class PackerOnly(permissions.BasePermission):
     def has_permission(self, request, view):
-        user = getattr(request, "user", None)
-        return bool(user and user.is_authenticated and user.is_staff)
+        if not request.user.is_authenticated:
+            return False
+        profile = getattr(request.user, 'employee_profile', None)
+        return profile and profile.role in ['PACKER', 'MANAGER', 'ADMIN']
 
-
-def _get_employee_role(user):
-    if not user or not user.is_authenticated:
-        return None
-    try:
-        profile = user.employee_profile
-    except EmployeeProfile.DoesNotExist:
-        return None
-    if not profile.is_active_employee:
-        return None
-    return profile.role
-
-
-class IsEmployee(BasePermission):
+class AnyEmployee(permissions.BasePermission):
     def has_permission(self, request, view):
-        return _get_employee_role(request.user) is not None
-
-
-class IsPickerEmployee(BasePermission):
-    def has_permission(self, request, view):
-        return _get_employee_role(request.user) == EmployeeProfile.Role.PICKER
-
-
-class IsPackerEmployee(BasePermission):
-    def has_permission(self, request, view):
-        return _get_employee_role(request.user) == EmployeeProfile.Role.PACKER
-
-
-class IsAuditorEmployee(BasePermission):
-    def has_permission(self, request, view):
-        return _get_employee_role(request.user) == EmployeeProfile.Role.AUDITOR
-
-
-class IsWarehouseManagerEmployee(BasePermission):
-    def has_permission(self, request, view):
-        role = _get_employee_role(request.user)
-        return role in (EmployeeProfile.Role.MANAGER, EmployeeProfile.Role.SUPERVISOR, EmployeeProfile.Role.ADMIN)
-
-
-class IsAdminEmployee(BasePermission):
-    def has_permission(self, request, view):
-        return _get_employee_role(request.user) == EmployeeProfile.Role.ADMIN
+        return request.user.is_authenticated and hasattr(request.user, 'employee_profile')
