@@ -1,37 +1,74 @@
 #!/bin/sh
 set -e
 
-# Define a lock directory for migrations
-MIGRATION_LOCK_DIR="/tmp/django_migrations_lock"
+# Define a lock file for migrations to prevent race conditions in horizontal scaling
+MIGRATION_LOCK_FILE="/tmp/django_migrations.lock"
 
-echo "Waiting for DB..."
+echo "Waiting for Services (DB & Redis)..."
 python << END
-import sys, os, psycopg2, time
+import sys, os, psycopg2, redis, time
 
-# Retry for 30 seconds
+db_host = os.getenv("DB_HOST", "db")
+db_port = os.getenv("DB_PORT", "5432")
+redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
+
+# Retry loop
 for i in range(30):
+    db_ready = False
+    redis_ready = False
+    
+    # Check DB
     try:
         conn = psycopg2.connect(
             dbname=os.getenv("DB_NAME", "quickdash_db"),
             user=os.getenv("DB_USER", "postgres"),
             password=os.getenv("DB_PASSWORD", "postgres"),
-            host=os.getenv("DB_HOST", "db"),
-            port=os.getenv("DB_PORT", "5432")
+            host=db_host,
+            port=db_port
         )
         conn.close()
-        print("DB Connection Successful.")
-        sys.exit(0)
+        db_ready = True
     except Exception as e:
-        print(f"Waiting for DB... ({i}/30) Error: {e}")
-        time.sleep(1)
+        print(f"Waiting for DB... {e}")
 
-print("Could not connect to DB after 30 attempts.")
+    # Check Redis
+    try:
+        r = redis.from_url(redis_url)
+        r.ping()
+        redis_ready = True
+    except Exception as e:
+        print(f"Waiting for Redis... {e}")
+
+    if db_ready and redis_ready:
+        print("All Services Ready.")
+        sys.exit(0)
+    
+    time.sleep(1)
+
+print("Services failed to become ready.")
 sys.exit(1)
 END
 
-# Only one container should run migrations.
-echo "Running Migrations..."
-python manage.py migrate --noinput
+# MIGRATION LOCKING: Only one instance should run migrations
+echo "Acquiring migration lock..."
+python << END
+import sys, fcntl, time, os
+lock_file = "$MIGRATION_LOCK_FILE"
+f = open(lock_file, 'w')
+try:
+    # Exclusive non-blocking lock
+    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    print("Lock acquired. Running migrations...")
+    os.system("python manage.py migrate --noinput")
+    print("Migrations complete.")
+except BlockingIOError:
+    print("Another instance is running migrations. Waiting...")
+    # Wait for lock to be released
+    fcntl.flock(f, fcntl.LOCK_EX)
+    print("Lock released. Proceeding.")
+finally:
+    f.close()
+END
 
 echo "Collecting Static..."
 python manage.py collectstatic --noinput --clear
@@ -42,5 +79,4 @@ if [ "$CREATE_SUPERUSER" = "true" ]; then
 fi
 
 echo "Starting Daphne..."
-# Use 0.0.0.0 for Docker networking
 exec daphne -b 0.0.0.0 -p 8000 config.asgi:application

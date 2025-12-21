@@ -8,7 +8,10 @@ from decimal import Decimal
 import dj_database_url
 from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
-
+import sentry_sdk
+from sentry_sdk.integrations.django import DjangoIntegration
+from sentry_sdk.integrations.celery import CeleryIntegration
+from sentry_sdk.integrations.redis import RedisIntegration
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # ==========================================
@@ -46,6 +49,12 @@ else:
     SESSION_COOKIE_SECURE = False
     CSRF_COOKIE_SECURE = False
 
+
+ADMIN_URL = config("ADMIN_URL", default="admin/") 
+
+# FIX: Upload Size Limits (DoS Protection)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
 # ==========================================
 # APPLICATION DEFINITION
 # ==========================================
@@ -309,6 +318,24 @@ DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default=EMAIL_HOST_USER)
 # ==========================================
 # LOGGING
 # ==========================================
+
+SENTRY_DSN = config("SENTRY_DSN", default=None)
+
+if SENTRY_DSN and not DEBUG:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[
+            DjangoIntegration(),
+            CeleryIntegration(),
+            RedisIntegration(),
+        ],
+        traces_sample_rate=0.1,  # Performance monitoring (10%)
+        send_default_pii=False,
+    )
+
+
+
+    
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

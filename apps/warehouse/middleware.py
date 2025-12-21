@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 IDEMPOTENCY_HEADER = "HTTP_IDEMPOTENCY_KEY"
 MAX_REQUEST_BODY_SIZE = 2 * 1024 * 1024  # 2MB Limit for Idempotency
 ALLOWED_CONTENT_TYPES = {"application/json"}
-LOCK_TIMEOUT = 30  # Seconds to hold lock while processing
+LOCK_TIMEOUT = 60  # Increased for production safety (DB latency buffer)
 
 class IdempotencyMiddleware(MiddlewareMixin):
     def process_request(self, request):
@@ -36,7 +36,10 @@ class IdempotencyMiddleware(MiddlewareMixin):
 
         # 2. Concurrency Lock (Redis) - PREVENTS RACE CONDITIONS
         lock_key = f"idemp_lock:{key}"
-        if not cache.add(lock_key, "1", timeout=LOCK_TIMEOUT):
+        # Store a unique identifier for this specific request thread (Timestamp is sufficient for unique-per-request context)
+        request_id = str(timezone.now().timestamp())
+
+        if not cache.add(lock_key, request_id, timeout=LOCK_TIMEOUT):
             return JsonResponse(
                 {"detail": "Request is currently being processed. Please wait."},
                 status=409 # Conflict
@@ -55,6 +58,7 @@ class IdempotencyMiddleware(MiddlewareMixin):
             rec = IdempotencyKey.objects.filter(key=key).first()
             if rec and not rec.is_expired():
                 # Release lock immediately if we have a cached response
+                # (We own the lock we just set, so we can delete it safely)
                 cache.delete(lock_key)
 
                 # Hash check ensures we don't return cached response for a DIFFERENT body with same key
@@ -70,15 +74,21 @@ class IdempotencyMiddleware(MiddlewareMixin):
         request._idempotency_key = key
         request._idempotency_request_hash = h
         request._idempotency_lock_key = lock_key
+        request._idempotency_req_id = request_id  # Track this ID for safe release
         return None
 
     def process_response(self, request, response):
         key = getattr(request, "_idempotency_key", None)
         lock_key = getattr(request, "_idempotency_lock_key", None)
+        req_id = getattr(request, "_idempotency_req_id", None)
         
-        # Always release the lock when request finishes
-        if lock_key:
-            cache.delete(lock_key)
+        # FIX: Only release the lock if WE own it
+        # This prevents deleting a lock that might have been re-acquired by a retry
+        # if this request took longer than LOCK_TIMEOUT.
+        if lock_key and req_id:
+            current_lock = cache.get(lock_key)
+            if current_lock == req_id:
+                cache.delete(lock_key)
 
         if not key:
             return response

@@ -6,9 +6,14 @@ from django.views.generic import TemplateView
 from django.conf import settings
 from django.conf.urls.static import static
 
+# FIX: Security Hardening
+# Ensure ADMIN_URL does not start with a slash for path() and has a trailing slash
+# Example: If settings.ADMIN_URL is "secret-admin", this becomes "secret-admin/"
+admin_url = settings.ADMIN_URL.strip("/") + "/"
+
 urlpatterns = [
-    # --- Admin Panels ---
-    path("admin/", admin.site.urls),
+    # --- Admin Panels (HARDENED) ---
+    path(admin_url, admin.site.urls),
     path("admin-panel/", include("apps.web_admin.urls")),
 
     # --- APIs ---
@@ -23,46 +28,40 @@ urlpatterns = [
     path("api/v1/notifications/", include("apps.notifications.urls")),
     path("api/v1/utils/", include("apps.utils.urls")),
 
-    # --- Frontend Pages (Mapped to NEW Structure) ---
-
-    # 1. Home
+    # --- Frontend Pages ---
     path("", TemplateView.as_view(template_name="frontend/index.html"), name="home"),
     path("index.html", TemplateView.as_view(template_name="frontend/index.html")),
-
-    # 2. Auth
     path("auth.html", TemplateView.as_view(template_name="frontend/auth/login.html"), name="auth"),
-
-    # 3. Catalog & Products
+    
+    # Catalog
     path("category.html", TemplateView.as_view(template_name="frontend/catalog/category_list.html"), name="category"),
-    # Category Detail & Search both use Product List
     path("category_detail.html", TemplateView.as_view(template_name="frontend/catalog/product_list.html"), name="category-detail"),
     path("search_results.html", TemplateView.as_view(template_name="frontend/catalog/product_list.html"), name="search"),
     path("product.html", TemplateView.as_view(template_name="frontend/catalog/product_detail.html"), name="product"),
 
-    # 4. Checkout Flow
+    # Checkout
     path("cart.html", TemplateView.as_view(template_name="frontend/checkout/cart.html"), name="cart"),
     path("checkout.html", TemplateView.as_view(template_name="frontend/checkout/checkout.html"), name="checkout"),
     path("order_success.html", TemplateView.as_view(template_name="frontend/checkout/success.html"), name="order-success"),
 
-    # 5. User Account
-    # Profile URL maps to Dashboard template
+    # User Account
     path("profile.html", TemplateView.as_view(template_name="frontend/account/dashboard.html"), name="profile"),
     path("orders.html", TemplateView.as_view(template_name="frontend/account/orders.html"), name="orders"),
     path("order_detail.html", TemplateView.as_view(template_name="frontend/account/order_detail.html"), name="order-detail"),
     path("addresses.html", TemplateView.as_view(template_name="frontend/account/addresses.html"), name="addresses"),
     path("track_order.html", TemplateView.as_view(template_name="frontend/account/track_order.html"), name="track-order"),
 
-    # 6. Support & Utility
+    # Support
     path("support.html", TemplateView.as_view(template_name="frontend/support/help_center.html"), name="support"),
     path("support_chat.html", TemplateView.as_view(template_name="frontend/support/chat.html"), name="support-chat"),
     
-    # Errors & Permissions
+    # Errors
     path("location_denied.html", TemplateView.as_view(template_name="frontend/pages/location_permission.html"), name="location-denied"),
     path("404.html", TemplateView.as_view(template_name="frontend/pages/404.html"), name="not-found"),
     path("service-unavailable.html", TemplateView.as_view(template_name="frontend/pages/not_serviceable.html"), name="not-serviceable"),
 ]
 
-# FIX: Serve media files in development so images don't break
+# Serve media files in development
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
