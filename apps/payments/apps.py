@@ -1,14 +1,10 @@
-# apps/payments/apps.py
 from django.apps import AppConfig
-import logging
-
 
 class PaymentsConfig(AppConfig):
-    default_auto_field = "django.db.models.BigAutoField"
-    name = "apps.payments"
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'apps.payments'
 
     def ready(self):
-        try:
-            import apps.payments.receivers  # noqa
-        except ImportError as e:
-            logging.error(f"Failed to load payments receivers: {e}")
+        # Signal receivers for side-effects (e.g. sending email receipt)
+        # Note: Core money logic is in services.py, not signals.
+        import apps.payments.receivers

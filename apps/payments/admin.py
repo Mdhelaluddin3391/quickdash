@@ -1,51 +1,20 @@
-# apps/payments/admin.py
 from django.contrib import admin
-from .models import Payment, PaymentIntent, Refund
-
+from .models import Payment, PaymentIntent, WebhookLog
 
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
-    list_display = (
-        "id",
-        "order",
-        "user",
-        "payment_method",
-        "amount",
-        "currency",
-        "status",
-        "transaction_id",
-        "gateway_order_id",
-        "created_at",
-    )
-    list_filter = ("payment_method", "status", "created_at")
-    search_fields = ("order__id", "transaction_id", "gateway_order_id")
-
+    list_display = ('transaction_id', 'order', 'amount', 'status', 'method', 'created_at')
+    list_filter = ('status', 'method', 'created_at')
+    search_fields = ('transaction_id', 'order__id')
+    readonly_fields = ('gateway_response',)
 
 @admin.register(PaymentIntent)
 class PaymentIntentAdmin(admin.ModelAdmin):
-    list_display = (
-        "id",
-        "order",
-        "gateway_order_id",
-        "amount",
-        "currency",
-        "status",
-        "created_at",
-    )
-    list_filter = ("status", "created_at")
-    search_fields = ("gateway_order_id", "order__id")
+    list_display = ('gateway_order_id', 'order', 'amount', 'status')
+    search_fields = ('gateway_order_id', 'order__id')
 
-
-@admin.register(Refund)
-class RefundAdmin(admin.ModelAdmin):
-    list_display = (
-        "id",
-        "payment",
-        "order",
-        "amount",
-        "status",
-        "gateway_refund_id",
-        "created_at",
-    )
-    list_filter = ("status", "created_at")
-    search_fields = ("id", "payment__gateway_order_id", "gateway_refund_id")
+@admin.register(WebhookLog)
+class WebhookLogAdmin(admin.ModelAdmin):
+    list_display = ('event_id', 'provider', 'is_processed', 'created_at')
+    list_filter = ('is_processed', 'created_at')
+    readonly_fields = ('payload',)

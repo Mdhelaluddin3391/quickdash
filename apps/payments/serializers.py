@@ -1,11 +1,18 @@
 from rest_framework import serializers
-from .models import Transaction
+from .models import Payment, PaymentIntent, PaymentMethod
 
-class InitiatePaymentSerializer(serializers.Serializer):
+class CreatePaymentIntentSerializer(serializers.Serializer):
     order_id = serializers.UUIDField()
-    method = serializers.CharField(max_length=20)
+    payment_method = serializers.ChoiceField(choices=PaymentMethod.choices)
 
-class TransactionSerializer(serializers.ModelSerializer):
+class PaymentIntentSerializer(serializers.ModelSerializer):
+    key_id = serializers.SerializerMethodField()
+
     class Meta:
-        model = Transaction
-        fields = ['id', 'amount', 'status', 'provider_order_id', 'created_at']
+        model = PaymentIntent
+        fields = ['id', 'gateway_order_id', 'amount', 'currency', 'status', 'key_id']
+
+    def get_key_id(self, obj):
+        # Return public key for frontend SDK
+        from django.conf import settings
+        return settings.RAZORPAY_KEY_ID

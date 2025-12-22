@@ -1,138 +1,191 @@
+import razorpay
+import logging
 import hmac
 import hashlib
+from decimal import Decimal
 from django.conf import settings
 from django.db import transaction
-from .models import Transaction, TransactionStatus, PaymentMethod
-from apps.orders.services import OrderService
+from django.core.exceptions import ValidationError
+
+from apps.orders.models import Order
+from apps.orders.services import OrderService  # Explicit Cross-App Import
 from apps.utils.exceptions import BusinessLogicException
+from .models import Payment, PaymentIntent, PaymentStatus, PaymentMethod, WebhookLog
+
+logger = logging.getLogger(__name__)
 
 class PaymentService:
+    """
+    Service to handle Payment Lifecycle.
+    """
     
     @staticmethod
-    def initiate_payment(order, method):
-        """
-        Creates a transaction record and talks to Provider API (Mocked for V2 base).
-        """
-        if method not in PaymentMethod.values:
-            raise BusinessLogicException("Invalid payment method")
-            
-        txn = Transaction.objects.create(
-            order=order,
-            user=order.user,
-            amount=order.total_amount,
-            payment_method=method,
-            status=TransactionStatus.INITIATED
-        )
-        
-        # Mocking Provider Interaction
-        # In real world: client = razorpay.Client(...)
-        # provider_order = client.order.create(...)
-        provider_order_id = f"ord_{txn.id}" 
-        
-        txn.provider_order_id = provider_order_id
-        txn.save()
-        
-        return {
-            "transaction_id": txn.id,
-            "provider_order_id": provider_order_id,
-            "amount": txn.amount,
-            "key": settings.PAYMENT_GATEWAY_KEY_ID # from .env
-        }
+    def get_provider_client():
+        return razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
     @staticmethod
-    def verify_webhook_signature(payload_body, signature, secret):
+    def create_intent(user, order_id: str, method: str) -> PaymentIntent:
         """
-        Standard HMAC-SHA256 verification.
-        """
-        generated_signature = hmac.new(
-            bytes(secret, 'utf-8'),
-            bytes(payload_body, 'utf-8'),
-            hashlib.sha256
-        ).hexdigest()
-        
-        return hmac.compare_digest(generated_signature, signature)
-
-    @staticmethod
-    def process_webhook_success(provider_payment_id, provider_order_id, signature):
-        """
-        Idempotent handler for success callbacks.
+        Creates a payment order on the Gateway and a PaymentIntent locally.
         """
         try:
-            txn = Transaction.objects.get(provider_order_id=provider_order_id)
-        except Transaction.DoesNotExist:
-            raise BusinessLogicException("Transaction not found for this provider order")
-            
-        # Idempotency Check
-        if txn.status == TransactionStatus.SUCCESS:
-            return txn
-            
+            order = Order.objects.get(id=order_id, user=user)
+        except Order.DoesNotExist:
+            raise ValidationError("Order not found.")
+
+        if order.status != "CREATED": # Assuming 'CREATED' is the pending state
+            raise BusinessLogicException(f"Order is not in a payable state: {order.status}")
+
+        if method == PaymentMethod.COD:
+            # COD doesn't need a gateway intent, handled directly in OrderService usually,
+            # but if we track it here:
+            return PaymentService._handle_cod_intent(order, user)
+
+        # 1. Call Gateway
+        client = PaymentService.get_provider_client()
+        amount_paise = int(order.total_amount * 100)
+        
+        try:
+            provider_order = client.order.create({
+                "amount": amount_paise,
+                "currency": "INR",
+                "receipt": str(order.id),
+                "payment_capture": 1 
+            })
+        except Exception as e:
+            logger.error(f"Razorpay Order Create Failed: {e}")
+            raise BusinessLogicException("Payment Gateway Error")
+
+        # 2. Store Intent
         with transaction.atomic():
-            # 1. Update Transaction
-            txn.status = TransactionStatus.SUCCESS
-            txn.provider_payment_id = provider_payment_id
-            txn.provider_signature = signature
-            txn.save()
-            
-            # 2. Update Order (Cross-App Call)
-            OrderService.mark_order_as_paid(
-                order_id=txn.order.id,
-                payment_id=provider_payment_id
+            intent = PaymentIntent.objects.create(
+                order=order,
+                user=user,
+                amount=order.total_amount,
+                currency="INR",
+                gateway_order_id=provider_order['id'],
+                status=PaymentStatus.PENDING,
+                metadata=provider_order
             )
-            
-        return txn
-
-from decimal import Decimal
-from apps.orders.models import Order, OrderItem
-from django.db import transaction
-
-class RefundService:
-    @staticmethod
-    def calculate_refund_amount(order_item: OrderItem) -> Decimal:
-        """
-        Calculates the exact refund amount, accounting for:
-        1. Item Price
-        2. Proportional Discount (Coupon split across items)
-        3. Tax adjustments (if applicable)
-        """
-        order = order_item.order
         
-        # 1. Base amount paid for this line item
-        line_total = order_item.price_at_booking * order_item.quantity
-        
-        # 2. If no discount exists, return full amount
-        if order.discount_amount <= 0:
-            return line_total
-            
-        # 3. Calculate this item's weight in the total order value (before discount)
-        # Avoid division by zero
-        if order.total_amount_gross == 0:
-            return Decimal('0.00')
-            
-        item_weight = line_total / order.total_amount_gross
-        
-        # 4. Calculate share of discount
-        item_discount_share = order.discount_amount * item_weight
-        
-        # 5. Final Refundable Amount
-        refundable_amount = line_total - item_discount_share
-        
-        return round(refundable_amount, 2)
+        logger.info(f"Payment Intent Created: {intent.id} for Order: {order.id}")
+        return intent
 
     @staticmethod
-    @transaction.atomic
-    def process_item_refund(order_item_id):
-        item = OrderItem.objects.select_for_update().get(id=order_item_id)
+    def verify_webhook_signature(body: str, signature: str) -> bool:
+        """
+        Strict Signature Verification.
+        """
+        try:
+            client = PaymentService.get_provider_client()
+            client.utility.verify_webhook_signature(
+                body, signature, settings.RAZORPAY_WEBHOOK_SECRET
+            )
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def process_webhook(event_data: dict):
+        """
+        Idempotent Webhook Processor.
+        Handles: payment.captured, payment.failed
+        """
+        event_id = event_data.get('account_id', '') + "_" + event_data.get('event', '') + "_" + event_data.get('payload', {}).get('payment', {}).get('entity', {}).get('id', '')
         
-        if item.status == 'REFUNDED':
-            raise ValueError("Item already refunded")
-            
-        refund_amount = RefundService.calculate_refund_amount(item)
+        # 1. Idempotency Check
+        if WebhookLog.objects.filter(event_id=event_id, is_processed=True).exists():
+            logger.info(f"Skipping duplicate webhook event: {event_id}")
+            return
+
+        event_type = event_data.get('event')
+        payload = event_data.get('payload', {}).get('payment', {}).get('entity', {})
         
-        # ... Trigger Payment Gateway Refund (Razorpay/Stripe) ...
-        # payment_gateway.refund(order.payment_id, amount=refund_amount)
+        gateway_order_id = payload.get('order_id')
+        transaction_id = payload.get('id')
         
-        item.status = 'REFUNDED'
-        item.refunded_amount = refund_amount
-        item.save()
+        logger.info(f"Processing Webhook: {event_type} for Order: {gateway_order_id}")
+
+        with transaction.atomic():
+            # Log receipt
+            webhook_log = WebhookLog.objects.create(
+                event_id=event_id,
+                payload=event_data,
+                is_processed=False
+            )
+
+            try:
+                # Find Intent
+                intent = PaymentIntent.objects.select_for_update().get(gateway_order_id=gateway_order_id)
+                
+                if event_type == 'payment.captured':
+                    PaymentService._handle_success(intent, payload, transaction_id)
+                elif event_type == 'payment.failed':
+                    PaymentService._handle_failure(intent, payload, transaction_id)
+                
+                # Mark processed
+                webhook_log.is_processed = True
+                webhook_log.save()
+
+            except PaymentIntent.DoesNotExist:
+                logger.error(f"PaymentIntent not found for gateway_order_id: {gateway_order_id}")
+                # We do not rollback the log, so we don't retry forever on invalid data
+                webhook_log.is_processed = True 
+                webhook_log.save()
+
+    @staticmethod
+    def _handle_success(intent: PaymentIntent, payload: dict, txn_id: str):
+        # 1. Create Payment Record
+        payment, created = Payment.objects.get_or_create(
+            transaction_id=txn_id,
+            defaults={
+                'order': intent.order,
+                'user': intent.user,
+                'payment_intent': intent,
+                'amount': Decimal(payload.get('amount', 0)) / 100,
+                'currency': payload.get('currency', 'INR'),
+                'method': PaymentMethod.RAZORPAY,
+                'status': PaymentStatus.SUCCESS,
+                'gateway_response': payload
+            }
+        )
         
-        return refund_amount
+        # 2. Update Intent
+        intent.status = PaymentStatus.SUCCESS
+        intent.save()
+
+        # 3. EXPLICIT Service Call to Orders (No Signals for Logic)
+        OrderService.confirm_payment(
+            order_id=str(intent.order.id),
+            payment_id=txn_id
+        )
+        logger.info(f"Order {intent.order.id} confirmed via payment {txn_id}")
+
+    @staticmethod
+    def _handle_failure(intent: PaymentIntent, payload: dict, txn_id: str):
+        Payment.objects.create(
+            order=intent.order,
+            user=intent.user,
+            payment_intent=intent,
+            amount=Decimal(payload.get('amount', 0)) / 100,
+            currency=payload.get('currency', 'INR'),
+            method=PaymentMethod.RAZORPAY,
+            transaction_id=txn_id,
+            status=PaymentStatus.FAILED,
+            gateway_response=payload,
+            error_message=payload.get('error_description', 'Payment Failed')
+        )
+        intent.status = PaymentStatus.FAILED
+        intent.save()
+        logger.info(f"Payment failed for Order {intent.order.id}")
+
+    @staticmethod
+    def _handle_cod_intent(order, user):
+        # Simplified placeholder for COD logic
+        return PaymentIntent.objects.create(
+            order=order,
+            user=user,
+            amount=order.total_amount,
+            gateway_order_id=f"COD-{order.id}", # Internal ID
+            status=PaymentStatus.PENDING
+        )
