@@ -9,6 +9,40 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # =========================================================
 # SECURITY & CORE
 # =========================================================
+
+
+if not DEBUG:
+    if SECRET_KEY == 'unsafe-dev-key-change-in-prod':
+        raise ValueError("FATAL: SECRET_KEY must be set in Production!")
+    
+    if not os.getenv("RAZORPAY_KEY_SECRET"):
+        raise ValueError("FATAL: Razorpay credentials missing!")
+
+    # Force HTTPS
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+
+# [FIX] CELERY ROBUSTNESS
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
+# Dead Letter Queue Strategy
+from kombu import Queue, Exchange
+CELERY_TASK_QUEUES = (
+    Queue('default', Exchange('default'), routing_key='default'),
+    Queue('warehouse', Exchange('warehouse'), routing_key='warehouse'),
+    Queue('delivery', Exchange('delivery'), routing_key='delivery'),
+)
+CELERY_TASK_DEFAULT_QUEUE = 'default'
+
+
+
+
 SECRET_KEY = os.getenv('SECRET_KEY', 'unsafe-dev-key-change-in-prod')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 

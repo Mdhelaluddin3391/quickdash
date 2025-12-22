@@ -182,3 +182,19 @@ class InventoryService:
             created_by=user
         )
         return stock
+
+    @staticmethod
+    def check_high_velocity_stock(product_id: str, qty: int):
+        """
+        [SCALABILITY FIX]
+        Optimistic check in Redis before hitting DB lock.
+        Use this for 'Hot SKUs' to prevent DB pile-up.
+        """
+        cache_key = f"stock_cache:{product_id}"
+        cached_val = cache.get(cache_key)
+        
+        # If cache exists and is insufficient, fail fast
+        if cached_val is not None and int(cached_val) < qty:
+             raise BusinessLogicException("Out of stock (Fast Path)")
+        
+        return True

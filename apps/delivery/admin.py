@@ -1,34 +1,28 @@
 from django.contrib import admin
-from .models import (
-    DeliveryTask, RiderEarning, RiderPayout, 
-    RiderCashDeposit, RiderApplication  # <-- Imported RiderApplication
-)
+from .models import DeliveryJob, RiderEarning, RiderPayout, RiderCashDeposit, RiderApplication
 
-@admin.register(DeliveryTask)
-class DeliveryTaskAdmin(admin.ModelAdmin):
+@admin.register(DeliveryJob)
+class DeliveryJobAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "order",
         "rider",
         "status",
         "created_at",
-        "picked_up_at",
-        "delivered_at",
+        "pickup_time",
+        "completion_time",
     )
     list_filter = ("status", "created_at", "rider")
-    search_fields = ("id", "order__id", "rider__rider_code")
+    search_fields = ("id", "order__id", "rider__user__phone")
 
     readonly_fields = (
         "id",
-        "dispatch_record_id",
         "order",
         "rider",
-        "pickup_otp",
-        "delivery_otp",
         "created_at",
-        "accepted_at",
-        "picked_up_at",
-        "delivered_at",
+        "pickup_time",
+        "completion_time",
+        "distance_meters"
     )
 
     def has_add_permission(self, request):
