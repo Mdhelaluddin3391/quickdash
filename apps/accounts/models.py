@@ -220,7 +220,6 @@ class PhoneOTP(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     @classmethod
-    @classmethod
     def create_otp(cls, phone, login_type, code, ttl_minutes=5):
         now = timezone.now()
         
