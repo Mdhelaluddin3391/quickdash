@@ -1,58 +1,41 @@
+# apps/inventory/views.py
 from rest_framework import viewsets, status
-from rest_framework.response import Response
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from .models import WarehouseInventory
-from .serializers import InventorySerializer
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from apps.utils.permissions import IsStaffOrReadOnly
+
+from .models import InventoryStock
+from .serializers import InventoryStockSerializer
 from .services import InventoryService
-from apps.warehouse.utils.warehouse_selector import get_nearest_warehouse
 
-class StorefrontInventoryViewSet(viewsets.ReadOnlyModelViewSet):
+class InventoryStockViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    API for the Customer App to fetch products available in their area.
+    View for Warehouse Managers/Staff to monitor stock levels.
+    Not for public consumption (Public uses Catalog with Availability check).
     """
-    serializer_class = InventorySerializer
-    permission_classes = [AllowAny]
+    queryset = InventoryStock.objects.all()
+    serializer_class = InventoryStockSerializer
+    permission_classes = [IsAuthenticated, IsStaffOrReadOnly]
+    filterset_fields = ['warehouse_id', 'product__category']
+    search_fields = ['product__name', 'product__sku_code']
 
-    def get_queryset(self):
-        # Requires 'lat' and 'lng' query params
-        lat = self.request.query_params.get('lat')
-        lng = self.request.query_params.get('lng')
-        
-        if not lat or not lng:
-            return WarehouseInventory.objects.none()
-
-        warehouse = get_nearest_warehouse(lat, lng)
-        if not warehouse:
-            return WarehouseInventory.objects.none()
-            
-        return WarehouseInventory.objects.filter(
-            warehouse=warehouse, 
-            is_active=True,  # Assuming product active status propagates or handled in query
-            quantity__gt=0
-        ).select_related('product', 'product__category')
-
-    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
-    def check_stock(self, request):
+    @action(detail=False, methods=['get'])
+    def low_stock(self, request):
         """
-        Bulk check for Cart Validation
+        Report: Items below threshold.
         """
-        items = request.data.get('items', []) # [{'product_id': 1, 'qty': 2}]
-        lat = request.data.get('lat')
-        lng = request.data.get('lng')
-        
-        warehouse = get_nearest_warehouse(lat, lng)
-        if not warehouse:
-             return Response({"error": "No service in this area"}, status=400)
-
-        results = []
-        for item in items:
-            is_available = InventoryService.check_availability(
-                warehouse.id, item['product_id'], item['qty']
-            )
-            results.append({
-                "product_id": item['product_id'],
-                "available": is_available
-            })
+        warehouse_id = request.query_params.get('warehouse_id')
+        if not warehouse_id:
+            return Response({"error": "Warehouse ID required"}, status=400)
             
-        return Response(results)
+        # Using F expression for db-level comparison
+        from django.db.models import F
+        stocks = InventoryStock.objects.filter(
+            warehouse_id=warehouse_id,
+            quantity__lte=F('low_stock_threshold')
+        )
+        
+        page = self.paginate_queryset(stocks)
+        serializer = self.get_serializer(page, many=True)
+        return self.get_paginated_response(serializer.data)
