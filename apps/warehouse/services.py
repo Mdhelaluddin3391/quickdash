@@ -1,107 +1,147 @@
 from django.db import transaction
-from django.db.models import Sum
-from .models import BinInventory, Bin
-from apps.inventory.services import InventoryService
-
-class WarehouseService:
-    
-    @staticmethod
-    def update_bin_inventory(warehouse, bin_code, sku, quantity, change_type='ADD'):
-        """
-        Updates physical bin inventory and explicitly syncs logical inventory.
-        """
-        with transaction.atomic():
-            bin_obj = Bin.objects.get(warehouse=warehouse, code=bin_code)
-            
-            # Update Physical Inventory
-            inventory, created = BinInventory.objects.get_or_create(
-                bin=bin_obj,
-                product__sku=sku,
-                defaults={'quantity': 0}
-            )
-            
-            if change_type == 'ADD':
-                inventory.quantity += quantity
-            elif change_type == 'REMOVE':
-                if inventory.quantity < quantity:
-                    raise ValueError("Insufficient quantity in bin")
-                inventory.quantity -= quantity
-            
-            inventory.save()
-            
-            # --- CRITICAL FIX: EXPLICIT SYNC ---
-            # Replaces the unstable signal/receiver pattern.
-            # We calculate total physical stock for this SKU in this warehouse
-            total_physical = BinInventory.objects.filter(
-                bin__warehouse=warehouse,
-                product__sku=sku
-            ).aggregate(total=Sum('quantity'))['total'] or 0
-            
-            # Explicit call to Inventory Service
-            InventoryService.sync_stock_from_warehouse(
-                product=inventory.product,
-                warehouse=warehouse,
-                total_physical_qty=total_physical
-            )
-            
-            return inventory
-
-
-from django.db import transaction
+from django.utils import timezone
 from django.core.exceptions import ValidationError
-from .models import Bin, Stock
+from django.db.models import Sum
 
-class PutawayService:
-    @staticmethod
-    def calculate_putaway_plan(sku, total_quantity, warehouse):
-        """
-        Distributes stock across multiple bins based on available capacity.
-        Returns a list of (bin, quantity_to_add).
-        """
-        # Get all eligible bins for this SKU or Empty bins, sorted by current load (fill nearly full ones first or empty ones? 
-        # Strategy: Fill mostly full bins first to clear aisles, then empty ones.)
-        eligible_bins = Bin.objects.filter(
-            warehouse=warehouse,
-            is_active=True
-        ).exclude(status='DAMAGED').order_by('-current_load')
+from .models import (
+    Warehouse, Bin, BinInventory, PickingTask, PickItem, DispatchRecord
+)
+from .realtime import broadcast_wms_event
+# Explicit Cross-App Interface
+from apps.inventory.services import InventoryService 
 
-        plan = []
-        remaining_qty = total_quantity
-
-        for bin in eligible_bins:
-            if remaining_qty <= 0:
-                break
-            
-            # Assuming Bin has a 'capacity' field and 'current_load' field
-            available_space = bin.capacity - bin.current_load
-            
-            if available_space > 0:
-                qty_to_fit = min(remaining_qty, available_space)
-                plan.append((bin, qty_to_fit))
-                remaining_qty -= qty_to_fit
-
-        if remaining_qty > 0:
-            raise ValidationError(f"Warehouse Capacity Full! Cannot store {remaining_qty} items of {sku}.")
-            
-        return plan
+class WarehouseOpsService:
 
     @staticmethod
     @transaction.atomic
-    def execute_grn(sku, total_quantity, warehouse):
-        plan = PutawayService.calculate_putaway_plan(sku, total_quantity, warehouse)
+    def reserve_stock_for_order(order_id: str, warehouse_id: int, items: list):
+        """
+        1. Finds best bins for items (FIFO or optimize path).
+        2. Creates PickingTask.
+        3. Updates Logical Inventory via InventoryService.
+        """
+        warehouse = Warehouse.objects.get(id=warehouse_id)
+        task = PickingTask.objects.create(
+            order_id=order_id,
+            warehouse=warehouse,
+            status=PickingTask.Status.PENDING
+        )
+
+        for item in items:
+            sku_id = item['sku_id']
+            qty_needed = item['qty']
+            
+            # Smart Bin Selection: Find bins with stock
+            available_bins = BinInventory.objects.filter(
+                bin__zone__warehouse=warehouse,
+                sku_id=sku_id,
+                quantity__gt=0
+            ).order_by('quantity') # Simple strategy: clear small bins first
+
+            qty_allocated = 0
+            for bin_inv in available_bins:
+                if qty_allocated >= qty_needed:
+                    break
+                
+                take = min(bin_inv.quantity, qty_needed - qty_allocated)
+                
+                PickItem.objects.create(
+                    task=task,
+                    sku_id=sku_id,
+                    bin=bin_inv.bin,
+                    qty_to_pick=take
+                )
+                
+                # We do NOT deduct BinInventory quantity here. 
+                # We deduct only when physically scanned (scan_pick).
+                # However, we MUST reserve it in the Logical Inventory.
+                qty_allocated += take
+
+            if qty_allocated < qty_needed:
+                raise ValidationError(f"Physical stock mismatch for SKU {sku_id}")
+
+        broadcast_wms_event({
+            "type": "new_picking_task",
+            "warehouse_id": warehouse.id,
+            "task_id": str(task.id)
+        })
+        return task
+
+    @staticmethod
+    @transaction.atomic
+    def scan_pick(task_id: str, pick_item_id: int, qty_scanned: int, user):
+        """
+        Worker physically picks item.
+        State: Updates BinInventory (Physical) immediately.
+        """
+        pick_item = PickItem.objects.select_for_update().get(id=pick_item_id, task_id=task_id)
         
-        for target_bin, qty in plan:
-            # Create or Update Stock
-            stock, created = Stock.objects.select_for_update().get_or_create(
-                bin=target_bin,
-                sku=sku,
-                defaults={'quantity': 0}
-            )
-            stock.quantity += qty
-            stock.save()
+        if pick_item.is_picked:
+            raise ValidationError("Item already picked.")
             
-            # Update Bin Load
-            target_bin.current_load += qty
-            target_bin.save()
-            
-        return plan
+        if qty_scanned != pick_item.qty_to_pick:
+            raise ValidationError(f"Scan mismatch. Expected {pick_item.qty_to_pick}, got {qty_scanned}")
+
+        # 1. Update Physical Inventory
+        bin_inv = BinInventory.objects.select_for_update().get(
+            bin=pick_item.bin, 
+            sku=pick_item.sku
+        )
+        if bin_inv.quantity < qty_scanned:
+            raise ValidationError(f"Bin {pick_item.bin.bin_code} is physically short!")
+
+        bin_inv.quantity -= qty_scanned
+        bin_inv.save()
+
+        # 2. Update Task State
+        pick_item.picked_qty = qty_scanned
+        pick_item.is_picked = True
+        pick_item.save()
+
+        # 3. Check Task Completion
+        task = pick_item.task
+        if not task.picker:
+            task.picker = user
+            task.started_at = timezone.now()
+            task.status = PickingTask.Status.IN_PROGRESS
+            task.save()
+
+        # Check if all items are picked
+        if not task.items.filter(is_picked=False).exists():
+            WarehouseOpsService._complete_picking_task(task)
+
+        return pick_item
+
+    @staticmethod
+    def _complete_picking_task(task: PickingTask):
+        task.status = PickingTask.Status.COMPLETED
+        task.completed_at = timezone.now()
+        task.save()
+
+        # Create Dispatch Record
+        import secrets
+        otp = str(secrets.randbelow(999999)).zfill(6)
+        
+        DispatchRecord.objects.create(
+            picking_task=task,
+            status='READY',
+            pickup_otp=otp
+        )
+
+        # Sync Logical Inventory (Hard Commit)
+        # We tell InventoryService that these items have physically left the shelf
+        # for this specific order.
+        # This confirms the reservation made earlier.
+        
+        # Notify Logistics
+        from apps.delivery.services import DeliveryService
+        DeliveryService.create_task_from_dispatch(
+            order_id=task.order_id, 
+            dispatch_id=str(task.id), # Simplified linkage
+            warehouse_otp=otp
+        )
+
+        broadcast_wms_event({
+            "type": "task_completed",
+            "task_id": str(task.id)
+        })

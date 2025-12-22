@@ -1,4 +1,3 @@
-# apps/warehouse/consumers.py
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 
@@ -6,19 +5,28 @@ class WMSConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         user = self.scope["user"]
         
-        # [FIX] Allow Staff OR Employees (Pickers/Packers)
-        is_employee = getattr(user, "is_employee", False)
-        
-        if not user.is_authenticated or (not user.is_staff and not is_employee):
+        # Security: Only Staff/Admins/Warehouse Managers
+        if not user.is_authenticated or not (user.is_staff or user.role == 'MANAGER'):
             await self.close()
             return
 
-        self.group_name = "wms_realtime"
-        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        # Granular subscription based on Warehouse ID logic could go here
+        # For now, subscribing to global
+        self.room_group_name = "wms_global"
+
+        await self.channel_layer.group_add(
+            self.room_group_name,
+            self.channel_name
+        )
         await self.accept()
 
     async def disconnect(self, close_code):
-        await self.channel_layer.group_discard(self.group_name, self.channel_name)
+        await self.channel_layer.group_discard(
+            self.room_group_name,
+            self.channel_name
+        )
 
-    async def wms_event(self, event):
-        await self.send(text_data=json.dumps(event["data"]))
+    # Receive message from room group
+    async def wms_message(self, event):
+        payload = event['payload']
+        await self.send(text_data=json.dumps(payload))

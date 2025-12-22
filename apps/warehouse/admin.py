@@ -1,27 +1,23 @@
-from django.contrib import admin, messages
-from .services import PutawayService
+from django.contrib import admin
+from .models import Warehouse, Zone, Bin, BinInventory, PickingTask, DispatchRecord
 
-@admin.action(description="Process GRN Stock (Smart Putaway)")
-def process_grn_stock(modeladmin, request, queryset):
-    for grn_item in queryset:
-        if grn_item.status == 'PROCESSED':
-            continue
-            
-        try:
-            plan = PutawayService.execute_grn(
-                sku=grn_item.sku,
-                total_quantity=grn_item.quantity,
-                warehouse=grn_item.warehouse
-            )
-            grn_item.status = 'PROCESSED'
-            grn_item.save()
-            
-            # Log the distribution for the admin
-            msg = ", ".join([f"{qty} -> {bin.code}" for bin, qty in plan])
-            messages.success(request, f"Stored {grn_item.sku}: {msg}")
-            
-        except Exception as e:
-            messages.error(request, f"Failed {grn_item.sku}: {str(e)}")
+@admin.register(Warehouse)
+class WarehouseAdmin(admin.ModelAdmin):
+    list_display = ('name', 'code', 'is_active')
+    search_fields = ('name', 'code')
 
-class GRNAdmin(admin.ModelAdmin):
-    actions = [process_grn_stock]
+@admin.register(BinInventory)
+class BinInventoryAdmin(admin.ModelAdmin):
+    list_display = ('bin', 'sku', 'quantity')
+    list_filter = ('bin__zone__warehouse',)
+    search_fields = ('sku__sku_code', 'bin__bin_code')
+
+class PickItemInline(admin.TabularInline):
+    model = 'warehouse.PickItem' # String reference to avoid circular imports if any
+    extra = 0
+
+@admin.register(PickingTask)
+class PickingTaskAdmin(admin.ModelAdmin):
+    list_display = ('id', 'order_id', 'status', 'picker', 'created_at')
+    list_filter = ('status', 'warehouse')
+    # inlines = [PickItemInline] # Enable if PickItem model is available in same context

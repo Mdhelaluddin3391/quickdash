@@ -1,13 +1,10 @@
 from django.apps import AppConfig
-import logging
 
 class WarehouseConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'apps.warehouse'
+    verbose_name = 'Warehouse Management System'
 
     def ready(self):
-        try:
-            # FIX: Import receivers to ensure signal handlers are registered
-            import apps.warehouse.receivers  # noqa
-        except ImportError as e:
-            logging.warning(f"Warehouse receivers could not be imported: {e}")
+        # Register signals if any (avoiding logic in signals as requested)
+        pass
