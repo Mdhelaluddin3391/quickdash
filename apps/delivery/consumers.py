@@ -1,12 +1,11 @@
 # apps/delivery/consumers.py
 
-import json
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from apps.orders.models import Order
+from apps.delivery.models import DeliveryTask
 
 
 class OrderTrackingConsumer(AsyncJsonWebsocketConsumer):
-
     async def connect(self):
         self.order_id = self.scope["url_route"]["kwargs"]["order_id"]
         user = self.scope["user"]
@@ -15,8 +14,8 @@ class OrderTrackingConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4001)
             return
 
-        is_allowed = await self._has_access(user)
-        if not is_allowed:
+        allowed = await self._has_access(user)
+        if not allowed:
             await self.close(code=4003)
             return
 
@@ -31,7 +30,12 @@ class OrderTrackingConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json(event["data"])
 
     async def _has_access(self, user):
-        return await Order.objects.filter(
-            id=self.order_id,
-            user=user,
+        # Customer access
+        if await Order.objects.filter(id=self.order_id, user=user).aexists():
+            return True
+
+        # Assigned rider access
+        return await DeliveryTask.objects.filter(
+            order_id=self.order_id,
+            rider__user=user,
         ).aexists()

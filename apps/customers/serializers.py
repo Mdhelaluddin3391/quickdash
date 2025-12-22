@@ -1,19 +1,35 @@
+# apps/customers/serializers.py
+
 from rest_framework import serializers
-from .models import CustomerProfile, Address
+from django.contrib.gis.geos import Point
+
+from .models import Address
+
 
 class AddressSerializer(serializers.ModelSerializer):
+    lat = serializers.FloatField(write_only=True)
+    lng = serializers.FloatField(write_only=True)
+
     class Meta:
         model = Address
-        exclude = ['customer', 'created_at', 'updated_at']
-        read_only_fields = ['id']
+        fields = [
+            "id",
+            "label",
+            "address_line",
+            "lat",
+            "lng",
+            "is_default",
+        ]
+        read_only_fields = ["id", "is_default"]
 
-class CustomerProfileSerializer(serializers.ModelSerializer):
-    addresses = AddressSerializer(many=True, read_only=True)
-    # Flatten core user fields for the frontend
-    phone = serializers.CharField(source='user.phone', read_only=True)
-    full_name = serializers.CharField(source='user.full_name', read_only=True)
-    email = serializers.EmailField(source='user.email', read_only=True)
+    def create(self, validated_data):
+        lat = validated_data.pop("lat")
+        lng = validated_data.pop("lng")
+        validated_data["location"] = Point(lng, lat)
+        return super().create(validated_data)
 
-    class Meta:
-        model = CustomerProfile
-        fields = ['id', 'phone', 'full_name', 'email', 'loyalty_points', 'addresses']
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["lat"] = instance.location.y
+        data["lng"] = instance.location.x
+        return data

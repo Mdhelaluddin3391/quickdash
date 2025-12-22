@@ -1,66 +1,63 @@
+# apps/customers/services.py
+
 from django.db import transaction
-from django.core.exceptions import ObjectDoesNotExist
+from django.contrib.gis.geos import Point
+from django.core.exceptions import ValidationError
+
 from .models import CustomerProfile, Address
-from apps.utils.exceptions import BusinessLogicException, NotFound
+
 
 class CustomerService:
+
     @staticmethod
-    def get_or_create_profile(user):
-        """
-        Retrieves the customer profile for a given user, creating it if necessary.
-        """
-        profile, created = CustomerProfile.objects.get_or_create(user=user)
+    def get_profile(user):
+        profile, _ = CustomerProfile.objects.get_or_create(user=user)
         return profile
 
     @staticmethod
-    def get_default_address(user):
-        """
-        Returns the default address for the user, or None.
-        """
-        profile = CustomerService.get_or_create_profile(user)
-        return profile.addresses.filter(is_default=True).first()
+    @transaction.atomic
+    def create_address(
+        user,
+        label: str,
+        address_line: str,
+        lat: float,
+        lng: float,
+        is_default: bool = False,
+    ) -> Address:
+        profile = CustomerService.get_profile(user)
+
+        if not Address.objects.filter(customer=profile).exists():
+            is_default = True
+
+        if is_default:
+            Address.objects.filter(customer=profile, is_default=True).update(
+                is_default=False
+            )
+
+        location = Point(float(lng), float(lat))  # lng, lat order
+
+        return Address.objects.create(
+            customer=profile,
+            label=label,
+            address_line=address_line,
+            location=location,
+            is_default=is_default,
+        )
 
     @staticmethod
-    def add_address(user, address_data):
-        """
-        Adds a new address. If marked as default, unsets previous defaults.
-        """
-        profile = CustomerService.get_or_create_profile(user)
-        
-        with transaction.atomic():
-            if address_data.get('is_default'):
-                Address.objects.filter(customer=profile, is_default=True).update(is_default=False)
-            
-            # If this is the FIRST address, force it to be default
-            if not Address.objects.filter(customer=profile).exists():
-                address_data['is_default'] = True
+    @transaction.atomic
+    def set_default_address(user, address_id):
+        profile = CustomerService.get_profile(user)
 
-            return Address.objects.create(customer=profile, **address_data)
-
-    @staticmethod
-    def update_address(user, address_id, update_data):
-        """
-        Updates an address safely.
-        """
-        profile = CustomerService.get_or_create_profile(user)
         try:
             address = Address.objects.get(id=address_id, customer=profile)
         except Address.DoesNotExist:
-            raise NotFound("Address not found or does not belong to this user.")
+            raise ValidationError("Address not found")
 
-        with transaction.atomic():
-            if update_data.get('is_default'):
-                Address.objects.filter(customer=profile, is_default=True).update(is_default=False)
+        Address.objects.filter(customer=profile, is_default=True).update(
+            is_default=False
+        )
 
-            for key, value in update_data.items():
-                setattr(address, key, value)
-            
-            address.save()
-            return address
-
-    @staticmethod
-    def delete_address(user, address_id):
-        profile = CustomerService.get_or_create_profile(user)
-        deleted_count, _ = Address.objects.filter(id=address_id, customer=profile).delete()
-        if deleted_count == 0:
-            raise NotFound("Address not found.")
+        address.is_default = True
+        address.save(update_fields=["is_default"])
+        return address

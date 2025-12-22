@@ -1,58 +1,60 @@
-from django.db import models
-from django.conf import settings
-from apps.utils.models import TimestampedModel
+# apps/customers/models.py
 
-class CustomerProfile(TimestampedModel):
-    """
-    Customer-specific domain data.
-    Linked 1:1 with the Auth User.
-    """
+import uuid
+from django.db import models
+from django.contrib.gis.db import models as gis_models
+from django.conf import settings
+
+
+class CustomerProfile(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(
-        settings.AUTH_USER_MODEL, 
-        on_delete=models.CASCADE, 
-        related_name='customer_profile'
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="customer_profile",
     )
-    loyalty_points = models.IntegerField(default=0)
-    preferences = models.JSONField(default=dict, blank=True, help_text="User preferences like notification settings, dietary, etc.")
+    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Customer: {self.user.phone}"
+        return f"CustomerProfile({self.user.phone})"
 
-class Address(TimestampedModel):
-    """
-    Delivery addresses.
-    """
-    LABEL_CHOICES = (
-        ('HOME', 'Home'),
-        ('WORK', 'Work'),
-        ('OTHER', 'Other'),
-    )
 
+class Address(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     customer = models.ForeignKey(
-        CustomerProfile, 
-        on_delete=models.CASCADE, 
-        related_name='addresses'
+        CustomerProfile,
+        on_delete=models.CASCADE,
+        related_name="addresses",
     )
-    label = models.CharField(max_length=20, choices=LABEL_CHOICES, default='HOME')
-    
-    # Address details
-    address_line_1 = models.CharField(max_length=255)
-    address_line_2 = models.CharField(max_length=255, blank=True, null=True)
-    city = models.CharField(max_length=100)
-    pincode = models.CharField(max_length=10, db_index=True)
-    
-    # Geospatial data (Decimal for simple lat/lng storage)
-    # Note: Use PostGIS PointField in apps/warehouse for complex queries, 
-    # but simple decimals are often sufficient for address storage.
-    latitude = models.DecimalField(max_digits=9, decimal_places=6)
-    longitude = models.DecimalField(max_digits=9, decimal_places=6)
-    
+
+    label = models.CharField(max_length=50)  # Home, Work, etc
+    address_line = models.TextField()
+
+    # ✅ SINGLE SOURCE OF TRUTH FOR GEO
+    location = gis_models.PointField(geography=True)
+
     is_default = models.BooleanField(default=False)
 
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
     class Meta:
-        ordering = ['-is_default', '-created_at']
-        verbose_name = "Address"
-        verbose_name_plural = "Addresses"
+        ordering = ["-is_default", "-created_at"]
+        indexes = [
+            gis_models.Index(fields=["location"]),
+        ]
 
     def __str__(self):
-        return f"{self.label} - {self.city} ({self.pincode})"
+        return f"{self.label} - {self.customer.user.phone}"
+
+    def as_dict(self):
+        """
+        Snapshot-safe representation for Orders
+        """
+        return {
+            "id": str(self.id),
+            "label": self.label,
+            "address_line": self.address_line,
+            "lat": self.location.y,
+            "lng": self.location.x,
+        }
