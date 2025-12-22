@@ -7,12 +7,13 @@ django.setup()
 
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.auth import AuthMiddlewareStack
 from channels.security.websocket import AllowedHostsOriginValidator
+
+# Import Custom Middleware
+from apps.accounts.middleware import TicketAuthMiddleware
 
 # Import routing from apps
 from apps.warehouse import websocket as warehouse_routing
-# FIX: Import the delivery routing we are about to create
 from apps.delivery import routing as delivery_routing
 
 websocket_urlpatterns = warehouse_routing.websocket_urlpatterns + delivery_routing.websocket_urlpatterns
@@ -20,7 +21,7 @@ websocket_urlpatterns = warehouse_routing.websocket_urlpatterns + delivery_routi
 application = ProtocolTypeRouter({
     "http": get_asgi_application(),
     "websocket": AllowedHostsOriginValidator(
-        AuthMiddlewareStack(
+        TicketAuthMiddleware(
             URLRouter(
                 websocket_urlpatterns
             )

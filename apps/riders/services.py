@@ -1,8 +1,9 @@
 from django.contrib.gis.geos import Point
 from django.utils import timezone
 from django.db import transaction
-from .models import RiderProfile, RiderEarnings
-from .models import RiderShift
+from .models import RiderProfile, RiderEarnings, RiderShift
+from apps.utils.exceptions import BusinessLogicException
+from apps.delivery.models import DeliveryJob
 
 class RiderService:
 
@@ -11,7 +12,7 @@ class RiderService:
     def toggle_status(user, is_online: bool):
         """
         Rider switches "Start Duty" / "Stop Duty".
-        Manages Shift Records automatically.
+        Manages Shift Records automatically and checks for active jobs.
         """
         profile = user.rider_profile
         
@@ -33,6 +34,16 @@ class RiderService:
                 status="ACTIVE"
             )
         else:
+            # STOP SHIFT REQUEST
+            # [GUARDRAIL] Check if rider has active deliveries
+            active_jobs = DeliveryJob.objects.filter(
+                rider=user,
+                status__in=[DeliveryJob.Status.ASSIGNED, DeliveryJob.Status.PICKED_UP]
+            ).exists()
+
+            if active_jobs:
+                raise BusinessLogicException("Cannot go offline while you have active deliveries.")
+
             # END SHIFT
             profile.is_online = False
             profile.is_available = False
@@ -64,30 +75,7 @@ class RiderService:
         profile = user.rider_profile
         profile.current_location = Point(float(lng), float(lat), srid=4326)
         profile.last_heartbeat = timezone.now()
-        
-        # Auto-set offline if no heartbeat for X mins? (Handled by periodic task usually)
-        # For now, just update.
         profile.save(update_fields=['current_location', 'last_heartbeat'])
-        
-        return profile
-
-    @staticmethod
-    def toggle_status(user, is_online: bool):
-        """
-        Rider switches "Start Duty" / "Stop Duty".
-        """
-        profile = user.rider_profile
-        profile.is_online = is_online
-        
-        # If going offline, remove availability
-        if not is_online:
-            profile.is_available = False
-        else:
-            # If going online, they are available unless they have an active job
-            # (Check active jobs logic could be here, but simpler: start as available)
-            profile.is_available = True
-            
-        profile.save(update_fields=['is_online', 'is_available'])
         return profile
 
     @staticmethod

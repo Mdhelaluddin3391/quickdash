@@ -1,3 +1,5 @@
+import uuid
+from django.core.cache import cache
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -51,3 +53,16 @@ class MeView(APIView):
 
     def get(self, request):
         return Response(UserSerializer(request.user).data)
+
+class CreateWsTicketView(APIView):
+    """
+    Generates a short-lived One-Time Ticket (OTT) for WebSocket connection.
+    Prevents passing sensitive JWT tokens in URL query parameters.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ticket = str(uuid.uuid4())
+        # Store user_id mapped to ticket with 30s expiry
+        cache.set(f"ws_ticket:{ticket}", request.user.id, timeout=30)
+        return Response({"ticket": ticket})

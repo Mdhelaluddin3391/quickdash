@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from .models import Order
 from .serializers import OrderSerializer, CreateOrderSerializer
-from .services import OrderService
+from .services import OrderService, CartService
 from apps.customers.models import Address
 
 class OrderViewSet(viewsets.ReadOnlyModelViewSet):
@@ -13,7 +13,11 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Order.objects.filter(user=self.request.user).order_by('-created_at')
+        # [OPTIMIZATION FIX] Prevent N+1 queries by prefetching related items and timeline
+        return Order.objects.filter(user=self.request.user)\
+            .select_related('warehouse')\
+            .prefetch_related('items', 'timeline')\
+            .order_by('-created_at')
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
@@ -27,26 +31,23 @@ class CreateOrderView(views.APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        serializer = CreateOrderSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        # We only validate address_id, items are fetched from DB cart for security
+        address_id = request.data.get('address_id')
+        if not address_id:
+            return Response({"error": "Address ID is required"}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Fetch Address snapshot
-            address = Address.objects.get(
-                id=serializer.validated_data['address_id'], 
-                customer__user=request.user
-            )
+            # 1. Fetch Verified Cart Data (Server-Side)
+            cart_items = CartService.get_active_cart_items(request.user)
             
-            # Fetch Cart (Simplified for MVP, usually passed or fetched from DB)
-            cart_items = serializer.validated_data['items']
-            
+            # 2. Create Order
             order = OrderService.create_order(
                 user=request.user,
-                address_data=address.as_dict(),
-                cart_items=cart_items
+                address_id=address_id,
+                items=cart_items
             )
             
-            # Initiate Payment (Step 6 will hook here)
+            # 3. Initiate Payment
             from apps.payments.services import PaymentService
             payment_payload = PaymentService.create_payment_order(order)
             
