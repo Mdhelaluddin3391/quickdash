@@ -87,6 +87,7 @@ urlpatterns = [
     path('api/v1/delivery/', include('apps.delivery.urls')),
     path('api/v1/payments/', include('apps.payments.urls')),
     path('api/v1/notifications/', include('apps.notifications.urls')),
+    path('api/v1/customers/', include('apps.customers.urls')),
     
     # Observability (Prometheus)
     path('prometheus/', include('django_prometheus.urls')),
