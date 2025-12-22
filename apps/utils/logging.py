@@ -1,11 +1,28 @@
 import logging
+import json
+import datetime
 
-# Use the standard Django logger configuration
-logger = logging.getLogger("quickdash.events")
+class JSONFormatter(logging.Formatter):
+    """
+    Formatter that outputs JSON strings for logs.
+    """
+    def format(self, record):
+        log_record = {
+            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "logger": record.name,
+            "module": record.module,
+            "line": record.lineno,
+        }
 
-def log_event(event_name, data=None):
-    """
-    Standardized event logging helper.
-    """
-    payload = data or {}
-    logger.info(f"{event_name} | {payload}")
+        if record.exc_info:
+            log_record["exception"] = self.formatException(record.exc_info)
+        
+        # Add extra context if passed via extra={}
+        if hasattr(record, 'order_id'):
+            log_record['order_id'] = record.order_id
+        if hasattr(record, 'user_id'):
+            log_record['user_id'] = record.user_id
+
+        return json.dumps(log_record)

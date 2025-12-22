@@ -1,131 +1,141 @@
-# apps/payments/services.py
-
+import razorpay
 import logging
 from django.conf import settings
 from django.db import transaction
-from django.core.exceptions import ValidationError
+from django.utils import timezone
+from decimal import Decimal
 
+from apps.utils.exceptions import BusinessLogicException
 from apps.orders.services import OrderService
-from .models import PaymentIntent, Payment, Refund, WebhookLog
+from .models import PaymentTransaction, RefundRecord, WebhookEvent
 
 logger = logging.getLogger(__name__)
 
-
 class PaymentService:
-
-    # ---------- INTENT ----------
-
+    
     @staticmethod
-    def create_intent(user, order_id, method: str):
-        from apps.orders.models import Order
-
-        order = Order.objects.get(id=order_id, user=user)
-
-        if order.status != order.Status.CREATED:
-            raise ValidationError("Order not eligible for payment")
-
-        # Gateway client creation omitted for brevity
-        gateway_order_id = f"rzp_{order.order_id}"
-
-        return PaymentIntent.objects.create(
-            order=order,
-            gateway="razorpay",
-            amount=int(order.total_amount * 100),
-            currency="INR",
-            gateway_order_id=gateway_order_id,
-        )
-
-    # ---------- WEBHOOK ----------
-
-    @staticmethod
-    def verify_webhook_signature(body: bytes, signature: str) -> bool:
-        """
-        FAIL-CLOSED: if secret missing or invalid, reject.
-        """
-        secret = getattr(settings, "RAZORPAY_WEBHOOK_SECRET", None)
-        if not secret:
-            logger.critical("RAZORPAY_WEBHOOK_SECRET missing — rejecting webhook")
-            return False
-
-        try:
-            client = PaymentService._get_gateway_client()
-            client.utility.verify_webhook_signature(body, signature, secret)
-            return True
-        except Exception:
-            return False
+    def _get_client():
+        if not settings.RAZORPAY_KEY_ID or not settings.RAZORPAY_KEY_SECRET:
+            raise BusinessLogicException("Payment Gateway not configured.")
+        return razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
     @staticmethod
     @transaction.atomic
-    def process_webhook(payload: dict):
-        event_id = payload.get("event_id")
-        if not event_id:
-            raise ValidationError("Missing event_id")
-
-        if WebhookLog.objects.filter(event_id=event_id).exists():
-            return  # idempotent
-
-        data = payload.get("payload", {})
-        payment_entity = data.get("payment", {}).get("entity", {})
-
-        order_id = payment_entity.get("notes", {}).get("order_id")
-        gateway_payment_id = payment_entity.get("id")
-
-        intent = PaymentIntent.objects.select_for_update().get(
-            gateway_order_id=payment_entity.get("order_id")
-        )
-
-        payment = Payment.objects.create(
-            order=intent.order,
-            intent=intent,
-            gateway_payment_id=gateway_payment_id,
-            status=Payment.Status.SUCCESS,
-            raw_payload=payload,
-        )
-
-        # Confirm order payment
-        OrderService.confirm_payment(
-            order_id=str(intent.order.id),
-            payment_id=gateway_payment_id,
-        )
-
-        WebhookLog.objects.create(event_id=event_id)
-        return payment
-
-    # ---------- REFUNDS ----------
-
-    @staticmethod
-    @transaction.atomic
-    def initiate_refund(payment_id: str, amount: int, reason: str):
-        payment = Payment.objects.select_for_update().get(id=payment_id)
-
-        refund = Refund.objects.create(
-            payment=payment,
-            amount=amount,
-            status=Refund.Status.INITIATED,
-            reason=reason,
-        )
-
+    def create_payment_order(order):
+        """
+        Initiates a payment session with Razorpay.
+        """
+        client = PaymentService._get_client()
+        amount_paise = int(order.total_amount * 100)
+        
         try:
-            client = PaymentService._get_gateway_client()
-            response = client.payment.refund(
-                payment.gateway_payment_id,
-                {"amount": amount},
-            )
-
-            refund.gateway_refund_id = response.get("id")
-            refund.status = Refund.Status.SUCCESS
-            refund.save(update_fields=["gateway_refund_id", "status"])
+            gateway_order = client.order.create({
+                "amount": amount_paise,
+                "currency": "INR",
+                "receipt": str(order.id),
+                "notes": {"user_id": str(order.user.id)}
+            })
         except Exception as e:
-            refund.status = Refund.Status.FAILED
-            refund.save(update_fields=["status"])
-            logger.exception("Refund failed")
-            raise
+            logger.error(f"Razorpay Create Error: {e}")
+            raise BusinessLogicException("Failed to initiate payment gateway.")
 
-        return refund
-
-    # ---------- INTERNAL ----------
+        # Create Transaction Record
+        PaymentTransaction.objects.create(
+            order=order,
+            gateway_order_id=gateway_order['id'],
+            amount=order.total_amount,
+            status=PaymentTransaction.Status.PENDING
+        )
+        
+        return {
+            "key": settings.RAZORPAY_KEY_ID,
+            "order_id": gateway_order['id'],
+            "amount": amount_paise,
+            "currency": "INR",
+            "name": "QuickDash",
+            "description": f"Order #{order.id}"
+        }
 
     @staticmethod
-    def _get_gateway_client():
-        # return Razorpay client (omitted)
-        raise NotImplementedError
+    @transaction.atomic
+    def process_payment_success(payload: dict):
+        """
+        Called after successful verify or webhook.
+        """
+        ord_id = payload.get('razorpay_order_id')
+        pay_id = payload.get('razorpay_payment_id')
+        sig = payload.get('razorpay_signature')
+
+        try:
+            txn = PaymentTransaction.objects.select_for_update().get(gateway_order_id=ord_id)
+        except PaymentTransaction.DoesNotExist:
+            logger.error(f"Transaction not found for Gateway Order {ord_id}")
+            return False
+
+        if txn.status == PaymentTransaction.Status.SUCCESS:
+            return True  # Idempotent
+
+        # Verify Signature (if provided directly from frontend, webhooks use header)
+        if sig:
+            client = PaymentService._get_client()
+            try:
+                client.utility.verify_payment_signature(payload)
+            except razorpay.errors.SignatureVerificationError:
+                txn.status = PaymentTransaction.Status.FAILED
+                txn.error_details = {"error": "Signature Verification Failed"}
+                txn.save()
+                raise BusinessLogicException("Invalid Payment Signature")
+
+        # Update Transaction
+        txn.gateway_payment_id = pay_id
+        txn.gateway_signature = sig
+        txn.status = PaymentTransaction.Status.SUCCESS
+        txn.save()
+
+        # Update Order
+        OrderService.mark_order_paid(txn.order.id, pay_id)
+        return True
+
+    @staticmethod
+    def initiate_refund(order):
+        """
+        Called when an Order is Cancelled.
+        """
+        try:
+            # Find the successful transaction
+            txn = order.transactions.filter(status=PaymentTransaction.Status.SUCCESS).first()
+            if not txn:
+                logger.warning(f"No successful transaction found for Order {order.id} to refund.")
+                return
+
+            client = PaymentService._get_client()
+            
+            # Full Refund
+            refund_data = client.payment.refund(txn.gateway_payment_id, {
+                "amount": int(txn.amount * 100),
+                "speed": "normal"
+            })
+
+            RefundRecord.objects.create(
+                transaction=txn,
+                gateway_refund_id=refund_data['id'],
+                amount=txn.amount,
+                status=refund_data['status']
+            )
+            
+            txn.status = PaymentTransaction.Status.REFUNDED
+            txn.save()
+            logger.info(f"Refund processed for Order {order.id}")
+
+        except Exception as e:
+            logger.error(f"Refund Failed for Order {order.id}: {e}")
+            # In a real system, this should queue a retry task.
+            # We will raise it so the caller (Task/View) knows it failed.
+            raise BusinessLogicException("Refund failed via Gateway.")
+
+    @staticmethod
+    def verify_webhook_signature(body: bytes, signature: str):
+        client = PaymentService._get_client()
+        return client.utility.verify_webhook_signature(
+            body.decode('utf-8'), signature, settings.RAZORPAY_WEBHOOK_SECRET
+        )

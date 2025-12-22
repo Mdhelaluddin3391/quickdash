@@ -1,20 +1,13 @@
 from django.contrib import admin
-from django.contrib.gis.admin import OSMGeoAdmin
-from .models import RiderProfile, Vehicle
+from .models import RiderProfile, RiderEarnings
 
 @admin.register(RiderProfile)
-class RiderProfileAdmin(OSMGeoAdmin):
-    list_display = ('user_phone', 'current_status', 'is_approved', 'last_location_update')
-    list_filter = ('current_status', 'is_approved')
-    search_fields = ('user__phone', 'user__full_name')
-    
-    # Display raw lat/lng in admin for debugging
-    readonly_fields = ('last_location_update',)
+class RiderProfileAdmin(admin.ModelAdmin):
+    list_display = ['user', 'is_online', 'is_available', 'total_deliveries', 'last_heartbeat']
+    list_filter = ['is_online', 'is_available']
+    search_fields = ['user__phone', 'vehicle_number']
 
-    def user_phone(self, obj):
-        return obj.user.phone
-
-@admin.register(Vehicle)
-class VehicleAdmin(admin.ModelAdmin):
-    list_display = ('plate_number', 'vehicle_type', 'rider')
-    search_fields = ('plate_number', 'rider__user__phone')
+@admin.register(RiderEarnings)
+class RiderEarningsAdmin(admin.ModelAdmin):
+    list_display = ['rider', 'order_id', 'amount', 'created_at']
+    search_fields = ['order_id', 'rider__user__phone']

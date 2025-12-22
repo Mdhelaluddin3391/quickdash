@@ -1,52 +1,48 @@
-# STAGE 1: Builder
-FROM python:3.11-slim-bullseye as builder
+# ==============================
+# BUILDER STAGE
+# ==============================
+FROM python:3.10-slim-bullseye as builder
 
 WORKDIR /app
 
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
+# Install system dependencies (PostGIS requires gdal/geos)
+RUN apt-get update && apt-get install -y \
+    build-essential \
     libpq-dev \
-    python3-dev \
+    gdal-bin \
+    libgdal-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
+RUN pip install --prefix=/install -r requirements.txt
 
-# STAGE 2: Final
-FROM python:3.11-slim-bullseye
+# ==============================
+# RUNNER STAGE
+# ==============================
+FROM python:3.10-slim-bullseye
 
-# Create a non-root user
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+WORKDIR /app
 
-WORKDIR /home/appuser/app
-
-# Install runtime dependencies (libpq for Postgres)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install Runtime Libs
+RUN apt-get update && apt-get install -y \
     libpq5 \
+    gdal-bin \
+    libgdal-dev \
     netcat \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy wheels from builder
-COPY --from=builder /app/wheels /wheels
-COPY --from=builder /app/requirements.txt .
+# Copy installed python packages
+COPY --from=builder /install /usr/local
 
-RUN pip install --no-cache /wheels/*
-
-# Copy Application Code
+# Copy Source
 COPY . .
 
-# Chown all files to the app user
-RUN chown -R appuser:appuser /home/appuser/app
+# Collect Static (Fake secret key just for build step)
+RUN SECRET_KEY=build-key python manage.py collectstatic --noinput
 
-# Switch to non-root user
-USER appuser
+# Permission
+RUN chmod +x start.sh
 
-# Expose port (Gunicorn/Uvicorn usually runs on 8000)
 EXPOSE 8000
 
-# Entrypoint script to wait for DB and start server
-ENTRYPOINT ["/home/appuser/app/start.sh"]
+CMD ["./start.sh"]

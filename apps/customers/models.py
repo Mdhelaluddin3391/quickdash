@@ -1,23 +1,26 @@
-# apps/customers/models.py
-
 import uuid
 from django.db import models
 from django.contrib.gis.db import models as gis_models
 from django.conf import settings
 
-
 class CustomerProfile(models.Model):
+    """
+    Extensions to the core User model for customer-specific logic
+    (Loyalty, preferences, etc.)
+    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="customer_profile",
     )
+    # Future-proofing: Loyalty points, referral codes, etc.
+    loyalty_points = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"CustomerProfile({self.user.phone})"
-
+        return f"Profile: {self.user.phone}"
 
 class Address(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -27,11 +30,13 @@ class Address(models.Model):
         related_name="addresses",
     )
 
-    label = models.CharField(max_length=50)  # Home, Work, etc
+    label = models.CharField(max_length=50, help_text="Home, Work, etc.")
     address_line = models.TextField()
+    city = models.CharField(max_length=100, default="Bangalore") # Default context
+    pincode = models.CharField(max_length=10)
 
-    # ✅ SINGLE SOURCE OF TRUTH FOR GEO
-    location = gis_models.PointField(geography=True)
+    # SRID 4326 is standard for GPS (Lat/Lng)
+    location = gis_models.PointField(srid=4326, geography=True)
 
     is_default = models.BooleanField(default=False)
 
@@ -41,20 +46,23 @@ class Address(models.Model):
     class Meta:
         ordering = ["-is_default", "-created_at"]
         indexes = [
+            models.Index(fields=["customer", "is_default"]),
             gis_models.Index(fields=["location"]),
         ]
 
     def __str__(self):
-        return f"{self.label} - {self.customer.user.phone}"
+        return f"{self.label} ({self.pincode})"
 
     def as_dict(self):
         """
-        Snapshot-safe representation for Orders
+        Snapshot-safe representation for Orders to prevent stale data.
         """
         return {
             "id": str(self.id),
             "label": self.label,
             "address_line": self.address_line,
+            "city": self.city,
+            "pincode": self.pincode,
             "lat": self.location.y,
             "lng": self.location.x,
         }

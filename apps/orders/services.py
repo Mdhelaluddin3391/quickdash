@@ -1,162 +1,162 @@
-# apps/orders/services.py
-
+import uuid
+import logging
 from django.db import transaction
 from django.utils import timezone
-from django.core.exceptions import ValidationError
+from decimal import Decimal
 
+from apps.utils.exceptions import BusinessLogicException
+from apps.utils.utils import generate_order_id
 from apps.inventory.services import InventoryService
-from apps.customers.models import Address
 from apps.warehouse.utils.warehouse_selector import WarehouseSelector
-from apps.utils.utils import generate_code
+from .models import Order, OrderItem, OrderTimeline
+from .signals import send_order_created
 
-from .models import Order, OrderItem, OrderTimeline, OrderStatus, Cart
-
+logger = logging.getLogger(__name__)
 
 class OrderService:
-    """
-    SINGLE ORCHESTRATOR for Order lifecycle.
-    """
 
     @staticmethod
-    def create_order(user, cart_id: str, address_id: str, payment_method: str) -> Order:
-        # 1️⃣ Validate Cart
-        try:
-            cart = Cart.objects.select_related("user").get(id=cart_id, user=user)
-        except Cart.DoesNotExist:
-            raise ValidationError("Cart not found")
-
-        if not cart.items.exists():
-            raise ValidationError("Cart is empty")
-
-        # 2️⃣ Resolve Address & GEO (SINGLE SOURCE)
-        try:
-            address = Address.objects.select_related("customer__user").get(
-                id=address_id,
-                customer__user=user,
-            )
-        except Address.DoesNotExist:
-            raise ValidationError("Invalid or unauthorized address")
-
-        location = address.location  # PointField
-
-        # 3️⃣ Select Warehouse (Geo-based)
-        warehouse = WarehouseSelector.get_nearest_serviceable_warehouse(
-            lat=location.y,
-            lng=location.x,
+    @transaction.atomic
+    def create_order(user, address_data: dict, cart_items: list):
+        """
+        1. Select Warehouse
+        2. Reserve Stock (Pessimistic Lock)
+        3. Create Order
+        """
+        # 1. Select Warehouse based on location
+        warehouse = WarehouseSelector.get_nearest_warehouse(
+            lat=address_data['lat'], 
+            lng=address_data['lng']
         )
         if not warehouse:
-            raise ValidationError("Service not available in your area")
+            raise BusinessLogicException("Location not serviceable.")
 
-        # 4️⃣ Prepare Inventory Payload
-        items = [
-            {"product_id": i.product_id, "quantity": i.quantity}
-            for i in cart.items.all()
+        # 2. Prep Inventory Payload
+        inventory_items = []
+        total_amount = Decimal('0.00')
+        
+        for item in cart_items:
+            inventory_items.append({
+                "product_id": item['product_id'],
+                "quantity": item['quantity']
+            })
+            total_amount += Decimal(str(item['price'])) * item['quantity']
+
+        # 3. Reserve Stock (Will raise error if insufficient)
+        order_id = generate_order_id()
+        InventoryService.reserve_stock(
+            warehouse_id=warehouse.id,
+            items=inventory_items,
+            reference=order_id
+        )
+
+        # 4. Create Order DB Record
+        order = Order.objects.create(
+            id=order_id,
+            user=user,
+            warehouse_id=warehouse.id,
+            delivery_address=address_data,
+            total_amount=total_amount,
+            status=Order.Status.PENDING
+        )
+
+        # 5. Create Items
+        order_items = [
+            OrderItem(
+                order=order,
+                product_id=i['product_id'],
+                product_name=i['product_name'],
+                sku_code=i['sku_code'],
+                quantity=i['quantity'],
+                unit_price=i['price'],
+                total_price=Decimal(str(i['price'])) * i['quantity']
+            ) for i in cart_items
         ]
+        OrderItem.objects.bulk_create(order_items)
 
-        with transaction.atomic():
-            # 5️⃣ Lock & Validate Inventory
-            InventoryService.bulk_lock_and_validate(
-                warehouse_id=warehouse.id,
-                items=items,
-            )
+        OrderTimeline.objects.create(
+            order=order, 
+            status=Order.Status.PENDING, 
+            description="Order created, waiting for payment."
+        )
 
-            # 6️⃣ Create Order
-            order = Order.objects.create(
-                order_id=generate_code(prefix="ORD-"),
-                user=user,
-                warehouse=warehouse,
-                total_amount=cart.total_price,
-                status=OrderStatus.CREATED,
-                delivery_address_snapshot=address.as_dict(),
-                payment_method=payment_method,
-            )
-
-            # 7️⃣ Create Order Items (Snapshot)
-            OrderItem.objects.bulk_create([
-                OrderItem(
-                    order=order,
-                    product=i.product,
-                    sku_name_snapshot=i.product.name,
-                    unit_price_snapshot=i.product.base_price,
-                    quantity=i.quantity,
-                )
-                for i in cart.items.all()
-            ])
-
-            # 8️⃣ Reserve Inventory (Logical)
-            InventoryService.reserve_stock(
-                warehouse_id=warehouse.id,
-                items=items,
-                reference=f"ORDER-{order.order_id}",
-            )
-
-            # 9️⃣ Timeline
-            OrderTimeline.objects.create(
-                order=order,
-                status=OrderStatus.CREATED,
-                note="Order placed",
-                created_by=user,
-            )
-
-            # 🔟 Cleanup Cart
-            cart.items.all().delete()
-
-            return order
+        return order
 
     @staticmethod
-    def confirm_payment(order_id: str, payment_id: str) -> Order:
-        with transaction.atomic():
-            order = Order.objects.select_for_update().get(id=order_id)
-
-            if order.status == OrderStatus.PAID:
-                return order  # idempotent
-
-            if order.status != OrderStatus.CREATED:
-                raise ValidationError("Invalid order state for payment confirmation")
-
-            order.status = OrderStatus.PAID
-            order.confirmed_at = timezone.now()
-            order.save(update_fields=["status", "confirmed_at"])
-
-            OrderTimeline.objects.create(
-                order=order,
-                status=OrderStatus.PAID,
-                note=f"Payment confirmed: {payment_id}",
-            )
-
+    @transaction.atomic
+    def mark_order_paid(order_id: str, payment_id: str):
+        """
+        Transition: PENDING -> CONFIRMED
+        """
+        order = Order.objects.select_for_update().get(id=order_id)
+        
+        if order.status != Order.Status.PENDING:
+            logger.warning(f"Order {order_id} already processed. Ignoring.")
             return order
+
+        order.status = Order.Status.CONFIRMED
+        order.payment_status = Order.PaymentStatus.PAID
+        order.payment_id = payment_id
+        order.save(update_fields=['status', 'payment_status', 'payment_id', 'updated_at'])
+
+        OrderTimeline.objects.create(
+            order=order, 
+            status=Order.Status.CONFIRMED, 
+            description="Payment received."
+        )
+
+        # Notify Warehouse (Async)
+        items_payload = [
+            {"product_id": str(i.product_id), "quantity": i.quantity} 
+            for i in order.items.all()
+        ]
+        send_order_created.send(
+            sender=Order, 
+            order_id=order.id, 
+            order_items=items_payload, 
+            warehouse_id=order.warehouse_id
+        )
+
+        return order
 
     @staticmethod
-    def cancel_order(order_id: str, reason: str, user=None) -> Order:
-        with transaction.atomic():
-            order = Order.objects.select_for_update().get(id=order_id)
+    @transaction.atomic
+    def cancel_order(order_id: str, reason: str = "User Cancelled"):
+        """
+        Handles Cancellation & Inventory Release.
+        Triggers Refund if paid.
+        """
+        order = Order.objects.select_for_update().get(id=order_id)
+        
+        if not order.can_cancel:
+            raise BusinessLogicException("Cannot cancel order at this stage.")
 
-            if order.status in (
-                OrderStatus.DISPATCHED,
-                OrderStatus.DELIVERED,
-                OrderStatus.CANCELLED,
-            ):
-                raise ValidationError("Cannot cancel order in current state")
+        # 1. Release Stock
+        inventory_items = [
+            {"product_id": i.product_id, "quantity": i.quantity}
+            for i in order.items.all()
+        ]
+        InventoryService.release_stock(
+            warehouse_id=order.warehouse_id,
+            items=inventory_items,
+            reference=f"CANCEL-{order.id}"
+        )
 
-            items = [
-                {"product_id": i.product_id, "quantity": i.quantity}
-                for i in order.items.all()
-            ]
+        # 2. Trigger Refund (if paid)
+        if order.payment_status == Order.PaymentStatus.PAID:
+            from apps.payments.services import PaymentService
+            PaymentService.initiate_refund(order) # Will handle async
+            order.payment_status = Order.PaymentStatus.REFUNDED
 
-            InventoryService.release_stock(
-                warehouse_id=order.warehouse_id,
-                items=items,
-                reference=f"CANCEL-{order.order_id}",
-            )
+        # 3. Update Status
+        previous_status = order.status
+        order.status = Order.Status.CANCELLED
+        order.save(update_fields=['status', 'payment_status', 'updated_at'])
 
-            order.status = OrderStatus.CANCELLED
-            order.save(update_fields=["status"])
-
-            OrderTimeline.objects.create(
-                order=order,
-                status=OrderStatus.CANCELLED,
-                note=reason,
-                created_by=user,
-            )
-
-            return order
+        OrderTimeline.objects.create(
+            order=order,
+            status=Order.Status.CANCELLED,
+            description=f"Cancelled: {reason}"
+        )
+        
+        return order

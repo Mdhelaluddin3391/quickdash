@@ -1,53 +1,47 @@
-# apps/payments/models.py
-
 import uuid
 from django.db import models
 from django.conf import settings
+from apps.utils.models import TimestampedModel
 from apps.orders.models import Order
 
+class PaymentTransaction(TimestampedModel):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        SUCCESS = "SUCCESS", "Success"
+        FAILED = "FAILED", "Failed"
+        REFUND_INITIATED = "REFUND_INITIATED", "Refund Initiated"
+        REFUNDED = "REFUNDED", "Refunded"
 
-class PaymentIntent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    order = models.OneToOneField(Order, on_delete=models.PROTECT, related_name="payment_intent")
-    gateway = models.CharField(max_length=50)  # e.g. razorpay
-    amount = models.PositiveIntegerField()  # paise
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name='transactions')
+    
+    # Gateway specific
+    gateway_order_id = models.CharField(max_length=100, db_index=True, help_text="Razorpay Order ID")
+    gateway_payment_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+    gateway_signature = models.TextField(blank=True, null=True)
+    
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=10, default="INR")
-    gateway_order_id = models.CharField(max_length=100, unique=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    error_details = models.JSONField(default=dict, blank=True)
 
+    def __str__(self):
+        return f"{self.order_id} - {self.status}"
 
-class Payment(models.Model):
-    class Status(models.TextChoices):
-        SUCCESS = "SUCCESS"
-        FAILED = "FAILED"
+class RefundRecord(TimestampedModel):
+    transaction = models.ForeignKey(PaymentTransaction, on_delete=models.PROTECT, related_name='refunds')
+    gateway_refund_id = models.CharField(max_length=100, unique=True)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=50) # processed, pending, failed
+    notes = models.TextField(blank=True)
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="payments")
-    intent = models.ForeignKey(PaymentIntent, on_delete=models.PROTECT, related_name="payments")
-    gateway_payment_id = models.CharField(max_length=100, unique=True)
-    status = models.CharField(max_length=20, choices=Status.choices)
-    raw_payload = models.JSONField()
-    created_at = models.DateTimeField(auto_now_add=True)
-
-
-class Refund(models.Model):
-    class Status(models.TextChoices):
-        INITIATED = "INITIATED"
-        SUCCESS = "SUCCESS"
-        FAILED = "FAILED"
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    payment = models.ForeignKey(Payment, on_delete=models.PROTECT, related_name="refunds")
-    amount = models.PositiveIntegerField()
-    status = models.CharField(max_length=20, choices=Status.choices)
-    gateway_refund_id = models.CharField(max_length=100, null=True, blank=True)
-    reason = models.CharField(max_length=255)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-
-class WebhookLog(models.Model):
+class WebhookEvent(models.Model):
     """
-    Idempotency guard: each webhook event processed once.
+    Idempotency Log: Keeps track of processed webhook events.
     """
     event_id = models.CharField(max_length=100, unique=True)
-    processed_at = models.DateTimeField(auto_now_add=True)
+    event_type = models.CharField(max_length=100)
+    payload = models.JSONField()
+    received_at = models.DateTimeField(auto_now_add=True)
+    processed = models.BooleanField(default=False)

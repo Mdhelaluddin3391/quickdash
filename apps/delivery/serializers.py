@@ -1,17 +1,17 @@
 from rest_framework import serializers
-from .models import DeliveryTask, RiderEarning
-from apps.orders.serializers import OrderSerializer # Reusing existing order serializer
+from .models import DeliveryJob
 
-class DeliveryTaskSerializer(serializers.ModelSerializer):
-    order_details = OrderSerializer(source='order', read_only=True)
-    rider_name = serializers.CharField(source='rider.user.full_name', read_only=True)
-    
+class DeliveryJobSerializer(serializers.ModelSerializer):
+    warehouse_lat = serializers.FloatField(source='warehouse_location.y', read_only=True)
+    warehouse_lng = serializers.FloatField(source='warehouse_location.x', read_only=True)
+    customer_lat = serializers.FloatField(source='customer_location.y', read_only=True)
+    customer_lng = serializers.FloatField(source='customer_location.x', read_only=True)
+
     class Meta:
-        model = DeliveryTask
+        model = DeliveryJob
         fields = [
-            'id', 'status', 'rider_name', 'order_details', 
-            'assigned_at', 'picked_up_at', 'delivered_at'
+            'id', 'order_id', 'status', 'rider', 
+            'warehouse_lat', 'warehouse_lng',
+            'customer_lat', 'customer_lng',
+            'created_at'
         ]
-
-class OTPVerificationSerializer(serializers.Serializer):
-    otp = serializers.CharField(min_length=6, max_length=6)

@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.utils import timezone
@@ -11,16 +12,11 @@ class Role(models.TextChoices):
     ADMIN = "ADMIN", "Admin"
 
 class User(AbstractBaseUser, PermissionsMixin):
-    """
-    Core Identity Model. 
-    Phone number is the primary identifier.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     phone = models.CharField(max_length=15, unique=True, db_index=True)
     full_name = models.CharField(max_length=255, blank=True)
     email = models.EmailField(blank=True, null=True)
     
-    # Role context for the current session/primary usage
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.CUSTOMER)
     
     is_active = models.BooleanField(default=True)
@@ -40,9 +36,6 @@ class User(AbstractBaseUser, PermissionsMixin):
         return f"{self.phone} ({self.role})"
 
 class OTP(models.Model):
-    """
-    Secure OTP tracking with expiration and retry limits.
-    """
     phone = models.CharField(max_length=15, db_index=True)
     code = models.CharField(max_length=6)
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.CUSTOMER)
@@ -50,12 +43,16 @@ class OTP(models.Model):
     attempts = models.IntegerField(default=0)
     is_verified = models.BooleanField(default=False)
     expires_at = models.DateTimeField()
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
         verbose_name = 'OTP'
         verbose_name_plural = 'OTPs'
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['phone', 'created_at']),
+        ]
 
+    @property
     def is_expired(self):
         return timezone.now() > self.expires_at

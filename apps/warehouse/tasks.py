@@ -4,16 +4,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-@shared_task
-def allocate_stock_task(order_id, warehouse_id, items):
+@shared_task(bind=True, max_retries=3)
+def process_warehouse_order_task(self, order_id, warehouse_id, items):
     """
-    Async task to allocate stock for an order.
-    Triggered by Order Created signal.
+    Triggered when an Order is CONFIRMED (PAID).
+    Generates Picking Tasks.
     """
     try:
-        WarehouseOpsService.reserve_stock_for_order(order_id, warehouse_id, items)
-        logger.info(f"Stock allocated for Order {order_id}")
+        WarehouseOpsService.generate_picking_task(order_id, warehouse_id, items)
+        logger.info(f"Picking Task generated for Order {order_id}")
     except Exception as e:
-        logger.error(f"Allocation failed for Order {order_id}: {e}")
-        # Logic to auto-cancel order or flag for manual review
-        # apps.orders.services.OrderService.mark_allocation_failed(order_id)
+        logger.exception(f"Failed to generate picking task for {order_id}")
+        raise self.retry(exc=e, countdown=60)

@@ -1,70 +1,41 @@
 import uuid
-from decimal import Decimal
 from django.db import models
 from django.conf import settings
-from django.core.validators import MinValueValidator, MaxValueValidator
+from django.contrib.gis.db import models as gis_models
 from apps.utils.models import TimestampedModel
 
-class DeliveryTask(TimestampedModel):
-    """
-    Manages the lifecycle of a delivery from Warehouse to Customer.
-    """
-    class DeliveryStatus(models.TextChoices):
-        PENDING_ASSIGNMENT = "PENDING_ASSIGNMENT", "Pending Assignment"
-        ASSIGNED = "ASSIGNED", "Assigned to Rider"
-        ACCEPTED = "ACCEPTED", "Accepted by Rider"
-        AT_STORE = "AT_STORE", "Rider at Store"
+class DeliveryJob(TimestampedModel):
+    class Status(models.TextChoices):
+        SEARCHING = "SEARCHING", "Searching for Rider"
+        ASSIGNED = "ASSIGNED", "Rider Assigned"
         PICKED_UP = "PICKED_UP", "Picked Up"
-        DELIVERED = "DELIVERED", "Delivered"
-        CANCELLED = "CANCELLED", "Cancelled"
-        FAILED = "FAILED", "Failed"
+        COMPLETED = "COMPLETED", "Delivered"
+        FAILED = "FAILED", "Failed/Cancelled"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order_id = models.CharField(max_length=50, unique=True, db_index=True)
     
-    # Relationships
-    order = models.OneToOneField('orders.Order', on_delete=models.PROTECT, related_name='delivery_task')
-    rider = models.ForeignKey('accounts.RiderProfile', on_delete=models.SET_NULL, null=True, blank=True, related_name="tasks")
+    # Snapshot locations
+    warehouse_location = gis_models.PointField(srid=4326)
+    customer_location = gis_models.PointField(srid=4326)
     
-    # State
-    status = models.CharField(
-        max_length=32,
-        choices=DeliveryStatus.choices,
-        default=DeliveryStatus.PENDING_ASSIGNMENT,
-        db_index=True
+    # Assigned Rider (linked to Auth User for now, RiderProfile in Step 8)
+    rider = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        null=True, blank=True, 
+        on_delete=models.SET_NULL,
+        related_name='delivery_jobs'
     )
     
-    # Metadata
-    dispatch_record_id = models.CharField(max_length=100, null=True, blank=True, help_text="Link to WMS Dispatch")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.SEARCHING)
     
-    # Security
-    pickup_otp = models.CharField(max_length=6, blank=True)   # Verifies Rider picked up from Store
-    delivery_otp = models.CharField(max_length=6, blank=True) # Verifies Customer received package
+    # Tracking
+    pickup_time = models.DateTimeField(null=True, blank=True)
+    completion_time = models.DateTimeField(null=True, blank=True)
+    distance_meters = models.FloatField(default=0.0)
 
-    # Timestamps for SLA tracking
-    assigned_at = models.DateTimeField(null=True, blank=True)
-    accepted_at = models.DateTimeField(null=True, blank=True)
-    picked_up_at = models.DateTimeField(null=True, blank=True)
-    delivered_at = models.DateTimeField(null=True, blank=True)
-
-    # Feedback
-    rating = models.PositiveIntegerField(null=True, blank=True, validators=[MinValueValidator(1), MaxValueValidator(5)])
-    feedback = models.TextField(blank=True)
+    class Meta:
+        ordering = ['-created_at']
 
     def __str__(self):
-        return f"Task {self.id} | {self.status}"
-
-class RiderEarning(TimestampedModel):
-    """
-    Financial record for a completed delivery.
-    """
-    rider = models.ForeignKey('accounts.RiderProfile', on_delete=models.PROTECT, related_name="earnings")
-    delivery_task = models.OneToOneField(DeliveryTask, on_delete=models.PROTECT, related_name="earning")
-    
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
-    bonus = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    
-    is_settled = models.BooleanField(default=False)
-    settlement_ref = models.CharField(max_length=100, blank=True)
-
-    def __str__(self):
-        return f"{self.rider} - {self.amount}"
+        return f"Job {self.order_id} - {self.status}"

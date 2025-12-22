@@ -20,7 +20,7 @@ class Warehouse(models.Model):
 
 class Zone(models.Model):
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE, related_name='zones')
-    name = models.CharField(max_length=50) # e.g., "Cold Storage", "Ambient"
+    name = models.CharField(max_length=50)
     code = models.CharField(max_length=10)
 
     class Meta:
@@ -28,15 +28,11 @@ class Zone(models.Model):
 
 class Bin(models.Model):
     """
-    Physical storage location.
-    Format: Zone-Aisle-Shelf-Bin (e.g., Z1-A01-S04-B10)
+    Physical storage location (e.g., A1-B2).
     """
     zone = models.ForeignKey(Zone, on_delete=models.CASCADE, related_name='bins')
     bin_code = models.CharField(max_length=20, unique=True, db_index=True)
     is_active = models.BooleanField(default=True)
-    
-    # Capacity handling (optional, simplified for V1)
-    capacity_units = models.IntegerField(default=100)
 
     def __str__(self):
         return self.bin_code
@@ -44,7 +40,6 @@ class Bin(models.Model):
 class BinInventory(TimestampedModel):
     """
     Physical stock in a specific bin.
-    Source of Truth for Warehouse Operations.
     """
     bin = models.ForeignKey(Bin, on_delete=models.PROTECT, related_name='inventory')
     sku = models.ForeignKey('catalog.SKU', on_delete=models.PROTECT)
@@ -52,8 +47,11 @@ class BinInventory(TimestampedModel):
 
     class Meta:
         unique_together = ('bin', 'sku')
-        indexes = [
-            models.Index(fields=['bin', 'sku']),
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(quantity__gte=0), 
+                name='bin_inventory_qty_non_negative'
+            )
         ]
 
 class PickingTask(TimestampedModel):
@@ -65,16 +63,18 @@ class PickingTask(TimestampedModel):
 
     order_id = models.CharField(max_length=50, db_index=True)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
-    picker = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    picker = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        null=True, blank=True, 
+        on_delete=models.SET_NULL,
+        related_name='picking_tasks'
+    )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
 class PickItem(models.Model):
-    """
-    Specific instruction: "Go to Bin X and pick 5 of SKU Y"
-    """
     task = models.ForeignKey(PickingTask, on_delete=models.CASCADE, related_name='items')
     sku = models.ForeignKey('catalog.SKU', on_delete=models.PROTECT)
     bin = models.ForeignKey(Bin, on_delete=models.PROTECT)
@@ -83,11 +83,32 @@ class PickItem(models.Model):
     picked_qty = models.IntegerField(default=0)
     is_picked = models.BooleanField(default=False)
 
+class PackingTask(TimestampedModel):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        COMPLETED = "COMPLETED", "Completed"
+
+    picking_task = models.OneToOneField(PickingTask, on_delete=models.PROTECT, related_name='packing_task')
+    packer = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        null=True, blank=True, 
+        on_delete=models.SET_NULL,
+        related_name='packing_tasks'
+    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+
 class DispatchRecord(TimestampedModel):
-    """
-    Final stage before handing over to Delivery Rider.
-    """
-    picking_task = models.OneToOneField(PickingTask, on_delete=models.PROTECT)
-    status = models.CharField(max_length=20, default='READY', db_index=True)
-    pickup_otp = models.CharField(max_length=6) # Rider must verify this
-    rider_assigned = models.ForeignKey('riders.RiderProfile', null=True, blank=True, on_delete=models.SET_NULL)
+    class Status(models.TextChoices):
+        READY = "READY", "Ready for Pickup"
+        ASSIGNED = "ASSIGNED", "Rider Assigned"
+        HANDED_OVER = "HANDED_OVER", "Handed Over"
+
+    picking_task = models.OneToOneField(PickingTask, on_delete=models.PROTECT, related_name='dispatch_record')
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.READY)
+    
+    pickup_otp = models.CharField(max_length=6)
+    rider_id = models.CharField(max_length=50, null=True, blank=True)
+
+    # Denormalized for fast lookup
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
+    order_id = models.CharField(max_length=50, db_index=True)

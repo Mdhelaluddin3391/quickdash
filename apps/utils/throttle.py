@@ -1,9 +1,14 @@
-from rest_framework.throttling import UserRateThrottle
-
+from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
 
 class BurstRateThrottle(UserRateThrottle):
-    scope = "burst"
-
+    """
+    Strict throttling for OTP generation and login attempts.
+    Scope: 'burst' (Configured in settings as 10/min)
+    """
+    scope = 'burst'
 
 class SustainedRateThrottle(UserRateThrottle):
-    scope = "sustained"
+    """
+    General API usage.
+    """
+    scope = 'user'
