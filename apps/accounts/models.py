@@ -7,27 +7,29 @@ from .managers import UserManager
 class Role(models.TextChoices):
     CUSTOMER = "CUSTOMER", "Customer"
     RIDER = "RIDER", "Rider"
-    EMPLOYEE = "EMPLOYEE", "Employee"
+    WAREHOUSE_MANAGER = "MANAGER", "Warehouse Manager"
     ADMIN = "ADMIN", "Admin"
 
 class User(AbstractBaseUser, PermissionsMixin):
     """
     Core Identity Model. 
     Phone number is the primary identifier.
-    One User can have multiple roles assigned in AccountRole.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    phone_number = models.CharField(max_length=15, unique=True, db_index=True)
-    email = models.EmailField(blank=True, null=True)
+    phone = models.CharField(max_length=15, unique=True, db_index=True)
     full_name = models.CharField(max_length=255, blank=True)
+    email = models.EmailField(blank=True, null=True)
     
-    is_staff = models.BooleanField(default=False)
+    # Role context for the current session/primary usage
+    role = models.CharField(max_length=20, choices=Role.choices, default=Role.CUSTOMER)
+    
     is_active = models.BooleanField(default=True)
+    is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
 
     objects = UserManager()
 
-    USERNAME_FIELD = 'phone_number'
+    USERNAME_FIELD = 'phone'
     REQUIRED_FIELDS = []
 
     class Meta:
@@ -35,33 +37,25 @@ class User(AbstractBaseUser, PermissionsMixin):
         verbose_name_plural = 'Users'
 
     def __str__(self):
-        return self.phone_number
+        return f"{self.phone} ({self.role})"
 
-class UserRole(models.Model):
+class OTP(models.Model):
     """
-    Intersection table defining which roles a specific identity holds.
+    Secure OTP tracking with expiration and retry limits.
     """
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='roles')
-    role = models.CharField(max_length=20, choices=Role.choices)
+    phone = models.CharField(max_length=15, db_index=True)
+    code = models.CharField(max_length=6)
+    role = models.CharField(max_length=20, choices=Role.choices, default=Role.CUSTOMER)
+    
+    attempts = models.IntegerField(default=0)
     is_verified = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = ('user', 'role')
-
-    def __str__(self):
-        return f"{self.user.phone_number} - {self.role}"
-
-class OTPLog(models.Model):
-    """
-    Secure OTP tracking with expiration and usage flags.
-    """
-    phone_number = models.CharField(max_length=15, db_index=True)
-    otp_code = models.CharField(max_length=6)
-    purpose = models.CharField(max_length=50, default="LOGIN")
-    is_used = models.BooleanField(default=False)
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def is_valid(self):
-        return not self.is_used and timezone.now() < self.expires_at
+    class Meta:
+        verbose_name = 'OTP'
+        verbose_name_plural = 'OTPs'
+        ordering = ['-created_at']
+
+    def is_expired(self):
+        return timezone.now() > self.expires_at

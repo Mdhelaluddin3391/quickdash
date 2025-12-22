@@ -2,20 +2,15 @@ from rest_framework import serializers
 from .models import User, Role
 
 class OTPRequestSerializer(serializers.Serializer):
-    phone_number = serializers.CharField(max_length=15)
-    role = serializers.ChoiceField(choices=Role.choices)
+    phone = serializers.CharField(min_length=10, max_length=15)
+    role = serializers.ChoiceField(choices=Role.choices, default=Role.CUSTOMER)
 
 class OTPVerifySerializer(serializers.Serializer):
-    phone_number = serializers.CharField(max_length=15)
-    otp_code = serializers.CharField(max_length=6)
-    role = serializers.ChoiceField(choices=Role.choices)
+    phone = serializers.CharField(min_length=10, max_length=15)
+    otp = serializers.CharField(min_length=6, max_length=6)
+    role = serializers.ChoiceField(choices=Role.choices, default=Role.CUSTOMER)
 
-class UserProfileSerializer(serializers.ModelSerializer):
-    roles = serializers.SerializerMethodField()
-
+class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'phone_number', 'full_name', 'email', 'roles']
-
-    def get_roles(self, obj):
-        return [r.role for r in obj.roles.all()]
+        fields = ['id', 'phone', 'full_name', 'email', 'role']

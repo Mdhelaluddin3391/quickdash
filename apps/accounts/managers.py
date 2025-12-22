@@ -5,19 +5,14 @@ class UserManager(BaseUserManager):
 
     def _create_user(self, phone, password=None, **extra_fields):
         if not phone:
-            raise ValueError("The phone field must be set")
-
-        # NOTE: We do NOT enforce strict uniqueness of 'phone' here generally,
-        # because the same phone can exist for a Rider and a Customer.
-        # However, for Superuser creation, we want uniqueness.
-
+            raise ValueError("The phone number must be set")
+        
         user = self.model(phone=phone, **extra_fields)
-
         if password:
             user.set_password(password)
         else:
             user.set_unusable_password()
-
+        
         user.save(using=self._db)
         return user
 
@@ -29,15 +24,11 @@ class UserManager(BaseUserManager):
     def create_superuser(self, phone, password=None, **extra_fields):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
-        extra_fields.setdefault("is_active", True)
+        extra_fields.setdefault("role", "ADMIN")
 
         if extra_fields.get("is_staff") is not True:
             raise ValueError("Superuser must have is_staff=True.")
         if extra_fields.get("is_superuser") is not True:
             raise ValueError("Superuser must have is_superuser=True.")
-
-        # STRICT CHECK: Ensure no other Superuser has this phone
-        if self.model.objects.filter(phone=phone, is_superuser=True).exists():
-            raise ValueError("A superuser with this phone number already exists.")
 
         return self._create_user(phone, password, **extra_fields)

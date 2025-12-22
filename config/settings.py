@@ -179,6 +179,12 @@ CACHES = {
     }
 }
 
+AUTH_USER_MODEL = 'accounts.User' 
+
+# Ensure Celery is configured (basic config)
+CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost:6379/0')
+PROJECT_NAME = "QuickDash"
+
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
