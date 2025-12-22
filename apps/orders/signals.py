@@ -1,9 +1,5 @@
-# apps/orders/signals.py
 from django.dispatch import Signal
 
-# Orders app signals
-order_refund_requested = Signal()
-
-# Signal fired when a new order is confirmed and needs warehouse allocation
-# args: order_id, warehouse_id, items
-send_order_created = Signal()
+# Defined here, fired by Service or Receivers
+order_created = Signal() 
+order_status_changed = Signal()

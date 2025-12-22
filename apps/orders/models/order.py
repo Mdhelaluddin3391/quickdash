@@ -4,31 +4,42 @@ from django.conf import settings
 from apps.warehouse.models import Warehouse
 
 class OrderStatus(models.TextChoices):
-    PENDING_PAYMENT = "PENDING_PAYMENT", "Pending Payment"
+    CREATED = "CREATED", "Created (Pending Payment)"
     PAID = "PAID", "Paid & Confirmed"
-    PROCESSING = "PROCESSING", "Packing"
-    READY_FOR_PICKUP = "READY_FOR_PICKUP", "Ready for Rider"
-    OUT_FOR_DELIVERY = "OUT_FOR_DELIVERY", "Out for Delivery"
+    DISPATCHED = "DISPATCHED", "Dispatched"
     DELIVERED = "DELIVERED", "Delivered"
     CANCELLED = "CANCELLED", "Cancelled"
-    FAILED = "FAILED", "Payment Failed"
 
 class Order(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='orders')
-    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name='orders')
+    order_id = models.CharField(max_length=20, unique=True, editable=False)  # Human-readable ID (e.g., ORD-9382)
     
-    # Financials
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.PROTECT, 
+        related_name='orders'
+    )
+    warehouse = models.ForeignKey(
+        Warehouse, 
+        on_delete=models.PROTECT, 
+        related_name='orders'
+    )
+    
+    # Financials (Frozen at creation)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     delivery_fee = models.DecimalField(max_digits=6, decimal_places=2, default=0.00)
-    tax_amount = models.DecimalField(max_digits=6, decimal_places=2, default=0.00)
+    discount_amount = models.DecimalField(max_digits=6, decimal_places=2, default=0.00)
     
     # State
-    status = models.CharField(max_length=20, choices=OrderStatus.choices, default=OrderStatus.PENDING_PAYMENT)
-    payment_id = models.CharField(max_length=100, blank=True, null=True, help_text="Reference to Payment Transaction")
+    status = models.CharField(
+        max_length=20, 
+        choices=OrderStatus.choices, 
+        default=OrderStatus.CREATED, 
+        db_index=True
+    )
     
-    # Delivery Info Snapshot
-    delivery_address_snapshot = models.JSONField(help_text="Full address at time of order")
+    # Snapshot Data (Address at time of booking)
+    delivery_address_snapshot = models.JSONField()
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -40,8 +51,7 @@ class Order(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['user', 'status']),
-            models.Index(fields=['warehouse', 'status']),
         ]
 
     def __str__(self):
-        return f"Order #{str(self.id)[:8]} - {self.status}"
+        return f"{self.order_id} - {self.status}"
