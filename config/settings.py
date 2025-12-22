@@ -12,6 +12,17 @@ import sentry_sdk
 from sentry_sdk.integrations.django import DjangoIntegration
 from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.redis import RedisIntegration
+import os
+from django.core.exceptions import ImproperlyConfigured
+
+def get_env_variable(var_name):
+    """Get the environment variable or return exception."""
+    try:
+        return os.environ[var_name]
+    except KeyError:
+        raise ImproperlyConfigured(f"Set the {var_name} environment variable")
+
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # ==========================================
@@ -290,6 +301,9 @@ SPECTACULAR_SETTINGS = {
 RAZORPAY_KEY_ID = config("RAZORPAY_KEY_ID", default="rzp_test_placeholder")
 RAZORPAY_KEY_SECRET = config("RAZORPAY_KEY_SECRET", default="rzp_secret_placeholder")
 RAZORPAY_WEBHOOK_SECRET = config("RAZORPAY_WEBHOOK_SECRET", default=None)
+RAZORPAY_KEY_ID = get_env_variable('RAZORPAY_KEY_ID')
+RAZORPAY_KEY_SECRET = get_env_variable('RAZORPAY_KEY_SECRET')
+RAZORPAY_WEBHOOK_SECRET = get_env_variable('RAZORPAY_WEBHOOK_SECRET')
 
 TWILIO_ACCOUNT_SID = config("TWILIO_ACCOUNT_SID", default=None)
 TWILIO_AUTH_TOKEN = config("TWILIO_AUTH_TOKEN", default=None)

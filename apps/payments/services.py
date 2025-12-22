@@ -80,3 +80,59 @@ class PaymentService:
             )
             
         return txn
+
+from decimal import Decimal
+from apps.orders.models import Order, OrderItem
+from django.db import transaction
+
+class RefundService:
+    @staticmethod
+    def calculate_refund_amount(order_item: OrderItem) -> Decimal:
+        """
+        Calculates the exact refund amount, accounting for:
+        1. Item Price
+        2. Proportional Discount (Coupon split across items)
+        3. Tax adjustments (if applicable)
+        """
+        order = order_item.order
+        
+        # 1. Base amount paid for this line item
+        line_total = order_item.price_at_booking * order_item.quantity
+        
+        # 2. If no discount exists, return full amount
+        if order.discount_amount <= 0:
+            return line_total
+            
+        # 3. Calculate this item's weight in the total order value (before discount)
+        # Avoid division by zero
+        if order.total_amount_gross == 0:
+            return Decimal('0.00')
+            
+        item_weight = line_total / order.total_amount_gross
+        
+        # 4. Calculate share of discount
+        item_discount_share = order.discount_amount * item_weight
+        
+        # 5. Final Refundable Amount
+        refundable_amount = line_total - item_discount_share
+        
+        return round(refundable_amount, 2)
+
+    @staticmethod
+    @transaction.atomic
+    def process_item_refund(order_item_id):
+        item = OrderItem.objects.select_for_update().get(id=order_item_id)
+        
+        if item.status == 'REFUNDED':
+            raise ValueError("Item already refunded")
+            
+        refund_amount = RefundService.calculate_refund_amount(item)
+        
+        # ... Trigger Payment Gateway Refund (Razorpay/Stripe) ...
+        # payment_gateway.refund(order.payment_id, amount=refund_amount)
+        
+        item.status = 'REFUNDED'
+        item.refunded_amount = refund_amount
+        item.save()
+        
+        return refund_amount

@@ -45,3 +45,63 @@ class WarehouseService:
             )
             
             return inventory
+
+
+from django.db import transaction
+from django.core.exceptions import ValidationError
+from .models import Bin, Stock
+
+class PutawayService:
+    @staticmethod
+    def calculate_putaway_plan(sku, total_quantity, warehouse):
+        """
+        Distributes stock across multiple bins based on available capacity.
+        Returns a list of (bin, quantity_to_add).
+        """
+        # Get all eligible bins for this SKU or Empty bins, sorted by current load (fill nearly full ones first or empty ones? 
+        # Strategy: Fill mostly full bins first to clear aisles, then empty ones.)
+        eligible_bins = Bin.objects.filter(
+            warehouse=warehouse,
+            is_active=True
+        ).exclude(status='DAMAGED').order_by('-current_load')
+
+        plan = []
+        remaining_qty = total_quantity
+
+        for bin in eligible_bins:
+            if remaining_qty <= 0:
+                break
+            
+            # Assuming Bin has a 'capacity' field and 'current_load' field
+            available_space = bin.capacity - bin.current_load
+            
+            if available_space > 0:
+                qty_to_fit = min(remaining_qty, available_space)
+                plan.append((bin, qty_to_fit))
+                remaining_qty -= qty_to_fit
+
+        if remaining_qty > 0:
+            raise ValidationError(f"Warehouse Capacity Full! Cannot store {remaining_qty} items of {sku}.")
+            
+        return plan
+
+    @staticmethod
+    @transaction.atomic
+    def execute_grn(sku, total_quantity, warehouse):
+        plan = PutawayService.calculate_putaway_plan(sku, total_quantity, warehouse)
+        
+        for target_bin, qty in plan:
+            # Create or Update Stock
+            stock, created = Stock.objects.select_for_update().get_or_create(
+                bin=target_bin,
+                sku=sku,
+                defaults={'quantity': 0}
+            )
+            stock.quantity += qty
+            stock.save()
+            
+            # Update Bin Load
+            target_bin.current_load += qty
+            target_bin.save()
+            
+        return plan

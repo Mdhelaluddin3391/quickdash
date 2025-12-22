@@ -26,3 +26,32 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['category']
     search_fields = ['name', 'description']
+
+
+
+from rest_framework import viewsets
+from .models import Product
+from .serializers import ProductListSerializer
+
+class ProductViewSet(viewsets.ReadOnlyModelViewSet):
+    # OLD: queryset = Product.objects.all()
+    # NEW: Optimized QuerySet
+    queryset = Product.objects.filter(is_active=True).select_related(
+        'brand', 
+        'category'
+    ).prefetch_related(
+        'variants',      # e.g., Sizes/Colors
+        'tags'
+    ).order_by('-created_at')
+    
+    serializer_class = ProductListSerializer
+    
+    def get_queryset(self):
+        """
+        Allow filtering without breaking optimizations
+        """
+        qs = super().get_queryset()
+        category_id = self.request.query_params.get('category')
+        if category_id:
+            qs = qs.filter(category_id=category_id)
+        return qs

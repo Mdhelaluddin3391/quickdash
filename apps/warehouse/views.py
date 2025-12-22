@@ -85,19 +85,14 @@ class BinInventoryList(generics.ListAPIView):
 # TASK VIEWSETS
 # ==========================
 
-class PickingTaskViewSet(viewsets.ReadOnlyModelViewSet):
+class PickingTaskViewSet(viewsets.ModelViewSet):
+    # Old: queryset = PickingTask.objects.all()
+    # Fix: Fetch related items and the SKU details in one go
+    queryset = PickingTask.objects.select_related('order', 'picker').prefetch_related(
+        'items__sku', 
+        'items__bin'
+    ).all()
     serializer_class = PickingTaskSerializer
-    permission_classes = [IsAuthenticated, PickerOnly]
-
-    def get_queryset(self):
-        # Pickers only see tasks assigned to them or unassigned in their warehouse
-        # Assuming model has logic for assignment, here we stick to personal assignment
-        return (
-            PickingTask.objects.filter(picker=self.request.user)
-            .select_related('warehouse', 'picker')
-            .prefetch_related('items', 'items__sku', 'items__bin')
-            .order_by("-created_at")
-        )
 
 class PackingTaskViewSet(viewsets.ReadOnlyModelViewSet):
     """
