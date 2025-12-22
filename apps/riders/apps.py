@@ -3,3 +3,4 @@ from django.apps import AppConfig
 class RidersConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.riders"
+    verbose_name = "Rider Operations"
