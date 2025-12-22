@@ -1,406 +1,57 @@
-import logging
-import uuid
-import secrets 
-from rest_framework import status, views, permissions, generics
+from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.exceptions import Throttled, ValidationError
-from django.utils import timezone
-from django.db import transaction  # Important for atomic operations
-from django.contrib.auth import get_user_model
-from django.conf import settings
-from google.oauth2 import id_token
-from google.auth.transport import requests as google_requests
-from django.views.generic import TemplateView
+from .serializers import OTPRequestSerializer, OTPVerifySerializer, UserProfileSerializer
+from .services import AuthService
 
-from .models import PhoneOTP, UserSession, CustomerProfile, EmployeeProfile, RiderProfile, Address
-from .tasks import send_sms_task 
-from .serializers import (
-    SendOTPSerializer, 
-    VerifyOTPSerializer, 
-    CustomTokenObtainPairSerializer, 
-    GoogleLoginSerializer,
-    UserProfileSerializer,
-    CustomerMeSerializer,
-    AddressSerializer,
-    AddressListSerializer,
-)
-from .utils import validate_staff_email_domain, check_otp_rate_limit
-from .permissions import IsCustomer
-
-logger = logging.getLogger(__name__)
-User = get_user_model()
-
-# ==========================================
-# 1. SEND OTP (UNIFIED & SECURED)
-# ==========================================
-
-class SendOTPView(views.APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def get_client_ip(self, request):
-        """
-        Retrieves client IP securely using django-ipware logic to prevent spoofing.
-        Falls back to strict header checking if ipware is missing.
-        """
-        try:
-            from ipware import get_client_ip
-            ip, is_routable = get_client_ip(request)
-            if ip:
-                return ip
-        except ImportError:
-            pass
-
-        # Manual Fallback: Prioritize REMOTE_ADDR as the only trusted source
-        # unless behind a configured reverse proxy (e.g. Nginx).
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            # Only use the first IP if we trust the proxy chain.
-            # In a proper production setup, Nginx sets X-Real-IP.
-            proxies = x_forwarded_for.split(',')
-            return proxies[0].strip()
-            
-        return request.META.get('REMOTE_ADDR')
+class OTPRequestView(APIView):
+    permission_classes = [AllowAny]
 
     def post(self, request):
-        serializer = SendOTPSerializer(data=request.data)
+        serializer = OTPRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        phone = serializer.validated_data['phone']
-        role = serializer.validated_data['role']
-        client_ip = self.get_client_ip(request)
-
-        # 1. Rate Limiting (Redis)
-        check_otp_rate_limit(phone, role, ip=client_ip)
-
-        # 2. Strict Existence Checks (Prevent SMS Flooding)
-        if role == 'RIDER':
-            if not User.objects.filter(phone=phone, is_rider=True).exists():
-                return Response(
-                    {"detail": "No rider account found with this phone number."},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            user = User.objects.filter(phone=phone, is_rider=True).first()
-            if user and not hasattr(user, 'rider_profile'):
-                 return Response({"detail": "Rider profile incomplete."}, status=status.HTTP_403_FORBIDDEN)
-
-        elif role == 'EMPLOYEE':
-            if not User.objects.filter(phone=phone, is_employee=True).exists():
-                return Response(
-                    {"detail": "No employee account found with this phone number."},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-        # 3. Generate Secure OTP
-        rng = secrets.SystemRandom()
-        code = str(rng.randint(100000, 999999))
+        phone = serializer.validated_data['phone_number']
+        # Rate limiting should be handled via DRF Throttle classes
         
-        # 4. Create OTP with Race Condition Protection
-        otp_obj, error = PhoneOTP.create_otp(phone, role, code)
-        if error:
-            return Response({"detail": error}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        AuthService.generate_otp(phone)
+        
+        return Response({
+            "message": "OTP sent successfully.",
+            "status": "success"
+        }, status=status.HTTP_200_OK)
 
-        # 5. Send SMS Logic
-        if settings.DEBUG:
-            logger.info(f"OTP for {phone} ({role}): {code}")
-            return Response({"detail": "OTP sent (Dev Mode).", "dev_code": code})
-        else:
-            send_sms_task.delay(phone=phone, otp_code=code, login_type=role)
-            return Response({"detail": "OTP sent successfully via SMS."})
-
-
-# ==========================================
-# 2. LOGIN WITH OTP (UNIFIED)
-# ==========================================
-
-class LoginWithOTPView(views.APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def get_client_ip(self, request):
-        # We reuse the secure logic or fallback for session tracking
-        try:
-            from ipware import get_client_ip
-            ip, is_routable = get_client_ip(request)
-            if ip: return ip
-        except ImportError:
-            pass
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
+class OTPVerifyView(APIView):
+    permission_classes = [AllowAny]
 
     def post(self, request):
-        serializer = VerifyOTPSerializer(data=request.data)
+        serializer = OTPVerifySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
-        phone = serializer.validated_data['phone']
-        otp_code = serializer.validated_data['otp']
-        role = serializer.validated_data['role']
-        device_id = serializer.validated_data.get('device_id', '')
-        client_ip = self.get_client_ip(request)
-
-        # 1. SECURITY FIX: Brute-Force Protection (Verify Rate Limit)
-        try:
-            check_otp_rate_limit(phone, f"{role}_VERIFY", limit=5, period=60, ip=client_ip)
-        except Throttled:
-            return Response(
-                {"detail": "Too many failed attempts. Please try again in a minute."}, 
-                status=status.HTTP_429_TOO_MANY_REQUESTS
-            )
-
-        # 2. Validate OTP
-        otp_record = PhoneOTP.objects.filter(phone=phone, login_type=role).order_by('-created_at').first()
         
-        if not otp_record:
-            return Response({"detail": "OTP expired or not found."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Check validity (expiration, matches code, not used)
-        is_valid, message = otp_record.is_valid(otp_code)
-        if not is_valid:
-            return Response({"detail": message}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # 3. Get or Create User (Atomic Registration)
-        user = None
-        created = False
-        
-        try:
-            with transaction.atomic():
-                if role == 'CUSTOMER':
-                    # Atomic Get-or-Create
-                    user, created = User.objects.select_for_update().get_or_create(
-                        phone=phone, 
-                        is_customer=True,
-                        defaults={
-                            'is_active': True, 
-                            'full_name': 'Guest Customer',
-                            'app_role': 'CUSTOMER'
-                        }
-                    )
-                    
-                    # FIX: Use get_or_create to prevent IntegrityError if Signals already created the profile
-                    CustomerProfile.objects.get_or_create(user=user)
-                    
-                    # Ensure role consistency
-                    if user.app_role != 'CUSTOMER':
-                        user.app_role = 'CUSTOMER'
-                        user.save(update_fields=['app_role'])
-
-                elif role == 'RIDER':
-                    user = User.objects.filter(phone=phone, is_rider=True).first()
-                    if not user:
-                        return Response({"detail": "Rider account does not exist."}, status=status.HTTP_403_FORBIDDEN)
-                    
-                    # Security: Enforce Approval
-                    if not hasattr(user, 'rider_profile') or \
-                       user.rider_profile.approval_status != RiderProfile.ApprovalStatus.APPROVED:
-                        return Response({"detail": "Account not approved."}, status=status.HTTP_403_FORBIDDEN)
-                    
-                    user.app_role = 'RIDER'
-                    user.save(update_fields=['app_role'])
-
-                elif role == 'EMPLOYEE':
-                    user = User.objects.filter(phone=phone, is_employee=True).first()
-                    if not user:
-                         return Response({"detail": "Employee account does not exist."}, status=status.HTTP_403_FORBIDDEN)
-                    
-                    if not hasattr(user, 'employee_profile') or not user.employee_profile.is_active_employee:
-                         return Response({"detail": "Account inactive."}, status=status.HTTP_403_FORBIDDEN)
-                    
-                    user.app_role = 'EMPLOYEE'
-                    user.save(update_fields=['app_role'])
-        
-        except Exception as e:
-            # Log the actual error for debugging
-            logger.error(f"Login Transaction Error: {e}")
-            return Response({"detail": "Login processing failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        # 4. Mark OTP as used (Anti-Replay)
-        otp_record.is_used = True
-        otp_record.save(update_fields=['is_used'])
-
-        # 5. Session Management
-        jti = str(uuid.uuid4())
-        UserSession.objects.create(
-            user=user,
-            role=role,
-            jti=jti,
-            client=request.META.get('HTTP_USER_AGENT', '')[:255],
-            ip_address=client_ip,
-            device_id=device_id
+        user, error = AuthService.verify_otp(
+            serializer.validated_data['phone_number'],
+            serializer.validated_data['otp_code'],
+            serializer.validated_data['role']
         )
-
-        user.current_session_jti = jti 
-        user.save(update_fields=['current_session_jti'])
-
-        # 6. Token Generation
-        refresh = CustomTokenObtainPairSerializer.get_token(user)
-
+        
+        if error:
+            return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+        
+        refresh = RefreshToken.for_user(user)
+        # Custom claim for current role
+        refresh['current_role'] = serializer.validated_data['role']
+        
         return Response({
             "refresh": str(refresh),
             "access": str(refresh.access_token),
-            "user": {
-                "id": user.id,
-                "phone": user.phone,
-                "full_name": user.full_name,
-                "role": role
-            },
-            "is_new_user": created
+            "user": UserProfileSerializer(user).data
         })
 
-
-# ==========================================
-# 3. GOOGLE LOGIN (STAFF ONLY)
-# ==========================================
-class StaffGoogleLoginView(views.APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request):
-        serializer = GoogleLoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        token = serializer.validated_data['id_token']
-
-        try:
-            id_info = id_token.verify_oauth2_token(
-                token, google_requests.Request(), settings.GOOGLE_CLIENT_ID
-            )
-            email = id_info['email']
-            
-            validate_staff_email_domain(email)
-
-            user = User.objects.filter(email=email, is_employee=True).first()
-
-            if not user:
-                return Response({"detail": "No staff account found with this email."}, status=status.HTTP_403_FORBIDDEN)
-
-            if not hasattr(user, 'employee_profile'):
-                 return Response({"detail": "User is not an employee."}, status=status.HTTP_403_FORBIDDEN)
-            
-            profile = user.employee_profile
-            if not profile.can_access_admin_panel():
-                return Response({"detail": "You do not have permission to access the admin panel."}, status=status.HTTP_403_FORBIDDEN)
-
-            user.is_staff = True 
-            user.app_role = 'ADMIN_PANEL'
-            user.save()
-
-            jti = str(uuid.uuid4())
-            UserSession.objects.create(
-                user=user,
-                role='ADMIN_PANEL',
-                jti=jti,
-                client=request.META.get('HTTP_USER_AGENT', ''),
-                ip_address=request.META.get('REMOTE_ADDR')
-            )
-
-            user.current_session_jti = jti
-            refresh = CustomTokenObtainPairSerializer.get_token(user)
-
-            return Response({
-                "refresh": str(refresh),
-                "access": str(refresh.access_token),
-            })
-
-        except ValueError as e:
-            return Response({"detail": f"Invalid Token: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.error(f"Google Login Error: {str(e)}")
-            return Response({"detail": "Authentication failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-# ==========================================
-# 4. PROFILE & ADDRESS MANAGEMENT
-# ==========================================
-
-class MeView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
+class MeView(APIView):
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        profile_serializer = UserProfileSerializer(request.user)
-        return Response(profile_serializer.data)
-
-
-class CustomerMeView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated, IsCustomer]
-
-    def get(self, request):
-        user = request.user
-        customer, _ = CustomerProfile.objects.get_or_create(user=user)
-        addresses = user.addresses.all().order_by('-is_default', 'id')
-        data = CustomerMeSerializer({"user": user, "customer": customer, "addresses": addresses}).data
-        return Response(data)
-
-
-class CustomerAddressListCreateView(generics.ListCreateAPIView):
-    permission_classes = [permissions.IsAuthenticated, IsCustomer]
-
-    def get_serializer_class(self):
-        if self.request.method == 'GET':
-            return AddressListSerializer
-        return AddressSerializer
-
-    def get_queryset(self):
-        return Address.objects.filter(user=self.request.user).order_by('-is_default', '-id')
-
-    def perform_create(self, serializer):
-        make_default = serializer.validated_data.get("is_default", False)
-        if make_default:
-            Address.objects.filter(user=self.request.user, is_default=True).update(is_default=False)
-        serializer.save(user=self.request.user)
-
-
-class CustomerAddressDetailView(generics.RetrieveUpdateDestroyAPIView):
-    permission_classes = [permissions.IsAuthenticated, IsCustomer]
-    serializer_class = AddressSerializer
-
-    def get_queryset(self):
-        return Address.objects.filter(user=self.request.user)
-
-    def perform_update(self, serializer):
-        make_default = serializer.validated_data.get("is_default", False)
-        if make_default:
-            Address.objects.filter(user=self.request.user, is_default=True).exclude(id=self.get_object().id).update(is_default=False)
-        serializer.save(user=self.request.user)
-
-
-class SetDefaultAddressView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated, IsCustomer]
-
-    def post(self, request, pk):
-        try:
-            address = Address.objects.get(pk=pk, user=request.user)
-        except Address.DoesNotExist:
-            return Response({"detail": "Address not found."}, status=404)
-
-        Address.objects.filter(user=request.user, is_default=True).exclude(pk=pk).update(is_default=False)
-        address.is_default = True
-        address.save(update_fields=["is_default"])
-        return Response({"detail": "Default address updated."}, status=200)
-
-
-class LogoutView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request):
-        try:
-            refresh_token = request.data.get("refresh")
-            if not refresh_token:
-                return Response({"error": "Refresh token is required."}, status=status.HTTP_400_BAD_REQUEST)
-
-            token = RefreshToken(refresh_token)
-            token.blacklist()
-
-            # Revoke session
-            try:
-                jti = token['jti']
-                UserSession.objects.filter(jti=jti).update(is_active=False, revoked_at=timezone.now())
-            except Exception:
-                pass
-
-            return Response({"detail": "Logged out successfully"}, status=status.HTTP_205_RESET_CONTENT)
-        except Exception as e:
-            logger.error(f"Logout failed: {e}")
-            return Response({"error": "Invalid token or logout failed"}, status=status.HTTP_400_BAD_REQUEST)
-
-
-class LocationServiceCheckView(TemplateView):
-    template_name = 'location_service_check.html'
+        serializer = UserProfileSerializer(request.user)
+        return Response(serializer.data)

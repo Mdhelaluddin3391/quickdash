@@ -98,7 +98,9 @@ INSTALLED_APPS = [
     "apps.analytics",
     "apps.catalog",
     "apps.utils",
+    "apps.customers",
     "apps.web_admin",
+    "apps.riders",
 ]
 
 MIDDLEWARE = [

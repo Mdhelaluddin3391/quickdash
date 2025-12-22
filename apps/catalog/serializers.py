@@ -1,97 +1,14 @@
-# apps/catalog/serializers.py
 from rest_framework import serializers
-from .models import Category, Brand, SKU
-from .models import Banner, FlashSale
-
+from .models import Category, Product
 
 class CategorySerializer(serializers.ModelSerializer):
-    subcategories = serializers.SerializerMethodField(read_only=True)
-
     class Meta:
         model = Category
-        fields = [
-            "id",
-            "name",
-            "slug",
-            "parent",
-            "is_active",
-            "sort_order",
-            "icon_url",
-            "subcategories",
-        ]
+        fields = ['id', 'name', 'slug', 'image', 'parent']
 
-    def get_subcategories(self, obj):
-        qs = obj.subcategories.filter(is_active=True).order_by("sort_order", "name")
-        return CategorySerializer(qs, many=True, context=self.context).data
-
-
-class BrandSerializer(serializers.ModelSerializer):
+class ProductSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    
     class Meta:
-        model = Brand
-        fields = ["id", "name", "slug", "is_active", "logo_url"]
-
-
-class SKUSerializer(serializers.ModelSerializer):
-    category_name = serializers.CharField(source="category.name", read_only=True)
-    brand_name = serializers.CharField(source="brand.name", read_only=True)
-
-    class Meta:
-        model = SKU
-        fields = [
-            "id",
-            "sku_code",
-            "primary_barcode",
-            "name",
-            "description",
-            "category",
-            "category_name",
-            "brand",
-            "brand_name",
-            "unit",
-            "sale_price",
-            "cost_price",
-            "max_order_qty",
-            "min_order_qty",
-            "hsn_code",
-            "tax_rate",
-            "image_url",
-            "is_active",
-            "is_featured",
-            "is_returnable",
-            "weight_grams",
-            "volume_ml",
-            "shelf_life_days",
-            "search_keywords",
-            "metadata",
-            "created_at",
-            "updated_at",
-        ]
-        extra_kwargs = {
-            "category": {"write_only": True, "required": False, "allow_null": True},
-            "brand": {"write_only": True, "required": False, "allow_null": True},
-        }
-
-
-
-# apps/catalog/serializers.py (Append this)
-
-class BannerSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Banner
-        fields = ['id', 'title', 'image_url', 'target_url', 'position', 'bg_gradient']
-
-class FlashSaleSerializer(serializers.ModelSerializer):
-    sku_name = serializers.CharField(source='sku.name', read_only=True)
-    sku_image = serializers.URLField(source='sku.image_url', read_only=True)
-    sku_unit = serializers.CharField(source='sku.unit', read_only=True)
-    original_price = serializers.DecimalField(source='sku.sale_price', max_digits=10, decimal_places=2, read_only=True)
-    sku_id = serializers.UUIDField(source='sku.id', read_only=True)
-    sku_code = serializers.CharField(source='sku.sku_code', read_only=True)
-
-    class Meta:
-        model = FlashSale
-        fields = [
-            'id', 'sku_id', 'sku_code', 'sku_name', 'sku_image', 'sku_unit',
-            'original_price', 'discounted_price', 'percentage_sold', 
-            'discount_percent', 'end_time'
-        ]
+        model = Product
+        fields = ['id', 'name', 'slug', 'category', 'category_name', 'description', 'base_price', 'image', 'is_active']

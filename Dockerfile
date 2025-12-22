@@ -1,58 +1,52 @@
-FROM python:3.12-slim
+# STAGE 1: Builder
+FROM python:3.11-slim-bullseye as builder
 
-# Envs
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive
+WORKDIR /app
 
-WORKDIR /code
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
 
-# System Deps
+# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+    gcc \
     libpq-dev \
-    postgresql-client \
-    binutils \
-    libproj-dev \
-    gdal-bin \
-    libgdal-dev \
-    curl \
-    netcat-openbsd \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Dependencies (Cached Layer)
 COPY requirements.txt .
-# Added uvicorn explicitly to allow Gunicorn to run with uvicorn workers for ASGI/Channels support
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir whitenoise gunicorn uvicorn
+RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
 
-# User Setup (Create user BEFORE copying code to handle permissions correctly)
-RUN addgroup --system appgroup && adduser --system --group appuser
+# STAGE 2: Final
+FROM python:3.11-slim-bullseye
 
-# Scripts
-COPY wait-for-db.sh /wait-for-db.sh
-COPY start.sh /start.sh
-# Fix permissions so appuser can execute them
-RUN chmod +x /wait-for-db.sh /start.sh && \
-    chown appuser:appgroup /wait-for-db.sh /start.sh
+# Create a non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
 
-# Project Copy
+WORKDIR /home/appuser/app
+
+# Install runtime dependencies (libpq for Postgres)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    netcat \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy wheels from builder
+COPY --from=builder /app/wheels /wheels
+COPY --from=builder /app/requirements.txt .
+
+RUN pip install --no-cache /wheels/*
+
+# Copy Application Code
 COPY . .
-# Grant ownership to appuser
-RUN mkdir -p /code/staticfiles /code/media && \
-    chown -R appuser:appgroup /code
 
-# 🔒 SECURITY: Switch to non-root user
+# Chown all files to the app user
+RUN chown -R appuser:appuser /home/appuser/app
+
+# Switch to non-root user
 USER appuser
 
+# Expose port (Gunicorn/Uvicorn usually runs on 8000)
 EXPOSE 8000
 
-# Healthcheck
-# Checks the Django health endpoint. 
-# Gunicorn only starts serving execution of start.sh, meaning Migrations are done.
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-  CMD curl --fail http://localhost:8000/api/v1/utils/health/ || exit 1
-
-ENTRYPOINT ["/wait-for-db.sh"]
-CMD ["/start.sh"]
+# Entrypoint script to wait for DB and start server
+ENTRYPOINT ["/home/appuser/app/start.sh"]

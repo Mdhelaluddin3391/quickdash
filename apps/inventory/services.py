@@ -1,125 +1,78 @@
-import logging
 from django.db import transaction
-from django.core.exceptions import ValidationError
-from apps.inventory.models import InventoryItem
-from apps.catalog.models import Product
-
-logger = logging.getLogger(__name__)
+from django.db.models import F
+from .models import WarehouseInventory, StockMovementLog
+from apps.utils.exceptions import BusinessLogicException
 
 class InventoryService:
-    """
-    Service for managing inventory levels, stock allocation, and reconciliation.
-    Ensures atomic updates to prevent race conditions.
-    """
-
     @staticmethod
-    def get_total_stock(product: Product) -> int:
-        """Returns total available stock across all warehouses."""
-        items = InventoryItem.objects.filter(product=product)
-        return sum(item.quantity for item in items)
-
-    @staticmethod
-    @transaction.atomic
-    def check_and_allocate_stock(product: Product, quantity: int, warehouse=None):
-        """
-        Checks if enough stock exists and reserves it.
-        Uses select_for_update() to lock rows and prevent race conditions.
-        """
-        if quantity <= 0:
-            raise ValidationError("Quantity must be positive.")
-
-        # If a specific warehouse is requested, lock only that record
-        if warehouse:
-            inventory_qs = InventoryItem.objects.select_for_update().filter(
-                product=product, warehouse=warehouse
+    def check_availability(warehouse_id, product_id, requested_qty):
+        try:
+            inventory = WarehouseInventory.objects.get(
+                warehouse_id=warehouse_id, 
+                product_id=product_id
             )
-        else:
-            # Otherwise, check all warehouses (simplified allocation strategy: First Match)
-            inventory_qs = InventoryItem.objects.select_for_update().filter(
-                product=product, quantity__gte=0
-            ).order_by('-quantity')
-
-        if not inventory_qs.exists():
-            logger.warning(f"No inventory record found for product {product.id}")
-            raise ValidationError(f"Product {product.name} is out of stock.")
-
-        remaining_needed = quantity
-        allocated_items = []
-
-        # Greedy allocation logic
-        for item in inventory_qs:
-            if remaining_needed <= 0:
-                break
-
-            available = item.quantity - item.reserved_quantity
-            
-            if available <= 0:
-                continue
-
-            to_take = min(remaining_needed, available)
-            
-            # Update the record in memory
-            item.reserved_quantity += to_take
-            item.save()
-            
-            allocated_items.append(item)
-            remaining_needed -= to_take
-
-        if remaining_needed > 0:
-            # Rollback is automatic due to transaction.atomic if we raise error here
-            logger.info(f"Insufficient stock for {product.name}. Needed {quantity}, missing {remaining_needed}")
-            raise ValidationError(f"Insufficient stock for {product.name}. Only {quantity - remaining_needed} available.")
-        
-        logger.info(f"Successfully allocated {quantity} of {product.name}")
-        return True
+            return inventory.available_quantity >= requested_qty
+        except WarehouseInventory.DoesNotExist:
+            return False
 
     @staticmethod
     @transaction.atomic
-    def release_stock(product: Product, quantity: int):
+    def reserve_stock(warehouse_id, product_id, qty, order_id):
         """
-        Releases reserved stock back to available pool (e.g. Order Cancellation).
+        Locks the row and reserves stock.
+        CRITICAL: Must be atomic to prevent race conditions.
         """
-        # We need to find where the stock was reserved. 
-        # For simplicity in this recovery phase, we release from items with reserved stock.
-        inventory_items = InventoryItem.objects.select_for_update().filter(
-            product=product, reserved_quantity__gt=0
-        )
-
-        remaining_to_release = quantity
-
-        for item in inventory_items:
-            if remaining_to_release <= 0:
-                break
-
-            to_release = min(remaining_to_release, item.reserved_quantity)
-            item.reserved_quantity -= to_release
-            item.save()
-            remaining_to_release -= to_release
-
-        if remaining_to_release > 0:
-            logger.error(f"Could not fully release stock for {product.name}. Mismatch detected.")
-            # We do NOT raise here to avoid blocking cancellation flows, but we log strictly.
+        try:
+            # select_for_update() locks the row until transaction commits
+            inventory = WarehouseInventory.objects.select_for_update().get(
+                warehouse_id=warehouse_id, 
+                product_id=product_id
+            )
+            
+            if inventory.available_quantity < qty:
+                raise BusinessLogicException(f"Insufficient stock for product {product_id}")
+            
+            # Update using F expressions for safety
+            inventory.reserved_quantity = F('reserved_quantity') + qty
+            inventory.save()
+            
+            # We don't log movement yet, only reservation.
+            return True
+        except WarehouseInventory.DoesNotExist:
+            raise BusinessLogicException("Product not available in this warehouse")
 
     @staticmethod
     @transaction.atomic
-    def confirm_shipment(product: Product, quantity: int):
+    def confirm_stock_deduction(warehouse_id, product_id, qty, order_id):
         """
-        Permanently removes stock from quantity and reserved_quantity (Order Fulfilled).
+        Called when payment is successful. Converts reservation to permanent deduction.
         """
-        inventory_items = InventoryItem.objects.select_for_update().filter(
-            product=product, reserved_quantity__gt=0
+        inventory = WarehouseInventory.objects.select_for_update().get(
+            warehouse_id=warehouse_id, 
+            product_id=product_id
         )
         
-        remaining = quantity
-        for item in inventory_items:
-            if remaining <= 0:
-                break
-            
-            deduct = min(remaining, item.reserved_quantity)
-            item.quantity -= deduct
-            item.reserved_quantity -= deduct
-            item.save()
-            remaining -= deduct
-            
-        if remaining > 0:
-            logger.critical(f"Shipment confirmed for {product.name} but reserved stock was missing!")
+        # Release reservation and reduce actual quantity
+        inventory.reserved_quantity = F('reserved_quantity') - qty
+        inventory.quantity = F('quantity') - qty
+        inventory.save()
+        
+        StockMovementLog.objects.create(
+            inventory=inventory,
+            quantity_change=-qty,
+            movement_type='OUTBOUND',
+            reference_id=str(order_id)
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def release_reservation(warehouse_id, product_id, qty):
+        """
+        Called if payment fails or order timeout.
+        """
+        inventory = WarehouseInventory.objects.select_for_update().get(
+            warehouse_id=warehouse_id, 
+            product_id=product_id
+        )
+        inventory.reserved_quantity = F('reserved_quantity') - qty
+        inventory.save()
