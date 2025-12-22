@@ -14,6 +14,7 @@ class DeliveryJob(TimestampedModel):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order_id = models.CharField(max_length=50, unique=True, db_index=True)
+    delivery_otp = models.CharField(max_length=6, blank=True, help_text="OTP required to complete delivery")
     
     # Snapshot locations
     warehouse_location = gis_models.PointField(srid=4326)

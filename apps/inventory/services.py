@@ -198,3 +198,55 @@ class InventoryService:
              raise BusinessLogicException("Out of stock (Fast Path)")
         
         return True
+
+
+    @staticmethod
+    def check_and_reserve_high_velocity(product_id: str, qty: int):
+        """
+        [SCALABILITY] Uses Redis Atomic Decrement for hot items.
+        Returns True if stock was successfully reserved in Redis.
+        """
+        from django.core.cache import cache
+        
+        cache_key = f"stock_cache:{product_id}"
+        
+        # Lua Script ensures atomicity: Check if key exists -> Check value -> Decrement
+        # Returns: New Value if success, -1 if missing/insufficient
+        lua_script = """
+        if redis.call('exists', KEYS[1]) == 1 then
+            local curr = tonumber(redis.call('get', KEYS[1]))
+            local req = tonumber(ARGV[1])
+            if curr >= req then
+                return redis.call('decrby', KEYS[1], req)
+            else
+                return -2 -- Insufficient
+            end
+        else
+            return -1 -- Key missing (Fall back to DB)
+        end
+        """
+        
+        # We need raw redis client for Lua
+        from django_redis import get_redis_connection
+        redis_conn = get_redis_connection("default")
+        
+        try:
+            result = redis_conn.eval(lua_script, 1, cache_key, qty)
+            
+            if result == -2:
+                raise BusinessLogicException("Out of stock (Fast Path)")
+            
+            if result == -1:
+                # Cache miss: We allow it to proceed to DB lock, 
+                # OR we could force a cache warm-up here.
+                # For safety, we return True to let DB handle it.
+                return True
+                
+            return True
+            
+        except Exception as e:
+            # If Redis fails, FAIL OPEN (Let DB handle it) to prevent downtime
+            logger.warning(f"Redis Error for {product_id}: {e}")
+            return True
+
+    

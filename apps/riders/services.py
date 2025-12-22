@@ -2,8 +2,55 @@ from django.contrib.gis.geos import Point
 from django.utils import timezone
 from django.db import transaction
 from .models import RiderProfile, RiderEarnings
+from .models import RiderShift
 
 class RiderService:
+
+    @staticmethod
+    @transaction.atomic
+    def toggle_status(user, is_online: bool):
+        """
+        Rider switches "Start Duty" / "Stop Duty".
+        Manages Shift Records automatically.
+        """
+        profile = user.rider_profile
+        
+        # No change? Exit
+        if profile.is_online == is_online:
+            return profile
+
+        now = timezone.now()
+
+        if is_online:
+            # START SHIFT
+            profile.is_online = True
+            profile.is_available = True
+            
+            # Create new shift record
+            RiderShift.objects.create(
+                rider=profile,
+                start_time=now,
+                status="ACTIVE"
+            )
+        else:
+            # END SHIFT
+            profile.is_online = False
+            profile.is_available = False
+            
+            # Close active shift
+            active_shift = RiderShift.objects.filter(
+                rider=profile, 
+                end_time__isnull=True
+            ).last()
+            
+            if active_shift:
+                active_shift.end_time = now
+                active_shift.duration_minutes = (now - active_shift.start_time).seconds // 60
+                active_shift.status = "COMPLETED"
+                active_shift.save()
+
+        profile.save(update_fields=['is_online', 'is_available'])
+        return profile
 
     @staticmethod
     def create_pending_profile(user):

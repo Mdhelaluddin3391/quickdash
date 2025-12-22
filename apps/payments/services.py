@@ -19,6 +19,51 @@ class PaymentService:
             raise BusinessLogicException("Payment Gateway not configured.")
         return razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
+
+    @staticmethod
+    def sync_payment_status(order):
+        """
+        Active polling: Checks Razorpay API directly before we decide to cancel an order.
+        Returns True if paid (and updates local DB), False otherwise.
+        """
+        try:
+            # 1. Find the PENDING transaction to get the gateway_order_id
+            from .models import PaymentTransaction
+            txn = order.transactions.filter(status=PaymentTransaction.Status.PENDING).first()
+            
+            if not txn or not txn.gateway_order_id:
+                return False
+
+            # 2. Query Razorpay API
+            client = PaymentService._get_client()
+            rzp_order = client.order.fetch(txn.gateway_order_id)
+            
+            # 3. Check if status is 'paid' at the source
+            if rzp_order.get('status') == 'paid':
+                logger.info(f"Payment Sync: Found PAID status for Order {order.id} on Gateway. Recovering...")
+                
+                # Fetch payments linked to this order to get the payment ID
+                payments = client.order.payments(txn.gateway_order_id)
+                if payments and 'items' in payments:
+                    # Find the first successful 'captured' payment
+                    successful_payment = next((p for p in payments['items'] if p['status'] == 'captured'), None)
+                    
+                    if successful_payment:
+                        # [RECOVERY] Process it as if the webhook just arrived
+                        PaymentService.process_payment_success({
+                            'razorpay_order_id': txn.gateway_order_id,
+                            'razorpay_payment_id': successful_payment['id'],
+                            'razorpay_signature': None # Trusted because we fetched it from API directly
+                        })
+                        return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"Payment Sync Error for {order.id}: {e}")
+            # On error, we return False so the caller (Cancel Task) proceeds with caution 
+            # or retries later. For safety, we assume unpaid if API fails.
+            return False
+
     @staticmethod
     @transaction.atomic
     def create_payment_order(order):

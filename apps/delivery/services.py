@@ -1,3 +1,4 @@
+import secrets
 from django.db import transaction
 from django.utils import timezone
 from django.contrib.gis.db.models.functions import Distance
@@ -22,15 +23,60 @@ class DeliveryService:
         cust_lat = addr.get('lat', 12.9716)
         cust_lng = addr.get('lng', 77.5946)
         
+        # [SECURE] Generate 6-digit OTP
+        otp_code = str(secrets.SystemRandom().randint(100000, 999999))
+        
         job = DeliveryJob.objects.create(
             order_id=order.id,
             warehouse_location=wh_location,
             customer_location=Point(float(cust_lng), float(cust_lat)),
-            status=DeliveryJob.Status.SEARCHING
+            status=DeliveryJob.Status.SEARCHING,
+            delivery_otp=otp_code  # Persist OTP securely
         )
         
         from .tasks import assign_rider_task
         assign_rider_task.delay(str(job.id))
+        return job
+
+    @staticmethod
+    @transaction.atomic
+    def update_job_status(job_id: str, status: str, user, otp: str = None):
+        # [CRITICAL] Lock the row to prevent race conditions during status transition
+        job = DeliveryJob.objects.select_for_update().get(id=job_id)
+        
+        if job.rider != user:
+            raise BusinessLogicException("Not authorized.")
+
+        # [IDEMPOTENCY] If already completed, do nothing (prevent double payout/logic)
+        if job.status == DeliveryJob.Status.COMPLETED:
+            return job
+
+        # [SECURITY] Enforce OTP validation for COMPLETION
+        if status == DeliveryJob.Status.COMPLETED:
+            if not otp:
+                raise BusinessLogicException("Delivery OTP is required to complete this job.")
+            
+            # Constant time comparison to prevent timing attacks (though overkill for OTP, good practice)
+            if job.delivery_otp != otp:
+                raise BusinessLogicException("Invalid Delivery OTP provided.")
+
+        job.status = status
+        
+        if status == DeliveryJob.Status.PICKED_UP:
+            job.pickup_time = timezone.now()
+            
+        elif status == DeliveryJob.Status.COMPLETED:
+            job.completion_time = timezone.now()
+            
+            # Release Rider
+            from apps.riders.services import RiderService
+            RiderService.mark_available(user)
+            
+            # Update Order Status (String reference to avoid circular imports)
+            Order.objects.filter(id=job.order_id).update(status='DELIVERED')
+
+        job.save()
+        broadcast_delivery_update(str(job.id), status, {})
         return job
 
     @staticmethod

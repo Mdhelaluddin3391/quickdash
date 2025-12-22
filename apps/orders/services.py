@@ -19,19 +19,31 @@ class OrderService:
     @transaction.atomic
     def create_order(user, address_data: dict, cart_items: list):
         """
-        1. Select Warehouse
-        2. Reserve Stock (Pessimistic Lock)
-        3. Create Order
+        1. Geo-Validate Location
+        2. Select Warehouse
+        3. Reserve Stock
+        4. Create Order
         """
-        # 1. Select Warehouse based on location
-        warehouse = WarehouseSelector.get_nearest_warehouse(
-            lat=address_data['lat'], 
-            lng=address_data['lng']
-        )
-        if not warehouse:
-            raise BusinessLogicException("Location not serviceable.")
+        lat = address_data.get('lat')
+        lng = address_data.get('lng')
 
-        # 2. Prep Inventory Payload
+        # [SECURITY FIX] Strict Server-Side Validation
+        # The frontend provides lat/lng, but we MUST verify it falls inside a known polygon.
+        # This prevents 'spoofed' coordinates that are technically valid but operationally wrong.
+        
+        from apps.warehouse.utils.warehouse_selector import WarehouseSelector
+        
+        # Use get_serviceable_warehouse which performs the Point-in-Polygon (PIP) check
+        warehouse = WarehouseSelector.get_serviceable_warehouse(lat, lng)
+        
+        if not warehouse:
+            # Reject outright if the coordinates are not inside any active ServiceArea polygon
+            logger.warning(f"Order Blocked: Coordinates {lat},{lng} are out of bounds.")
+            raise BusinessLogicException("Sorry, we do not deliver to this location.")
+
+        # [ LOGIC CONTINUES... ]
+        
+        # Prep Inventory Payload
         inventory_items = []
         total_amount = Decimal('0.00')
         
@@ -42,7 +54,7 @@ class OrderService:
             })
             total_amount += Decimal(str(item['price'])) * item['quantity']
 
-        # 3. Reserve Stock (Will raise error if insufficient)
+        # Reserve Stock
         order_id = generate_order_id()
         InventoryService.reserve_stock(
             warehouse_id=warehouse.id,
@@ -50,7 +62,7 @@ class OrderService:
             reference=order_id
         )
 
-        # 4. Create Order DB Record
+        # Create Order
         order = Order.objects.create(
             id=order_id,
             user=user,
@@ -60,7 +72,7 @@ class OrderService:
             status=Order.Status.PENDING
         )
 
-        # 5. Create Items
+        # Create Items
         order_items = [
             OrderItem(
                 order=order,
