@@ -1,70 +1,52 @@
-import random
-from datetime import timedelta
+import secrets
 from django.utils import timezone
 from django.conf import settings
-from .models import User, UserRole, Role, OTPLog
+from .models import User, OTP
+from .tasks import send_sms_task
 
 class AuthService:
-    """
-    Domain logic for Authentication and Identity Management.
-    """
     
     @staticmethod
-    def generate_otp(phone_number, purpose="LOGIN"):
-        # Security: In production, use a more secure random source
-        otp_code = str(random.randint(100000, 999999))
-        expiry = timezone.now() + timedelta(minutes=5)
+    def generate_otp(phone_number):
+        # CRITICAL FIX: Use secrets for cryptographically strong random numbers
+        otp_code = str(secrets.SystemRandom().randint(100000, 999999))
         
-        # Invalidate old unused OTPs for this phone
-        OTPLog.objects.filter(phone_number=phone_number, is_used=False).update(is_used=True)
+        # Invalidate old OTPs
+        OTP.objects.filter(phone_number=phone_number, is_verified=False).delete()
         
-        otp_log = OTPLog.objects.create(
+        otp = OTP.objects.create(
             phone_number=phone_number,
-            otp_code=otp_code,
-            expires_at=expiry,
-            purpose=purpose
+            code=otp_code,
+            expires_at=timezone.now() + timezone.timedelta(minutes=5)
         )
         
-        # Integration point for SMS Gateway
-        # send_sms_task.delay(phone_number, f"Your OTP is {otp_code}")
-        
-        return otp_log
+        # Send via Celery
+        if not settings.DEBUG:
+            send_sms_task.delay(phone_number, f"Your QuickDash login code is {otp_code}")
+            
+        return otp_code
 
     @staticmethod
-    def verify_otp(phone_number, otp_code, role_requested):
-        """
-        Validates OTP and handles role-based account creation/check.
-        """
-        otp_entry = OTPLog.objects.filter(
-            phone_number=phone_number,
-            otp_code=otp_code,
-            is_used=False
-        ).last()
-
-        if not otp_entry or not otp_entry.is_valid():
-            return None, "Invalid or expired OTP"
-
-        otp_entry.is_used = True
-        otp_entry.save()
-
-        # Get or Create Identity
-        user, created = User.objects.get_or_create(phone_number=phone_number)
-        
-        # Check Role Permissions
-        user_role, role_exists = UserRole.objects.get_or_create(user=user, role=role_requested)
-        
-        if role_requested in [Role.RIDER, Role.EMPLOYEE]:
-            if not user_role.is_verified:
-                return None, f"Unauthorized: {role_requested} account requires admin approval."
-
-        return user, None
-
-    @staticmethod
-    def switch_role(user, target_role):
-        """
-        Ensures a user is switching to a role they actually possess.
-        """
-        has_role = UserRole.objects.filter(user=user, role=target_role).exists()
-        if not has_role:
-            raise ValueError(f"User does not have the {target_role} role.")
-        return True
+    def verify_otp(phone_number, code):
+        try:
+            otp = OTP.objects.get(
+                phone_number=phone_number,
+                code=code,
+                is_verified=False
+            )
+            
+            if otp.is_expired():
+                raise ValueError("OTP expired")
+                
+            otp.is_verified = True
+            otp.save()
+            
+            user, created = User.objects.get_or_create(phone=phone_number)
+            if created:
+                user.role = 'CUSTOMER'
+                user.save()
+                
+            return user, created
+            
+        except OTP.DoesNotExist:
+            raise ValueError("Invalid OTP")

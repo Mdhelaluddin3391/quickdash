@@ -9,6 +9,96 @@ from .serializers import CartSerializer, OrderSerializer
 from .services import OrderService
 from apps.catalog.models import Product
 
+
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from django.db import transaction
+from django.core.cache import cache
+
+from apps.utils.views import BaseViewSet
+from .models import Order, Cart
+from .serializers import OrderSerializer, CartSerializer
+from .services import OrderService
+from apps.utils.exceptions import BusinessValidationError
+
+class CheckoutViewSet(BaseViewSet):
+    permission_classes = [IsAuthenticated]
+    
+    @action(detail=False, methods=['post'])
+    def process_checkout(self, request):
+        """
+        Main checkout endpoint.
+        
+        SEQUENCE:
+        1. Idempotency Check (Redis)
+        2. Cart Validation
+        3. Atomic Transaction (Order Creation + Stock Reservation)
+        4. Payment Initialization
+        """
+        
+        # 1. Idempotency Check
+        idempotency_key = request.headers.get('X-Idempotency-Key')
+        if not idempotency_key:
+            return Response(
+                {"error": "X-Idempotency-Key header is required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        cache_key = f"checkout_idempotency_{request.user.id}_{idempotency_key}"
+        if cache.get(cache_key):
+             return Response(
+                {"error": "Duplicate request detected"}, 
+                status=status.HTTP_409_CONFLICT
+            )
+            
+        # Lock this key for 60 seconds to prevent rapid double-clicks
+        cache.set(cache_key, "processing", timeout=60)
+
+        try:
+            # Data extraction
+            cart_id = request.data.get('cart_id')
+            payment_method = request.data.get('payment_method', 'RAZORPAY')
+            address_id = request.data.get('address_id')
+            
+            # 2. & 3. Atomic Order Creation (Delegated to Service)
+            # This service method already contains the transaction.atomic() and select_for_update() logic
+            order = OrderService.create_order_from_cart(
+                user=request.user, 
+                cart_id=cart_id, 
+                payment_method=payment_method, 
+                address_id=address_id
+            )
+            
+            # 4. Payment Initialization (Mock for now, would be Razorpay integration)
+            payment_data = {
+                "order_id": order.order_id,
+                "amount": order.total_amount,
+                "currency": "INR",
+                # "payment_link": ... (Razorpay logic would go here)
+            }
+            
+            return Response({
+                "status": "success",
+                "message": "Order created successfully",
+                "data": {
+                    "order": OrderSerializer(order).data,
+                    "payment": payment_data
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except BusinessValidationError as e:
+            cache.delete(cache_key) # Release lock on business failure
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            cache.delete(cache_key) # Release lock on system failure
+            # Log the full exception here
+            return Response(
+                {"error": "Checkout failed due to a system error. Please try again."}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 class CartViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
