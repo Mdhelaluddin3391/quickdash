@@ -6,7 +6,7 @@ from decimal import Decimal
 from django.db import transaction
 from django.db.models import Sum, Count, Avg, F, ExpressionWrapper, DurationField
 from django.utils import timezone
-
+from apps.warehouse.models import PickingTask, DispatchRecord
 from apps.orders.models import Order, OrderItem
 from apps.warehouse.models import Warehouse
 from apps.delivery.models import DeliveryTask
@@ -96,6 +96,7 @@ def compute_warehouse_kpi_snapshot(day: date | None = None) -> None:
     start, end = _start_end_of_day(day)
 
     for wh in Warehouse.objects.filter(is_active=True):
+        # 1. Base Order Counts
         o_qs = Order.objects.filter(
             warehouse=wh,
             created_at__gte=start,
@@ -104,45 +105,47 @@ def compute_warehouse_kpi_snapshot(day: date | None = None) -> None:
         orders_created = o_qs.count()
         orders_dispatched = o_qs.filter(status="dispatched").count()
         orders_delivered = o_qs.filter(status="delivered").count()
-        orders_cancelled = o_qs.filter(status__in=["cancelled", "cancelled_fc"]).count()
-
-        # --- FIX START: Commented out missing fields logic ---
-        # assuming Order has fields: picking_started_at, packing_completed_at, dispatched_at, delivered_at
         
-        # pick_duration = ExpressionWrapper(
-        #     F("picking_completed_at") - F("picking_started_at"), output_field=DurationField()
-        # )
-        # pack_duration = ExpressionWrapper(
-        #     F("packing_completed_at") - F("picking_completed_at"), output_field=DurationField()
-        # )
+        # 2. Calculate Pick Duration from PickingTasks
+        # Filter tasks completed today
+        pick_tasks = PickingTask.objects.filter(
+            warehouse=wh,
+            status='COMPLETED',
+            completed_at__gte=start,
+            completed_at__lte=end,
+            started_at__isnull=False
+        )
         
-        # Delivery duration can be calculated if dispatched_at and delivered_at exist
-        delivery_duration = ExpressionWrapper(
-            F("delivered_at") - F("dispatched_at"), output_field=DurationField()
-        )
+        total_pick_seconds = 0
+        pick_count = 0
+        for task in pick_tasks:
+            duration = (task.completed_at - task.started_at).total_seconds()
+            if duration > 0:
+                total_pick_seconds += duration
+                pick_count += 1
+        
+        avg_pick_time = int(total_pick_seconds / pick_count) if pick_count > 0 else 0
 
-        t = o_qs.aggregate(
-            # avg_pick=Avg(pick_duration),  # Commented out
-            # avg_pack=Avg(pack_duration),  # Commented out
-            avg_delivery=Avg(delivery_duration),
-        )
+        # 3. Calculate Pack Duration (Time from Pick Complete -> Dispatch Ready)
+        # Using DispatchRecord
+        dispatches = DispatchRecord.objects.filter(
+            warehouse=wh,
+            created_at__gte=start,
+            created_at__lte=end
+        ).select_related('picking_task')
+        
+        total_pack_seconds = 0
+        pack_count = 0
+        for d in dispatches:
+            if d.picking_task and d.picking_task.completed_at:
+                duration = (d.created_at - d.picking_task.completed_at).total_seconds()
+                if duration > 0:
+                    total_pack_seconds += duration
+                    pack_count += 1
+                    
+        avg_pack_time = int(total_pack_seconds / pack_count) if pack_count > 0 else 0
 
-        def to_seconds(d):
-            return int(d.total_seconds()) if d else 0
-
-        # Defaulting missing metrics to 0 for now
-        avg_pick_time = 0 # to_seconds(t["avg_pick"])
-        avg_pack_time = 0 # to_seconds(t["avg_pack"])
-        avg_del_time = to_seconds(t["avg_delivery"])
-        # --- FIX END ---
-
-        # short pick / FC counts (assuming Order model has these counters or related)
-        short_pick_incidents = getattr(
-            o_qs.filter(short_pick_incidents__gt=0).aggregate(c=Count("id")), "c", 0
-        ) if hasattr(Order, "short_pick_incidents") else 0
-
-        full_cancellations = o_qs.filter(status="cancelled_fc").count()
-
+        # Update Snapshot
         WarehouseKPISnapshot.objects.update_or_create(
             date=day,
             warehouse=wh,
@@ -150,18 +153,16 @@ def compute_warehouse_kpi_snapshot(day: date | None = None) -> None:
                 "orders_created": orders_created,
                 "orders_dispatched": orders_dispatched,
                 "orders_delivered": orders_delivered,
-                "orders_cancelled": orders_cancelled,
+                "orders_cancelled": o_qs.filter(status__in=["cancelled"]).count(),
                 "avg_pick_time_seconds": avg_pick_time,
                 "avg_pack_time_seconds": avg_pack_time,
-                "avg_dispatch_to_delivery_seconds": avg_del_time,
-                "short_pick_incidents": short_pick_incidents,
-                "full_cancellations": full_cancellations,
+                "avg_dispatch_to_delivery_seconds": 0, # Requires DeliveryTask calculation
+                "short_pick_incidents": 0,
+                "full_cancellations": 0,
             },
         )
 
     logger.info("Computed WarehouseKPISnapshot for %s", day)
-
-# ... (rest of the file remains same)
 
 @transaction.atomic
 def compute_rider_kpi_snapshot(day: date | None = None) -> None:
